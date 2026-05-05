@@ -1,5 +1,6 @@
 import { can, type AuthenticatedUser } from '../auth/policies';
 import { Actions } from '../auth/permissions';
+import { appendStockMovement, getDeductionTriggerPolicy } from '../inventory/service';
 import { syncOrderIntoKds } from '../kds/service';
 import {
   createOrder,
@@ -147,6 +148,25 @@ export async function transitionOrderStatus(user: AuthenticatedUser, orderId: st
     draft.status = nextStatus;
     return draft;
   });
+
+  if (nextStatus === 'in_preparation' && getDeductionTriggerPolicy() === 'on_in_preparation') {
+    for (const item of order.items) {
+      try {
+        await appendStockMovement(
+          {
+            itemId: item.menuItemId,
+            movementType: 'sale_deduction',
+            quantityDelta: -Math.abs(item.quantity),
+            reason: `Auto deduction for order ${order.id}`,
+            referenceId: order.id,
+          },
+          user.id,
+        );
+      } catch {
+        // Skip deduction if no inventory mapping exists for the order item.
+      }
+    }
+  }
 
   await syncOrderIntoKds(order);
   return order;
