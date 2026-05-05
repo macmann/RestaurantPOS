@@ -7,6 +7,7 @@ export const Actions = {
   MarkDebt: 'billing:mark_debt',
   CloseBill: 'billing:close',
   ViewReports: 'reports:view',
+  ManageMenu: 'menu:manage',
 } as const;
 
 export type Action = (typeof Actions)[keyof typeof Actions];
@@ -28,6 +29,7 @@ export const RolePermissions: Record<string, Action[]> = {
     Actions.MarkDebt,
     Actions.CloseBill,
     Actions.ViewReports,
+    Actions.ManageMenu,
   ],
   admin: [
     Actions.CreateOrder,
@@ -36,5 +38,6 @@ export const RolePermissions: Record<string, Action[]> = {
     Actions.MarkDebt,
     Actions.CloseBill,
     Actions.ViewReports,
+    Actions.ManageMenu,
   ],
 };
