@@ -1,5 +1,6 @@
 import { can, type AuthenticatedUser } from '../auth/policies';
 import { Actions } from '../auth/permissions';
+import { syncOrderIntoKds } from '../kds/service';
 import {
   createOrder,
   getOrderById,
@@ -14,13 +15,13 @@ export interface CreateOrderInput {
   serviceMode: ServiceMode;
   tableId?: string;
   takeoutName?: string;
-  items?: Array<Pick<OrderItem, 'menuItemId' | 'name' | 'quantity' | 'unitPrice' | 'note'>>;
+  items?: Array<Pick<OrderItem, 'menuItemId' | 'name' | 'station' | 'quantity' | 'unitPrice' | 'note'>>;
 }
 
 export interface EditOrderInput {
   expectedVersion: number;
-  addItems?: Array<Pick<OrderItem, 'menuItemId' | 'name' | 'quantity' | 'unitPrice' | 'note'>>;
-  modifyItems?: Array<Pick<OrderItem, 'id'> & Partial<Pick<OrderItem, 'quantity' | 'note' | 'unitPrice'>>>;
+  addItems?: Array<Pick<OrderItem, 'menuItemId' | 'name' | 'station' | 'quantity' | 'unitPrice' | 'note'>>;
+  modifyItems?: Array<Pick<OrderItem, 'id'> & Partial<Pick<OrderItem, 'quantity' | 'note' | 'unitPrice' | 'station'>>>;
   removeItemIds?: string[];
 }
 
@@ -59,13 +60,14 @@ export async function createOrderDraft(user: AuthenticatedUser, input: CreateOrd
     id: createId('ord_item'),
     menuItemId: item.menuItemId,
     name: item.name,
+    station: item.station,
     quantity: item.quantity,
     unitPrice: item.unitPrice,
     note: item.note,
     lineTotal: calcLineTotal(item.quantity, item.unitPrice),
   }));
 
-  return createOrder({
+  const order = await createOrder({
     id: createId('ord'),
     serviceMode: input.serviceMode,
     tableId: input.tableId,
@@ -79,69 +81,75 @@ export async function createOrderDraft(user: AuthenticatedUser, input: CreateOrd
     updatedAt: now,
     changeLog: [],
   });
+
+  await syncOrderIntoKds(order);
+  return order;
 }
 
 export async function editOrderBeforePayment(user: AuthenticatedUser, orderId: string, input: EditOrderInput): Promise<OrderRecord> {
   assertCanEditOrder(user);
 
-  return updateOrderWithVersionCheck(orderId, input.expectedVersion, (order) => {
-    if (order.status === 'delivered') throw new Error('Delivered orders cannot be modified.');
+  const order = await updateOrderWithVersionCheck(orderId, input.expectedVersion, (draft) => {
+    if (draft.status === 'delivered') throw new Error('Delivered orders cannot be modified.');
 
     for (const item of input.addItems ?? []) {
       const created: OrderItem = {
         id: createId('ord_item'),
         menuItemId: item.menuItemId,
         name: item.name,
+        station: item.station,
         quantity: item.quantity,
         unitPrice: item.unitPrice,
         note: item.note,
         lineTotal: calcLineTotal(item.quantity, item.unitPrice),
       };
-      order.items.push(created);
-      order.changeLog.push({ at: new Date().toISOString(), actorUserId: user.id, actorRole: String(user.role), action: 'item_added', details: { itemId: created.id } });
+      draft.items.push(created);
+      draft.changeLog.push({ at: new Date().toISOString(), actorUserId: user.id, actorRole: String(user.role), action: 'item_added', details: { itemId: created.id } });
     }
 
     for (const mod of input.modifyItems ?? []) {
-      const target = order.items.find((it) => it.id === mod.id);
+      const target = draft.items.find((it) => it.id === mod.id);
       if (!target) throw new Error(`Order item ${mod.id} not found.`);
       if (typeof mod.quantity === 'number') target.quantity = mod.quantity;
       if (typeof mod.unitPrice === 'number') target.unitPrice = mod.unitPrice;
       if (typeof mod.note === 'string') target.note = mod.note;
+      if (typeof mod.station === 'string') target.station = mod.station;
       target.lineTotal = calcLineTotal(target.quantity, target.unitPrice);
-      order.changeLog.push({ at: new Date().toISOString(), actorUserId: user.id, actorRole: String(user.role), action: 'item_modified', details: { itemId: target.id } });
+      draft.changeLog.push({ at: new Date().toISOString(), actorUserId: user.id, actorRole: String(user.role), action: 'item_modified', details: { itemId: target.id } });
     }
 
     if (input.removeItemIds?.length) {
       const removed = new Set(input.removeItemIds);
-      order.items = order.items.filter((item) => {
+      draft.items = draft.items.filter((item) => {
         const shouldRemove = removed.has(item.id);
         if (shouldRemove) {
-          order.changeLog.push({ at: new Date().toISOString(), actorUserId: user.id, actorRole: String(user.role), action: 'item_removed', details: { itemId: item.id } });
+          draft.changeLog.push({ at: new Date().toISOString(), actorUserId: user.id, actorRole: String(user.role), action: 'item_removed', details: { itemId: item.id } });
         }
         return !shouldRemove;
       });
     }
 
-    order.subtotal = recalcSubtotal(order.items);
-    return order;
+    draft.subtotal = recalcSubtotal(draft.items);
+    return draft;
   });
+
+  await syncOrderIntoKds(order);
+  return order;
 }
 
-export async function transitionOrderStatus(
-  user: AuthenticatedUser,
-  orderId: string,
-  expectedVersion: number,
-  nextStatus: OrderStatus,
-): Promise<OrderRecord> {
-  return updateOrderWithVersionCheck(orderId, expectedVersion, (order) => {
+export async function transitionOrderStatus(user: AuthenticatedUser, orderId: string, expectedVersion: number, nextStatus: OrderStatus): Promise<OrderRecord> {
+  const order = await updateOrderWithVersionCheck(orderId, expectedVersion, (draft) => {
     const roles = Array.isArray(user.role) ? user.role : [user.role];
-    const allowed = roles.some((role) => (ROLE_STATUS_FLOW[role] ?? []).some((path) => path.from === order.status && path.to === nextStatus));
-    if (!allowed) throw new Error(`Forbidden transition ${order.status} -> ${nextStatus} for role(s): ${roles.join(', ')}.`);
+    const allowed = roles.some((role) => (ROLE_STATUS_FLOW[role] ?? []).some((path) => path.from === draft.status && path.to === nextStatus));
+    if (!allowed) throw new Error(`Forbidden transition ${draft.status} -> ${nextStatus} for role(s): ${roles.join(', ')}.`);
 
-    order.changeLog.push({ at: new Date().toISOString(), actorUserId: user.id, actorRole: roles.join(','), action: 'status_transition', details: { from: order.status, to: nextStatus } });
-    order.status = nextStatus;
-    return order;
+    draft.changeLog.push({ at: new Date().toISOString(), actorUserId: user.id, actorRole: roles.join(','), action: 'status_transition', details: { from: draft.status, to: nextStatus } });
+    draft.status = nextStatus;
+    return draft;
   });
+
+  await syncOrderIntoKds(order);
+  return order;
 }
 
 export async function getOrder(orderId: string) {

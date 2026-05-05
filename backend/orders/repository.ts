@@ -5,6 +5,7 @@ export interface OrderItem {
   id: string;
   menuItemId: string;
   name: string;
+  station?: 'kitchen' | 'bar';
   quantity: number;
   unitPrice: number;
   note?: string;
