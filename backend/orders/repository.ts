@@ -42,6 +42,12 @@ export async function createOrder(order: OrderRecord): Promise<OrderRecord> {
   return structuredClone(order);
 }
 
+export async function listOrders(): Promise<OrderRecord[]> {
+  return [...orders.values()]
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    .map((order) => structuredClone(order));
+}
+
 export async function getOrderById(orderId: string): Promise<OrderRecord | null> {
   const order = orders.get(orderId);
   return order ? structuredClone(order) : null;
