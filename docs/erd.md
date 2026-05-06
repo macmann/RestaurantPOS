@@ -114,8 +114,9 @@ This ERD documents the initial relational schema in `schema/migrations/202605051
 ## 8) Audit
 
 ### `audit_logs`
-- Generic audit trail table with actor, action, entity target, and JSON metadata.
-- Indexed by actor, target (`entity_name`, `entity_id`), and event time.
+- Generic audit trail table with actor, role, action, entity target, timestamp, reason, before/after JSON snapshots, and metadata.
+- Used for sensitive events including login success/failure, order edits/cancellations, bill voids, stock movements, tax toggles, discounts, and debt creation/settlement.
+- Indexed by actor, action, target (`entity_name`, `entity_id`), event time, and metadata search support.
 
 ## Indexing Strategy Highlights
 

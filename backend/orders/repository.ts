@@ -1,5 +1,5 @@
 export type ServiceMode = 'dine_in' | 'takeout';
-export type OrderStatus = 'pending' | 'in_preparation' | 'completed' | 'delivered';
+export type OrderStatus = 'pending' | 'in_preparation' | 'completed' | 'delivered' | 'cancelled';
 
 export interface OrderItem {
   id: string;
@@ -16,7 +16,7 @@ export interface OrderChangeEntry {
   at: string;
   actorUserId: string;
   actorRole: string;
-  action: 'item_added' | 'item_modified' | 'item_removed' | 'status_transition';
+  action: 'item_added' | 'item_modified' | 'item_removed' | 'status_transition' | 'order_cancelled';
   details: Record<string, unknown>;
 }
 

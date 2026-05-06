@@ -1,3 +1,4 @@
+import { recordAuditEvent } from '../audit/service';
 import {
   appendBillingAuditEntry,
   appendDebtLedgerEntry,
@@ -254,7 +255,7 @@ function applyBillLevelPricing(splits: BillRecord['splits'], pricing: BillPricin
         },
       ];
     }),
-  ) as BillRecord['splits'];
+  ) as unknown as BillRecord['splits'];
 }
 
 function mergeBreakdowns(splits: BillRecord['splits'], pricing: BillPricingOptions): BillCalculationBreakdown {
@@ -349,7 +350,7 @@ export async function generateBillFromSessionItems(
         },
       ];
     }),
-  ) as BillRecord['splits'];
+  ) as unknown as BillRecord['splits'];
 
   const next: BillRecord = updateBillStateAndBreakdown({
     id: createId('bill'),
@@ -388,6 +389,7 @@ export async function setBillTaxMode(input: {
 }): Promise<BillRecord> {
   const bill = await getBillByTableSessionId(input.tableSessionId);
   if (!bill) throw new Error('Bill not found for table session.');
+  const before = structuredClone(bill);
 
   bill.pricing = normalizePricing({ ...bill.pricing, taxMode: input.taxMode, taxRate: input.taxRate ?? bill.pricing.taxRate });
   updateBillStateAndBreakdown(bill);
@@ -401,6 +403,15 @@ export async function setBillTaxMode(input: {
     at: bill.updatedAt,
     details: { taxMode: bill.pricing.taxMode, taxRate: bill.pricing.taxRate, roundingStrategy: ROUNDING_STRATEGY },
   });
+  await recordAuditEvent({
+    action: 'tax_toggled',
+    actor: { userId: input.actorUserId },
+    timestamp: bill.updatedAt,
+    entity: { type: 'bill', id: bill.id, label: bill.tableSessionId },
+    before: { pricing: before.pricing, calculationBreakdown: before.calculationBreakdown },
+    after: { pricing: bill.pricing, calculationBreakdown: bill.calculationBreakdown },
+    metadata: { tableSessionId: bill.tableSessionId, roundingStrategy: ROUNDING_STRATEGY },
+  });
 
   return saveBill(bill);
 }
@@ -409,9 +420,11 @@ export async function applyBillPromotions(input: {
   tableSessionId: string;
   billPromotions: BillPromotion[];
   actorUserId: string;
+  reason?: string;
 }): Promise<BillRecord> {
   const bill = await getBillByTableSessionId(input.tableSessionId);
   if (!bill) throw new Error('Bill not found for table session.');
+  const before = structuredClone(bill);
 
   bill.pricing = normalizePricing({ ...bill.pricing, billPromotions: input.billPromotions });
   updateBillStateAndBreakdown(bill);
@@ -424,6 +437,60 @@ export async function applyBillPromotions(input: {
     actorUserId: input.actorUserId,
     at: bill.updatedAt,
     details: { promotions: bill.pricing.billPromotions, discountPrecedence: ['item-level', 'combo', 'happy-hour', 'bill-level'] },
+  });
+  await recordAuditEvent({
+    action: 'discount_applied',
+    actor: { userId: input.actorUserId },
+    timestamp: bill.updatedAt,
+    entity: { type: 'bill', id: bill.id, label: bill.tableSessionId },
+    before: { pricing: before.pricing, calculationBreakdown: before.calculationBreakdown },
+    after: { pricing: bill.pricing, calculationBreakdown: bill.calculationBreakdown },
+    reason: input.reason,
+    metadata: { tableSessionId: bill.tableSessionId, discountPrecedence: ['item-level', 'combo', 'happy-hour', 'bill-level'] },
+  });
+
+  return saveBill(bill);
+}
+
+
+export async function voidBill(input: {
+  tableSessionId: string;
+  actorUserId: string;
+  reason: string;
+}): Promise<BillRecord> {
+  const bill = await getBillByTableSessionId(input.tableSessionId);
+  if (!bill) throw new Error('Bill not found for table session.');
+  const reason = input.reason.trim();
+  if (!reason) throw new Error('A void reason is required.');
+  if (bill.state === 'paid') throw new Error('Paid bills cannot be voided.');
+  const before = structuredClone(bill);
+
+  for (const label of SPLIT_LABELS) {
+    bill.splits[label] = { ...bill.splits[label], state: 'void', totalDue: 0, taxTotal: 0, discountTotal: 0, unpaidBalance: 0 };
+  }
+  bill.state = 'void';
+  bill.pricing = { ...bill.pricing, billPromotions: [] };
+  bill.calculationBreakdown = emptyCalculationBreakdown({ taxMode: bill.pricing.taxMode, taxRate: bill.pricing.taxRate });
+  bill.receiptPayload = buildReceiptPayload(bill);
+  bill.updatedAt = new Date().toISOString();
+
+  await appendBillingAuditEntry({
+    id: createId('audit'),
+    tableSessionId: bill.tableSessionId,
+    splitLabel: 'A',
+    action: 'bill_voided',
+    actorUserId: input.actorUserId,
+    at: bill.updatedAt,
+    details: { reason },
+  });
+  await recordAuditEvent({
+    action: 'bill_voided',
+    actor: { userId: input.actorUserId },
+    timestamp: bill.updatedAt,
+    entity: { type: 'bill', id: bill.id, label: bill.tableSessionId },
+    before,
+    after: bill,
+    reason,
   });
 
   return saveBill(bill);
@@ -469,7 +536,7 @@ export async function recordSplitPayment(input: {
   updateBillStateAndBreakdown(bill);
 
   if (bill.splits[input.splitLabel].unpaidBalance > 0) {
-    await appendDebtLedgerEntry({
+    const debtEntry = await appendDebtLedgerEntry({
       id: createId('debt'),
       tableSessionId: bill.tableSessionId,
       splitLabel: input.splitLabel,
@@ -479,6 +546,16 @@ export async function recordSplitPayment(input: {
       actorUserId: input.actorUserId,
       at: payment.paidAt,
       metadata: { paymentId: payment.id, amountPaid: payment.amount },
+    });
+    await recordAuditEvent({
+      action: 'debt_created',
+      actor: { userId: input.actorUserId },
+      timestamp: debtEntry.at,
+      entity: { type: 'debt_ledger', id: debtEntry.id, label: `${bill.tableSessionId}:${input.splitLabel}` },
+      before: { unpaidBalanceBeforePayment: round2(bill.splits[input.splitLabel].unpaidBalance + payment.amount) },
+      after: { debtEntry, split: bill.splits[input.splitLabel] },
+      reason: 'unpaid_balance',
+      metadata: { tableSessionId: bill.tableSessionId, splitLabel: input.splitLabel, paymentId: payment.id },
     });
   }
 
@@ -507,7 +584,7 @@ export async function settleDebt(input: {
   const split = bill.splits[input.splitLabel];
   const now = input.paidAt ?? new Date().toISOString();
 
-  await appendDebtLedgerEntry({
+  const debtEntry = await appendDebtLedgerEntry({
     id: createId('debt'),
     tableSessionId: input.tableSessionId,
     splitLabel: input.splitLabel,
@@ -517,6 +594,16 @@ export async function settleDebt(input: {
     actorUserId: input.actorUserId,
     at: now,
     metadata: { resultingUnpaidBalance: split.unpaidBalance },
+  });
+  await recordAuditEvent({
+    action: 'debt_settled',
+    actor: { userId: input.actorUserId },
+    timestamp: debtEntry.at,
+    entity: { type: 'debt_ledger', id: debtEntry.id, label: `${input.tableSessionId}:${input.splitLabel}` },
+    before: { paymentAmount: round2(input.amount) },
+    after: { debtEntry, split },
+    reason: 'settlement_payment',
+    metadata: { tableSessionId: input.tableSessionId, splitLabel: input.splitLabel, method: input.method },
   });
 
   await appendBillingAuditEntry({

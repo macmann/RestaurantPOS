@@ -1,3 +1,4 @@
+import { recordAuditEvent } from '../audit/service';
 import { can, type AuthenticatedUser } from '../auth/policies';
 import { Actions } from '../auth/permissions';
 import { appendStockMovement, getDeductionTriggerPolicy } from '../inventory/service';
@@ -24,6 +25,12 @@ export interface EditOrderInput {
   addItems?: Array<Pick<OrderItem, 'menuItemId' | 'name' | 'station' | 'quantity' | 'unitPrice' | 'note'>>;
   modifyItems?: Array<Pick<OrderItem, 'id'> & Partial<Pick<OrderItem, 'quantity' | 'note' | 'unitPrice' | 'station'>>>;
   removeItemIds?: string[];
+  reason?: string;
+}
+
+export interface CancelOrderInput {
+  expectedVersion: number;
+  reason: string;
 }
 
 const ROLE_STATUS_FLOW: Record<string, Array<{ from: OrderStatus; to: OrderStatus }>> = {
@@ -49,6 +56,12 @@ function recalcSubtotal(items: OrderItem[]): number {
 
 function assertCanEditOrder(user: AuthenticatedUser): void {
   if (!can(user, Actions.EditOrder)) throw new Error('Forbidden: cannot edit order.');
+}
+
+function normalizeReason(reason: string | undefined, requiredMessage: string): string | undefined {
+  const normalized = reason?.trim();
+  if (!normalized && requiredMessage) throw new Error(requiredMessage);
+  return normalized || undefined;
 }
 
 export async function createOrderDraft(user: AuthenticatedUser, input: CreateOrderInput): Promise<OrderRecord> {
@@ -89,6 +102,7 @@ export async function createOrderDraft(user: AuthenticatedUser, input: CreateOrd
 
 export async function editOrderBeforePayment(user: AuthenticatedUser, orderId: string, input: EditOrderInput): Promise<OrderRecord> {
   assertCanEditOrder(user);
+  const before = await getOrderById(orderId);
 
   const order = await updateOrderWithVersionCheck(orderId, input.expectedVersion, (draft) => {
     if (draft.status === 'delivered') throw new Error('Delivered orders cannot be modified.');
@@ -132,6 +146,53 @@ export async function editOrderBeforePayment(user: AuthenticatedUser, orderId: s
 
     draft.subtotal = recalcSubtotal(draft.items);
     return draft;
+  });
+
+  await recordAuditEvent({
+    action: 'order_edited',
+    actor: user,
+    entity: { type: 'order', id: order.id },
+    before,
+    after: order,
+    reason: normalizeReason(input.reason, ''),
+    metadata: {
+      addedItems: input.addItems?.length ?? 0,
+      modifiedItems: input.modifyItems?.length ?? 0,
+      removedItems: input.removeItemIds?.length ?? 0,
+    },
+  });
+
+  await syncOrderIntoKds(order);
+  return order;
+}
+
+export async function cancelOrder(user: AuthenticatedUser, orderId: string, input: CancelOrderInput): Promise<OrderRecord> {
+  assertCanEditOrder(user);
+  const reason = normalizeReason(input.reason, 'A cancellation reason is required.');
+  const before = await getOrderById(orderId);
+
+  const order = await updateOrderWithVersionCheck(orderId, input.expectedVersion, (draft) => {
+    if (draft.status === 'delivered') throw new Error('Delivered orders cannot be cancelled.');
+    if (draft.status === 'cancelled') throw new Error('Order is already cancelled.');
+
+    draft.changeLog.push({
+      at: new Date().toISOString(),
+      actorUserId: user.id,
+      actorRole: String(user.role),
+      action: 'order_cancelled',
+      details: { from: draft.status, to: 'cancelled', reason },
+    });
+    draft.status = 'cancelled';
+    return draft;
+  });
+
+  await recordAuditEvent({
+    action: 'order_cancelled',
+    actor: user,
+    entity: { type: 'order', id: order.id },
+    before,
+    after: order,
+    reason,
   });
 
   await syncOrderIntoKds(order);

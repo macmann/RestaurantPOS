@@ -1,3 +1,4 @@
+import { recordAuditEvent } from '../audit/service';
 import { can, type AuthenticatedUser } from '../auth/policies';
 import { Actions } from '../auth/permissions';
 import {
@@ -100,6 +101,7 @@ export async function appendStockMovement(input: StockMovementInput, actorUserId
   if (!item) throw new Error('Inventory item not found.');
 
   validateNonZero(input.quantityDelta, 'quantityDelta');
+  const beforeBalance = await getCurrentBalance(input.itemId);
 
   const row: StockMovementRecord = {
     id: createId('mov'),
@@ -112,7 +114,21 @@ export async function appendStockMovement(input: StockMovementInput, actorUserId
     createdAt: new Date().toISOString(),
   };
 
-  return createStockMovement(row);
+  const movement = await createStockMovement(row);
+  const afterBalance = await getCurrentBalance(input.itemId);
+
+  await recordAuditEvent({
+    action: 'stock_adjusted',
+    actor: { userId: actorUserId },
+    timestamp: movement.createdAt,
+    entity: { type: 'inventory_item', id: item.id, label: item.name },
+    before: { item, currentBalance: beforeBalance },
+    after: { item, currentBalance: afterBalance, movement },
+    reason: movement.reason,
+    metadata: { movementType: movement.movementType, quantityDelta: movement.quantityDelta, referenceId: movement.referenceId },
+  });
+
+  return movement;
 }
 
 export async function getCurrentBalance(itemId: string): Promise<number> {
