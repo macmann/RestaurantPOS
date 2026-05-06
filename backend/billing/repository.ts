@@ -179,6 +179,12 @@ export async function saveBill(bill: BillRecord): Promise<BillRecord> {
   return structuredClone(bill);
 }
 
+export async function listBills(): Promise<BillRecord[]> {
+  return [...billsBySession.values()]
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    .map((bill) => structuredClone(bill));
+}
+
 export async function getBillByTableSessionId(tableSessionId: string): Promise<BillRecord | null> {
   const found = billsBySession.get(tableSessionId);
   return found ? structuredClone(found) : null;
