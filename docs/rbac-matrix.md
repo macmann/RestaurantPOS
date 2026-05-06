@@ -20,6 +20,7 @@ This matrix defines route-level authorization for core POS actions. Permissions 
 | Mark debt (`billing:mark_debt`) | ✅ | ✅ | ❌ | ✅ | ✅ |
 | Close bill (`billing:close`) | ✅ | ✅ | ❌ | ✅ | ✅ |
 | View reports (`reports:view`) | ❌ | ❌ | ❌ | ✅ | ✅ |
+| View audit log (`audit:view`) | ❌ | ❌ | ❌ | ✅ | ✅ |
 
 ## Route Mapping
 
@@ -31,6 +32,7 @@ The backend should enforce action checks at route boundaries:
 - `POST /billing/:id/mark-debt` → `billing:mark_debt`
 - `POST /billing/:id/close` → `billing:close`
 - `GET /reports/*` → `reports:view`
+- `GET /audit` → `audit:view`
 
 ## User Status Constraint (Active / Inactive)
 

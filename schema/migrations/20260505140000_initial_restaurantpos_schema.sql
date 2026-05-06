@@ -385,9 +385,13 @@ CREATE INDEX idx_promotions_ends_at ON promotions(ends_at);
 CREATE TABLE audit_logs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   actor_user_id UUID REFERENCES users(id) ON UPDATE CASCADE,
+  actor_role TEXT,
   action TEXT NOT NULL,
   entity_name TEXT NOT NULL,
   entity_id UUID,
+  reason TEXT,
+  before_snapshot JSONB,
+  after_snapshot JSONB,
   request_id TEXT,
   ip_address INET,
   user_agent TEXT,
@@ -396,7 +400,9 @@ CREATE TABLE audit_logs (
 );
 
 CREATE INDEX idx_audit_logs_actor_user_id ON audit_logs(actor_user_id);
+CREATE INDEX idx_audit_logs_action ON audit_logs(action);
 CREATE INDEX idx_audit_logs_entity ON audit_logs(entity_name, entity_id);
 CREATE INDEX idx_audit_logs_created_at ON audit_logs(created_at);
+CREATE INDEX idx_audit_logs_metadata_gin ON audit_logs USING GIN (metadata);
 
 COMMIT;

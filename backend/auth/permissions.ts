@@ -7,6 +7,7 @@ export const Actions = {
   MarkDebt: 'billing:mark_debt',
   CloseBill: 'billing:close',
   ViewReports: 'reports:view',
+  ViewAudit: 'audit:view',
   ManageMenu: 'menu:manage',
   TransitionOrderStatus: 'orders:transition_status',
 } as const;
@@ -34,6 +35,7 @@ export const RolePermissions: Record<string, Action[]> = {
     Actions.MarkDebt,
     Actions.CloseBill,
     Actions.ViewReports,
+    Actions.ViewAudit,
     Actions.ManageMenu,
     Actions.TransitionOrderStatus,
   ],
@@ -44,6 +46,7 @@ export const RolePermissions: Record<string, Action[]> = {
     Actions.MarkDebt,
     Actions.CloseBill,
     Actions.ViewReports,
+    Actions.ViewAudit,
     Actions.ManageMenu,
     Actions.TransitionOrderStatus,
   ],

@@ -1,4 +1,4 @@
-export type BillingState = 'open' | 'partially_paid' | 'paid' | 'debt';
+export type BillingState = 'open' | 'partially_paid' | 'paid' | 'debt' | 'void';
 export type PaymentMethod = 'cash' | 'wave_money' | 'kbzpay';
 export type SplitLabel = 'A' | 'B' | 'C';
 export type TaxMode = 'taxable' | 'tax_exempt';

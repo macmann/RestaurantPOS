@@ -17,5 +17,5 @@ export function hasPermission(user: AuthenticatedUser, action: Action): boolean 
 
 export function can(user: AuthenticatedUser | null | undefined, action: Action): boolean {
   if (!isUserActive(user)) return false;
-  return hasPermission(user, action);
+  return hasPermission(user!, action);
 }
