@@ -70,6 +70,11 @@ CREATE TYPE promo_type AS ENUM (
   'FIXED_AMOUNT'
 );
 
+CREATE TYPE tax_mode AS ENUM (
+  'TAXABLE',
+  'TAX_EXEMPT'
+);
+
 -- =====================
 -- Core identity & access
 -- =====================
@@ -197,6 +202,9 @@ CREATE TABLE order_items (
   menu_item_id UUID NOT NULL REFERENCES menu_items(id) ON UPDATE CASCADE,
   quantity NUMERIC(12,3) NOT NULL CHECK (quantity > 0),
   unit_price NUMERIC(12,2) NOT NULL CHECK (unit_price >= 0),
+  item_discount NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (item_discount >= 0),
+  combo_discount NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (combo_discount >= 0),
+  happy_hour_discount NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (happy_hour_discount >= 0),
   line_discount NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (line_discount >= 0),
   line_tax NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (line_tax >= 0),
   line_total NUMERIC(12,2) NOT NULL CHECK (line_total >= 0),
@@ -235,9 +243,13 @@ CREATE TABLE bills (
   subtotal NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (subtotal >= 0),
   discount_total NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (discount_total >= 0),
   tax_total NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (tax_total >= 0),
+  tax_mode tax_mode NOT NULL DEFAULT 'TAXABLE',
+  tax_rate NUMERIC(5,2) NOT NULL DEFAULT 0 CHECK (tax_rate >= 0),
   service_charge NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (service_charge >= 0),
   total_due NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (total_due >= 0),
   amount_paid NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (amount_paid >= 0),
+  calculation_breakdown JSONB NOT NULL DEFAULT '{}'::JSONB,
+  receipt_payload JSONB NOT NULL DEFAULT '{}'::JSONB,
   opened_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   closed_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -254,6 +266,7 @@ CREATE TABLE bill_splits (
   split_label TEXT,
   split_ratio NUMERIC(8,5) CHECK (split_ratio > 0),
   split_amount NUMERIC(12,2) NOT NULL CHECK (split_amount >= 0),
+  calculation_breakdown JSONB NOT NULL DEFAULT '{}'::JSONB,
   state billing_state NOT NULL DEFAULT 'OPEN',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -356,6 +369,7 @@ CREATE TABLE promotions (
   max_discount NUMERIC(12,2) CHECK (max_discount >= 0),
   usage_limit INTEGER CHECK (usage_limit > 0),
   is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  precedence INTEGER NOT NULL DEFAULT 4 CHECK (precedence > 0),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CHECK (ends_at IS NULL OR ends_at >= starts_at)
