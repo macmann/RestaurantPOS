@@ -63,6 +63,7 @@ This ERD documents the initial relational schema in `schema/migrations/202605051
 ### `order_items`
 - Cascades on order delete (`ON DELETE CASCADE`) so orphan line items cannot remain.
 - Quantity must be positive.
+- Discount columns separate item-level, combo, and happy-hour adjustments before the legacy aggregate `line_discount` for auditability.
 
 ### `kitchen_tickets`
 - Ticket status enum supports kitchen flow: `NEW`, `IN_PROGRESS`, `READY`, `CANCELLED`.
@@ -73,11 +74,14 @@ This ERD documents the initial relational schema in `schema/migrations/202605051
 ### `bills`
 - Billing state enum: `OPEN`, `PARTIALLY_PAID`, `PAID`, `VOID`, `REFUNDED`.
 - A bill belongs to one `table_session`; it may optionally reference a specific `order`.
+- Bill-level tax uses `tax_mode` (`TAXABLE` or `TAX_EXEMPT`) plus `tax_rate` so tax can be toggled without changing line items.
+- `calculation_breakdown` and `receipt_payload` store the final calculation path printed on receipts.
 
 ### `bill_splits`
 - **Important constraint:** each split is explicitly tied to exactly one `bill` **and** one `table_session`.
 - This allows enforcing “split bills tied to one table session” at the row level.
 - Split rows carry their own billing state using the same billing enum.
+- Split-level `calculation_breakdown` records allocated bill-level discounts and tax so split totals reconcile to the full bill.
 
 ### `payments`
 - Payment status enum: `PENDING`, `AUTHORIZED`, `CAPTURED`, `FAILED`, `VOIDED`, `REFUNDED`.
@@ -104,6 +108,7 @@ This ERD documents the initial relational schema in `schema/migrations/202605051
 ### `promotions`
 - Promotion code is unique.
 - Supports percentage/fixed amount via enum `promo_type`.
+- `precedence` documents where a promotion participates in the enforced discount order; bill-level promotions use precedence 4 after item, combo, and happy-hour discounts.
 - Validity window check ensures `ends_at >= starts_at` when present.
 
 ## 8) Audit

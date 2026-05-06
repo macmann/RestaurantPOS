@@ -1,6 +1,8 @@
 export type BillingState = 'open' | 'partially_paid' | 'paid' | 'debt';
 export type PaymentMethod = 'cash' | 'wave_money' | 'kbzpay';
 export type SplitLabel = 'A' | 'B' | 'C';
+export type TaxMode = 'taxable' | 'tax_exempt';
+export type BillPromotionType = 'fixed_amount' | 'percentage';
 
 export interface TableOrderItem {
   id: string;
@@ -9,8 +11,75 @@ export interface TableOrderItem {
   name: string;
   quantity: number;
   unitPrice: number;
+  /** Explicit item-level markdown entered by staff before automatic promotions. */
+  itemDiscount?: number;
+  /** Automatic bundle/combo adjustment, applied after item-level discounts. */
+  comboDiscount?: number;
+  /** Automatic time-window adjustment, applied after combo discounts. */
+  happyHourDiscount?: number;
+  /** Legacy aggregate item adjustment. Treated as an item-level discount when itemDiscount is absent. */
   lineDiscount?: number;
+  /** Legacy item tax. Ignored when bill-level tax configuration is supplied. */
   lineTax?: number;
+}
+
+export interface BillPromotion {
+  id: string;
+  name: string;
+  type: BillPromotionType;
+  value: number;
+  maxDiscount?: number;
+}
+
+export interface BillPricingOptions {
+  taxMode: TaxMode;
+  taxRate: number;
+  billPromotions?: BillPromotion[];
+}
+
+export interface DiscountBreakdown {
+  itemLevel: number;
+  combo: number;
+  happyHour: number;
+  billLevel: number;
+  total: number;
+}
+
+export interface BillPromotionApplication {
+  promotionId: string;
+  name: string;
+  type: BillPromotionType;
+  value: number;
+  baseAmount: number;
+  amount: number;
+  cappedBySubtotal: boolean;
+  maxDiscountApplied?: number;
+}
+
+export interface BillLineCalculationBreakdown {
+  lineItemId: string;
+  orderItemId: string;
+  name: string;
+  quantity: number;
+  unitPrice: number;
+  gross: number;
+  discounts: Pick<DiscountBreakdown, 'itemLevel' | 'combo' | 'happyHour'>;
+  netBeforeBillDiscount: number;
+  tax: number;
+  lineTotal: number;
+}
+
+export interface BillCalculationBreakdown {
+  subtotal: number;
+  discounts: DiscountBreakdown;
+  taxableSubtotal: number;
+  taxMode: TaxMode;
+  taxRate: number;
+  taxTotal: number;
+  totalDue: number;
+  roundingStrategy: 'round-half-up-to-cent-at-each-monetary-step';
+  appliedPromotions: BillPromotionApplication[];
+  lines: BillLineCalculationBreakdown[];
 }
 
 export interface BillLineItem {
@@ -19,9 +88,13 @@ export interface BillLineItem {
   name: string;
   quantity: number;
   unitPrice: number;
+  itemDiscount: number;
+  comboDiscount: number;
+  happyHourDiscount: number;
   lineDiscount: number;
   lineTax: number;
   lineTotal: number;
+  calculation: BillLineCalculationBreakdown;
 }
 
 export interface BillPayment {
@@ -44,6 +117,23 @@ export interface BillSplit {
   unpaidBalance: number;
   state: BillingState;
   payments: BillPayment[];
+  calculationBreakdown: BillCalculationBreakdown;
+}
+
+export interface ReceiptPayload {
+  receiptId: string;
+  billId: string;
+  tableSessionId: string;
+  generatedAt: string;
+  splits: Array<{
+    label: SplitLabel;
+    lines: BillLineCalculationBreakdown[];
+    payments: BillPayment[];
+    calculationBreakdown: BillCalculationBreakdown;
+  }>;
+  calculationBreakdown: BillCalculationBreakdown;
+  totalPaid: number;
+  balanceDue: number;
 }
 
 export interface DebtLedgerEntry {
@@ -73,6 +163,9 @@ export interface BillRecord {
   tableSessionId: string;
   splits: Record<SplitLabel, BillSplit>;
   state: BillingState;
+  pricing: BillPricingOptions;
+  calculationBreakdown: BillCalculationBreakdown;
+  receiptPayload?: ReceiptPayload;
   createdAt: string;
   updatedAt: string;
 }
