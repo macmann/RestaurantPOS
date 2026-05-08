@@ -1,4 +1,6 @@
 import type { AuthenticatedUser } from '../../backend/auth/policies';
+import { getLocaleResource } from '../../backend/i18n/service';
+import { buildLocaleSwitchState } from '../i18n/locale-switcher';
 import {
   createOrderDraft,
   editOrderBeforePayment,
@@ -25,6 +27,11 @@ export async function advanceOrderStatus(user: AuthenticatedUser, orderId: strin
   return transitionOrderStatus(user, orderId, expectedVersion, nextStatus);
 }
 
-export async function loadOrderForScreen(orderId: string) {
-  return getOrder(orderId);
+export async function loadOrderForScreen(orderId: string, locale?: string) {
+  const resource = getLocaleResource(locale);
+  return {
+    title: resource.screens.orders,
+    localeSwitch: buildLocaleSwitchState(resource.locale),
+    order: await getOrder(orderId),
+  };
 }
