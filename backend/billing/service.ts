@@ -1,4 +1,5 @@
 import { recordAuditEvent } from '../audit/service';
+import { getLocaleResource, getTypographyForLocale, normalizeLocale } from '../i18n/service';
 import {
   appendBillingAuditEntry,
   appendDebtLedgerEntry,
@@ -17,11 +18,13 @@ import {
   type ReceiptPayload,
   type SplitLabel,
   type TableOrderItem,
+  type ReceiptLabelKey,
 } from './repository';
 
 const SPLIT_LABELS: SplitLabel[] = ['A', 'B', 'C'];
 const DEFAULT_PRICING: BillPricingOptions = { taxMode: 'taxable', taxRate: 0, billPromotions: [] };
 const ROUNDING_STRATEGY: BillCalculationBreakdown['roundingStrategy'] = 'round-half-up-to-cent-at-each-monetary-step';
+const RECEIPT_LABEL_KEYS: ReceiptLabelKey[] = ['receipt', 'table_session', 'total_paid', 'balance_due', 'split', 'subtotal', 'discount', 'tax', 'total_due'];
 
 function createId(prefix: string): string {
   return `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
@@ -296,12 +299,25 @@ function updateBillStateAndBreakdown(bill: BillRecord): BillRecord {
   return bill;
 }
 
-function buildReceiptPayload(bill: BillRecord): ReceiptPayload {
+function buildReceiptPayload(bill: BillRecord, localeInput?: string): ReceiptPayload {
   const totalPaid = round2(SPLIT_LABELS.reduce((sum, label) => sum + bill.splits[label].amountPaid, 0));
   const balanceDue = round2(Math.max(bill.calculationBreakdown.totalDue - totalPaid, 0));
+  const locale = normalizeLocale(localeInput);
+  const resource = getLocaleResource(locale);
+  const typography = getTypographyForLocale(locale);
+  const receiptCss = `font-family: ${typography.printFontFamily}; direction: ${typography.direction}; unicode-bidi: plaintext;`;
 
   return {
     receiptId: createId('receipt'),
+    locale,
+    direction: typography.direction,
+    fontFamily: typography.fontFamily,
+    printFontFamily: typography.printFontFamily,
+    unicodeSample: typography.unicodeSample,
+    labels: Object.fromEntries(RECEIPT_LABEL_KEYS.map((key) => [key, resource.common[key]])) as Record<ReceiptLabelKey, string>,
+    paymentLabels: resource.paymentLabels as ReceiptPayload['paymentLabels'],
+    billStatusLabels: resource.billStatuses as ReceiptPayload['billStatusLabels'],
+    receiptCss,
     billId: bill.id,
     tableSessionId: bill.tableSessionId,
     generatedAt: new Date().toISOString(),
@@ -502,10 +518,10 @@ export async function getBillCalculationBreakdown(tableSessionId: string): Promi
   return bill.calculationBreakdown;
 }
 
-export async function getPrintedReceiptPayload(tableSessionId: string): Promise<ReceiptPayload> {
+export async function getPrintedReceiptPayload(tableSessionId: string, locale?: string): Promise<ReceiptPayload> {
   const bill = await getBillByTableSessionId(tableSessionId);
   if (!bill) throw new Error('Bill not found for table session.');
-  return buildReceiptPayload(bill);
+  return buildReceiptPayload(bill, locale);
 }
 
 export async function recordSplitPayment(input: {

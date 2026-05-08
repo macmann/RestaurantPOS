@@ -2,6 +2,7 @@ export type BillingState = 'open' | 'partially_paid' | 'paid' | 'debt' | 'void';
 export type PaymentMethod = 'cash' | 'wave_money' | 'kbzpay';
 export type SplitLabel = 'A' | 'B' | 'C';
 export type TaxMode = 'taxable' | 'tax_exempt';
+export type ReceiptLabelKey = 'receipt' | 'table_session' | 'total_paid' | 'balance_due' | 'split' | 'subtotal' | 'discount' | 'tax' | 'total_due';
 export type BillPromotionType = 'fixed_amount' | 'percentage';
 
 export interface TableOrderItem {
@@ -122,6 +123,15 @@ export interface BillSplit {
 
 export interface ReceiptPayload {
   receiptId: string;
+  locale: string;
+  direction: 'ltr';
+  fontFamily: string;
+  printFontFamily: string;
+  unicodeSample: string;
+  labels: Record<ReceiptLabelKey, string>;
+  paymentLabels: Record<PaymentMethod, string>;
+  billStatusLabels: Record<BillingState, string>;
+  receiptCss: string;
   billId: string;
   tableSessionId: string;
   generatedAt: string;

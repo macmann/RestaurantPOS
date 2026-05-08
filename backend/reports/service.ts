@@ -1,5 +1,6 @@
 import { can, type AuthenticatedUser } from '../auth/policies';
 import { Actions } from '../auth/permissions';
+import { t, normalizeLocale, getTypographyForLocale } from '../i18n/service';
 import { listBills, type BillLineItem, type BillRecord, type BillSplit } from '../billing/repository';
 import { listInventoryItems, listStockMovements, type InventoryItemRecord, type StockMovementRecord } from '../inventory/repository';
 import { listOrders, type OrderItem, type OrderRecord } from '../orders/repository';
@@ -13,6 +14,7 @@ export interface ReportFilters {
   branchId?: string;
   cashierUserId?: string;
   waiterUserId?: string;
+  locale?: string;
 }
 
 export interface ExportColumn {
@@ -33,6 +35,9 @@ export interface ExportReadyReport<TSummary, TRow> {
       title: string;
       subtitle: string;
       orientation: 'portrait' | 'landscape';
+      locale: string;
+      fontFamily: string;
+      unicodeSample: string;
     };
   };
   summary: TSummary;
@@ -93,6 +98,7 @@ function normalizeFilters(filters: ReportFilters = {}): NormalizedFilters {
 
   return {
     ...filters,
+    locale: normalizeLocale(filters.locale),
     dateFrom,
     dateTo,
   };
@@ -168,7 +174,9 @@ function lineRevenue(item: Pick<OrderItem, 'lineTotal'> | Pick<BillLineItem, 'li
   return roundMoney(item.lineTotal);
 }
 
-function makeReport<TSummary, TRow>(reportId: string, title: string, filters: NormalizedFilters, columns: ExportColumn[], rows: TRow[], summary: TSummary): ExportReadyReport<TSummary, TRow> {
+function makeReport<TSummary, TRow>(reportId: string, titleKey: string, filters: NormalizedFilters, columns: ExportColumn[], rows: TRow[], summary: TSummary): ExportReadyReport<TSummary, TRow> {
+  const locale = normalizeLocale(filters.locale);
+  const typography = getTypographyForLocale(locale);
   return {
     reportId,
     generatedAt: new Date().toISOString(),
@@ -178,9 +186,12 @@ function makeReport<TSummary, TRow>(reportId: string, title: string, filters: No
       columns,
       rows,
       print: {
-        title,
-        subtitle: `Range: ${filters.dateFrom} to ${filters.dateTo}`,
+        title: t(locale, 'reportHeadings', titleKey),
+        subtitle: `${t(locale, 'reportHeadings', 'range')}: ${filters.dateFrom} to ${filters.dateTo}`,
         orientation: 'landscape',
+        locale,
+        fontFamily: typography.printFontFamily,
+        unicodeSample: typography.unicodeSample,
       },
     },
     summary,
@@ -228,13 +239,13 @@ export async function getSalesReport(user: AuthenticatedUser, period: SalesPerio
   const rows = [...buckets.values()].sort((a, b) => a.periodStart.localeCompare(b.periodStart));
   return makeReport(
     `sales_by_${period}`,
-    `Sales by ${period}`,
+    `sales_by_${period}`,
     normalized,
     [
-      { key: 'periodLabel', label: 'Period', type: 'date' },
-      { key: 'orderCount', label: 'Orders', type: 'number' },
-      { key: 'quantitySold', label: 'Quantity Sold', type: 'number' },
-      { key: 'revenue', label: 'Revenue', type: 'currency' },
+      { key: 'periodLabel', label: t(normalized.locale, 'reportHeadings', 'period'), type: 'date' },
+      { key: 'orderCount', label: t(normalized.locale, 'reportHeadings', 'orders'), type: 'number' },
+      { key: 'quantitySold', label: t(normalized.locale, 'reportHeadings', 'quantity_sold'), type: 'number' },
+      { key: 'revenue', label: t(normalized.locale, 'reportHeadings', 'revenue'), type: 'currency' },
     ],
     rows,
     {
@@ -303,18 +314,18 @@ export async function getInventoryUsageReport(user: AuthenticatedUser, filters: 
 
   return makeReport(
     'inventory_usage_stock_trend',
-    'Inventory usage and stock trend',
+    'inventory_usage_stock_trend',
     normalized,
     [
-      { key: 'sku', label: 'SKU', type: 'string' },
-      { key: 'itemName', label: 'Item', type: 'string' },
-      { key: 'unit', label: 'Unit', type: 'string' },
-      { key: 'openingStock', label: 'Opening Stock', type: 'number' },
-      { key: 'restocked', label: 'Restocked', type: 'number' },
-      { key: 'used', label: 'Used', type: 'number' },
-      { key: 'wastage', label: 'Wastage', type: 'number' },
-      { key: 'manualAdjustments', label: 'Manual Adjustments', type: 'number' },
-      { key: 'closingStock', label: 'Closing Stock', type: 'number' },
+      { key: 'sku', label: t(normalized.locale, 'reportHeadings', 'sku'), type: 'string' },
+      { key: 'itemName', label: t(normalized.locale, 'reportHeadings', 'item'), type: 'string' },
+      { key: 'unit', label: t(normalized.locale, 'reportHeadings', 'unit'), type: 'string' },
+      { key: 'openingStock', label: t(normalized.locale, 'reportHeadings', 'opening_stock'), type: 'number' },
+      { key: 'restocked', label: t(normalized.locale, 'reportHeadings', 'restocked'), type: 'number' },
+      { key: 'used', label: t(normalized.locale, 'reportHeadings', 'used'), type: 'number' },
+      { key: 'wastage', label: t(normalized.locale, 'reportHeadings', 'wastage'), type: 'number' },
+      { key: 'manualAdjustments', label: t(normalized.locale, 'reportHeadings', 'manual_adjustments'), type: 'number' },
+      { key: 'closingStock', label: t(normalized.locale, 'reportHeadings', 'closing_stock'), type: 'number' },
     ],
     rows,
     {
@@ -351,11 +362,11 @@ export async function getFinancialSummaryReport(user: AuthenticatedUser, filters
 
   return makeReport(
     'financial_summary',
-    'Financial summary',
+    'financial_summary',
     normalized,
     [
-      { key: 'metric', label: 'Metric', type: 'string' },
-      { key: 'amount', label: 'Amount', type: 'currency' },
+      { key: 'metric', label: t(normalized.locale, 'reportHeadings', 'metric'), type: 'string' },
+      { key: 'amount', label: t(normalized.locale, 'reportHeadings', 'amount'), type: 'currency' },
     ],
     rows,
     {

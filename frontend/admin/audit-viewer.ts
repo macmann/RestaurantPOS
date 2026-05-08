@@ -1,4 +1,6 @@
 import { AdminAuditApi } from '../../backend/audit/controller';
+import { getLocaleResource } from '../../backend/i18n/service';
+import { buildLocaleSwitchState } from '../i18n/locale-switcher';
 import type { AuthenticatedUser } from '../../backend/auth/policies';
 import type { AuditAction, AuditEntityType, AuditEventRecord } from '../../backend/audit/repository';
 
@@ -13,6 +15,7 @@ export interface AdminAuditViewerFilters {
   reason?: string;
   hasReason?: boolean;
   limit?: number;
+  locale?: string;
 }
 
 export interface AuditFilterControl {
@@ -45,6 +48,7 @@ export interface AdminAuditViewerState {
   rows: AdminAuditViewerRow[];
   emptyState: string;
   error?: string;
+  localeSwitch: ReturnType<typeof buildLocaleSwitchState>;
 }
 
 export function defaultAuditViewerFilters(): AdminAuditViewerFilters {
@@ -106,27 +110,30 @@ export async function loadAdminAuditViewer(
   user: AuthenticatedUser,
   filters: AdminAuditViewerFilters = defaultAuditViewerFilters(),
 ): Promise<AdminAuditViewerState> {
+  const resource = getLocaleResource(filters.locale);
   try {
     const result = await AdminAuditApi.search(user, filters);
     const rows = buildRows(result.events);
     return {
       loading: false,
-      title: 'Admin Audit Viewer',
+      title: resource.screens.audit_viewer,
       filters: result.filters,
       filterControls: buildFilterControls(result.filters, result.availableFilters.actions, result.availableFilters.entityTypes),
       events: result.events,
       rows,
       emptyState: rows.length === 0 ? 'No audit events match the selected filters.' : '',
+      localeSwitch: buildLocaleSwitchState(resource.locale),
     };
   } catch (error) {
     return {
       loading: false,
-      title: 'Admin Audit Viewer',
+      title: resource.screens.audit_viewer,
       filters,
       filterControls: buildFilterControls(filters, [], []),
       events: [],
       rows: [],
       emptyState: 'No audit events match the selected filters.',
+      localeSwitch: buildLocaleSwitchState(resource.locale),
       error: error instanceof Error ? error.message : 'Failed to load audit events.',
     };
   }
