@@ -515,6 +515,7 @@ export async function recordSplitPayment(input: {
   method: PaymentMethod;
   actorUserId: string;
   paidAt?: string;
+  createDebtForUnpaidBalance?: boolean;
 }): Promise<BillRecord> {
   const bill = await getBillByTableSessionId(input.tableSessionId);
   if (!bill) throw new Error('Bill not found for table session.');
@@ -522,6 +523,7 @@ export async function recordSplitPayment(input: {
   if (input.amount <= 0) throw new Error('Payment amount must be greater than zero.');
 
   const split = bill.splits[input.splitLabel];
+  const beforeSplit = structuredClone(split);
   const payment: BillPayment = {
     id: createId('pay'),
     splitLabel: input.splitLabel,
@@ -535,7 +537,7 @@ export async function recordSplitPayment(input: {
   bill.splits[input.splitLabel] = split;
   updateBillStateAndBreakdown(bill);
 
-  if (bill.splits[input.splitLabel].unpaidBalance > 0) {
+  if (input.createDebtForUnpaidBalance !== false && bill.splits[input.splitLabel].unpaidBalance > 0) {
     const debtEntry = await appendDebtLedgerEntry({
       id: createId('debt'),
       tableSessionId: bill.tableSessionId,
@@ -552,7 +554,7 @@ export async function recordSplitPayment(input: {
       actor: { userId: input.actorUserId },
       timestamp: debtEntry.at,
       entity: { type: 'debt_ledger', id: debtEntry.id, label: `${bill.tableSessionId}:${input.splitLabel}` },
-      before: { unpaidBalanceBeforePayment: round2(bill.splits[input.splitLabel].unpaidBalance + payment.amount) },
+      before: { split: beforeSplit, unpaidBalanceBeforePayment: beforeSplit.unpaidBalance },
       after: { debtEntry, split: bill.splits[input.splitLabel] },
       reason: 'unpaid_balance',
       metadata: { tableSessionId: bill.tableSessionId, splitLabel: input.splitLabel, paymentId: payment.id },
@@ -580,7 +582,9 @@ export async function settleDebt(input: {
   method: PaymentMethod;
   paidAt?: string;
 }): Promise<BillRecord> {
-  const bill = await recordSplitPayment(input);
+  const beforeBill = await getBillByTableSessionId(input.tableSessionId);
+  if (!beforeBill) throw new Error('Bill not found for table session.');
+  const bill = await recordSplitPayment({ ...input, createDebtForUnpaidBalance: false });
   const split = bill.splits[input.splitLabel];
   const now = input.paidAt ?? new Date().toISOString();
 
@@ -600,8 +604,8 @@ export async function settleDebt(input: {
     actor: { userId: input.actorUserId },
     timestamp: debtEntry.at,
     entity: { type: 'debt_ledger', id: debtEntry.id, label: `${input.tableSessionId}:${input.splitLabel}` },
-    before: { paymentAmount: round2(input.amount) },
-    after: { debtEntry, split },
+    before: { bill: beforeBill, split: beforeBill.splits[input.splitLabel] },
+    after: { debtEntry, split, paymentAmount: round2(input.amount) },
     reason: 'settlement_payment',
     metadata: { tableSessionId: input.tableSessionId, splitLabel: input.splitLabel, method: input.method },
   });

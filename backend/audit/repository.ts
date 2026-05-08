@@ -1,16 +1,21 @@
-export type AuditAction =
-  | 'login_succeeded'
-  | 'login_failed'
-  | 'order_edited'
-  | 'order_cancelled'
-  | 'bill_voided'
-  | 'stock_adjusted'
-  | 'tax_toggled'
-  | 'discount_applied'
-  | 'debt_created'
-  | 'debt_settled';
+export const AUDIT_ACTIONS = [
+  'login_succeeded',
+  'login_failed',
+  'order_edited',
+  'order_cancelled',
+  'bill_voided',
+  'stock_adjusted',
+  'tax_toggled',
+  'discount_applied',
+  'debt_created',
+  'debt_settled',
+] as const;
 
-export type AuditEntityType = 'auth_session' | 'order' | 'bill' | 'bill_split' | 'inventory_item' | 'debt_ledger' | 'user';
+export type AuditAction = (typeof AUDIT_ACTIONS)[number];
+
+export const AUDIT_ENTITY_TYPES = ['auth_session', 'order', 'bill', 'bill_split', 'inventory_item', 'debt_ledger', 'user'] as const;
+
+export type AuditEntityType = (typeof AUDIT_ENTITY_TYPES)[number];
 
 export interface AuditActor {
   userId?: string;
@@ -41,6 +46,14 @@ export interface AuditEventFilter {
   entityId?: string;
   from?: string;
   to?: string;
+  reason?: string;
+  hasReason?: boolean;
+  limit?: number;
+}
+
+export interface AuditFilterOptions {
+  actions: AuditAction[];
+  entityTypes: AuditEntityType[];
 }
 
 const auditEvents: AuditEventRecord[] = [];
@@ -52,7 +65,9 @@ export async function appendAuditEvent(event: AuditEventRecord): Promise<AuditEv
 
 export async function listAuditEvents(filter: AuditEventFilter = {}): Promise<AuditEventRecord[]> {
   const query = filter.query?.trim().toLowerCase();
-  return auditEvents
+  const reasonQuery = filter.reason?.trim().toLowerCase();
+  const limit = typeof filter.limit === 'number' ? Math.max(0, Math.floor(filter.limit)) : undefined;
+  const rows = auditEvents
     .filter((event) => {
       if (filter.action && event.action !== filter.action) return false;
       if (filter.actorUserId && event.actor.userId !== filter.actorUserId) return false;
@@ -60,6 +75,9 @@ export async function listAuditEvents(filter: AuditEventFilter = {}): Promise<Au
       if (filter.entityId && event.entity.id !== filter.entityId) return false;
       if (filter.from && event.timestamp < filter.from) return false;
       if (filter.to && event.timestamp > filter.to) return false;
+      if (filter.hasReason === true && !event.reason) return false;
+      if (filter.hasReason === false && event.reason) return false;
+      if (reasonQuery && !event.reason?.toLowerCase().includes(reasonQuery)) return false;
       if (!query) return true;
 
       const searchable = [
@@ -80,6 +98,14 @@ export async function listAuditEvents(filter: AuditEventFilter = {}): Promise<Au
 
       return searchable.includes(query);
     })
-    .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
-    .map((event) => structuredClone(event));
+    .sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+
+  return rows.slice(0, limit).map((event) => structuredClone(event));
+}
+
+export async function getAuditFilterOptions(): Promise<AuditFilterOptions> {
+  return {
+    actions: [...AUDIT_ACTIONS],
+    entityTypes: [...AUDIT_ENTITY_TYPES],
+  };
 }
