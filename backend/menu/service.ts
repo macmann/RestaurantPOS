@@ -1,3 +1,4 @@
+import { getCurrentBranchId } from '../config/branch';
 import {
   createCategory,
   createItem,
@@ -16,12 +17,14 @@ import {
 } from './repository';
 
 export interface CategoryInput {
+  branchId?: string;
   name: string;
   sortOrder?: number;
   isActive?: boolean;
 }
 
 export interface ItemInput {
+  branchId?: string;
   categoryId: string;
   name: string;
   description?: string;
@@ -70,6 +73,7 @@ export async function adminCreateCategory(input: CategoryInput): Promise<MenuCat
 
   const record: MenuCategoryRecord = {
     id: createId('cat'),
+    branchId: input.branchId ?? getCurrentBranchId(),
     name,
     sortOrder: input.sortOrder ?? 0,
     isActive: input.isActive ?? true,
@@ -114,6 +118,7 @@ export async function adminCreateItem(input: ItemInput): Promise<MenuItemRecord>
   const now = nowIso();
   return createItem({
     id: createId('item'),
+    branchId: input.branchId ?? category.branchId ?? getCurrentBranchId(),
     categoryId: input.categoryId,
     name,
     description: input.description?.trim() || undefined,

@@ -1,6 +1,7 @@
 import { recordAuditEvent } from '../audit/service';
 import { can, type AuthenticatedUser } from '../auth/policies';
 import { Actions } from '../auth/permissions';
+import { getCurrentBranchId } from '../config/branch';
 import {
   createInventoryItem,
   createStockMovement,
@@ -16,6 +17,7 @@ import {
 export type DeductionTriggerPolicy = 'on_in_preparation' | 'on_completed' | 'manual';
 
 export interface InventoryItemInput {
+  branchId?: string;
   sku: string;
   name: string;
   unit: string;
@@ -24,6 +26,7 @@ export interface InventoryItemInput {
 }
 
 export interface StockMovementInput {
+  branchId?: string;
   itemId: string;
   movementType: StockMovementType;
   quantityDelta: number;
@@ -76,6 +79,7 @@ export async function createInventoryMasterItem(input: InventoryItemInput): Prom
   const now = new Date().toISOString();
   const item = await createInventoryItem({
     id: createId('inv'),
+    branchId: input.branchId ?? getCurrentBranchId(),
     sku,
     name,
     unit,
@@ -105,6 +109,7 @@ export async function appendStockMovement(input: StockMovementInput, actorUserId
 
   const row: StockMovementRecord = {
     id: createId('mov'),
+    branchId: input.branchId ?? item.branchId ?? getCurrentBranchId(),
     itemId: input.itemId,
     movementType: input.movementType,
     quantityDelta: input.quantityDelta,

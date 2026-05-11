@@ -1,5 +1,6 @@
 export interface MenuCategoryRecord {
   id: string;
+  branchId: string;
   name: string;
   sortOrder: number;
   isActive: boolean;
@@ -9,6 +10,7 @@ export interface MenuCategoryRecord {
 
 export interface MenuItemRecord {
   id: string;
+  branchId: string;
   categoryId: string;
   name: string;
   description?: string;

@@ -22,6 +22,7 @@ export interface OrderChangeEntry {
 
 export interface OrderRecord {
   id: string;
+  branchId: string;
   serviceMode: ServiceMode;
   tableId?: string;
   takeoutName?: string;

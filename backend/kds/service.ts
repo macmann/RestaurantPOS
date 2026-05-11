@@ -46,6 +46,7 @@ export async function syncOrderIntoKds(order: OrderRecord): Promise<void> {
   for (const item of order.items) {
     const existing = await getKdsItemState(order.id, item.id);
     await upsertKdsItemState({
+      branchId: order.branchId,
       orderId: order.id,
       orderItemId: item.id,
       orderCreatedAt: order.createdAt,

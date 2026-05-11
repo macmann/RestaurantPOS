@@ -76,6 +76,36 @@ CREATE TYPE tax_mode AS ENUM (
 );
 
 -- =====================
+-- Branch/location configuration
+-- =====================
+CREATE TABLE branches (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  code TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  location_label TEXT,
+  address TEXT,
+  timezone TEXT NOT NULL DEFAULT 'UTC',
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_branches_active ON branches(is_active);
+
+CREATE TABLE app_settings (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  branch_id UUID NOT NULL REFERENCES branches(id) ON UPDATE CASCADE,
+  setting_key TEXT NOT NULL,
+  setting_value JSONB NOT NULL DEFAULT '{}'::JSONB,
+  updated_by_user_id UUID,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (branch_id, setting_key)
+);
+
+CREATE INDEX idx_app_settings_branch_id ON app_settings(branch_id);
+
+-- =====================
 -- Core identity & access
 -- =====================
 CREATE TABLE roles (
@@ -90,6 +120,7 @@ CREATE TABLE roles (
 CREATE TABLE users (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   role_id UUID NOT NULL REFERENCES roles(id) ON UPDATE CASCADE,
+  branch_id UUID REFERENCES branches(id) ON UPDATE CASCADE,
   email CITEXT NOT NULL UNIQUE,
   username CITEXT NOT NULL UNIQUE,
   full_name TEXT NOT NULL,
@@ -101,6 +132,7 @@ CREATE TABLE users (
 );
 
 CREATE INDEX idx_users_role_id ON users(role_id);
+CREATE INDEX idx_users_branch_id ON users(branch_id);
 CREATE INDEX idx_users_active ON users(is_active);
 
 -- =====================
@@ -108,18 +140,20 @@ CREATE INDEX idx_users_active ON users(is_active);
 -- =====================
 CREATE TABLE menu_categories (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  branch_id UUID NOT NULL REFERENCES branches(id) ON UPDATE CASCADE,
   name TEXT NOT NULL,
   sort_order INTEGER NOT NULL DEFAULT 0,
   is_active BOOLEAN NOT NULL DEFAULT TRUE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  UNIQUE (name)
+  UNIQUE (branch_id, name)
 );
 
 CREATE TABLE menu_items (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  branch_id UUID NOT NULL REFERENCES branches(id) ON UPDATE CASCADE,
   category_id UUID NOT NULL REFERENCES menu_categories(id) ON UPDATE CASCADE,
-  sku TEXT UNIQUE,
+  sku TEXT,
   name TEXT NOT NULL,
   description TEXT,
   price NUMERIC(12,2) NOT NULL CHECK (price >= 0),
@@ -128,9 +162,11 @@ CREATE TABLE menu_items (
   is_available BOOLEAN NOT NULL DEFAULT TRUE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (branch_id, sku),
   UNIQUE (category_id, name)
 );
 
+CREATE INDEX idx_menu_items_branch_id ON menu_items(branch_id);
 CREATE INDEX idx_menu_items_category_id ON menu_items(category_id);
 CREATE INDEX idx_menu_items_available ON menu_items(is_available);
 
@@ -139,18 +175,22 @@ CREATE INDEX idx_menu_items_available ON menu_items(is_available);
 -- =====================
 CREATE TABLE tables (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  table_code TEXT NOT NULL UNIQUE,
+  branch_id UUID NOT NULL REFERENCES branches(id) ON UPDATE CASCADE,
+  table_code TEXT NOT NULL,
   capacity INTEGER NOT NULL CHECK (capacity > 0),
   location_label TEXT,
   is_active BOOLEAN NOT NULL DEFAULT TRUE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (branch_id, table_code)
 );
 
+CREATE INDEX idx_tables_branch_id ON tables(branch_id);
 CREATE INDEX idx_tables_active ON tables(is_active);
 
 CREATE TABLE table_sessions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  branch_id UUID NOT NULL REFERENCES branches(id) ON UPDATE CASCADE,
   table_id UUID NOT NULL REFERENCES tables(id) ON UPDATE CASCADE,
   opened_by_user_id UUID NOT NULL REFERENCES users(id) ON UPDATE CASCADE,
   closed_by_user_id UUID REFERENCES users(id) ON UPDATE CASCADE,
@@ -164,6 +204,7 @@ CREATE TABLE table_sessions (
   CHECK ((is_closed = FALSE AND closed_at IS NULL) OR (is_closed = TRUE AND closed_at IS NOT NULL))
 );
 
+CREATE INDEX idx_table_sessions_branch_id ON table_sessions(branch_id);
 CREATE INDEX idx_table_sessions_table_id ON table_sessions(table_id);
 CREATE INDEX idx_table_sessions_is_closed ON table_sessions(is_closed);
 CREATE INDEX idx_table_sessions_opened_at ON table_sessions(opened_at);
@@ -178,6 +219,7 @@ CREATE UNIQUE INDEX uq_table_sessions_active_per_table
 -- =====================
 CREATE TABLE orders (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  branch_id UUID NOT NULL REFERENCES branches(id) ON UPDATE CASCADE,
   table_session_id UUID NOT NULL REFERENCES table_sessions(id) ON UPDATE CASCADE,
   created_by_user_id UUID NOT NULL REFERENCES users(id) ON UPDATE CASCADE,
   status order_status NOT NULL DEFAULT 'DRAFT',
@@ -192,12 +234,14 @@ CREATE TABLE orders (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE INDEX idx_orders_branch_id ON orders(branch_id);
 CREATE INDEX idx_orders_table_session_id ON orders(table_session_id);
 CREATE INDEX idx_orders_status ON orders(status);
 CREATE INDEX idx_orders_created_at ON orders(created_at);
 
 CREATE TABLE order_items (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  branch_id UUID NOT NULL REFERENCES branches(id) ON UPDATE CASCADE,
   order_id UUID NOT NULL REFERENCES orders(id) ON UPDATE CASCADE ON DELETE CASCADE,
   menu_item_id UUID NOT NULL REFERENCES menu_items(id) ON UPDATE CASCADE,
   quantity NUMERIC(12,3) NOT NULL CHECK (quantity > 0),
@@ -213,11 +257,13 @@ CREATE TABLE order_items (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE INDEX idx_order_items_branch_id ON order_items(branch_id);
 CREATE INDEX idx_order_items_order_id ON order_items(order_id);
 CREATE INDEX idx_order_items_menu_item_id ON order_items(menu_item_id);
 
 CREATE TABLE kitchen_tickets (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  branch_id UUID NOT NULL REFERENCES branches(id) ON UPDATE CASCADE,
   order_id UUID NOT NULL REFERENCES orders(id) ON UPDATE CASCADE ON DELETE CASCADE,
   status kitchen_ticket_status NOT NULL DEFAULT 'NEW',
   station TEXT,
@@ -229,6 +275,7 @@ CREATE TABLE kitchen_tickets (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE INDEX idx_kitchen_tickets_branch_id ON kitchen_tickets(branch_id);
 CREATE INDEX idx_kitchen_tickets_order_id ON kitchen_tickets(order_id);
 CREATE INDEX idx_kitchen_tickets_status ON kitchen_tickets(status);
 
@@ -237,6 +284,7 @@ CREATE INDEX idx_kitchen_tickets_status ON kitchen_tickets(status);
 -- =====================
 CREATE TABLE bills (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  branch_id UUID NOT NULL REFERENCES branches(id) ON UPDATE CASCADE,
   table_session_id UUID NOT NULL REFERENCES table_sessions(id) ON UPDATE CASCADE,
   order_id UUID REFERENCES orders(id) ON UPDATE CASCADE,
   state billing_state NOT NULL DEFAULT 'OPEN',
@@ -256,11 +304,13 @@ CREATE TABLE bills (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE INDEX idx_bills_branch_id ON bills(branch_id);
 CREATE INDEX idx_bills_table_session_id ON bills(table_session_id);
 CREATE INDEX idx_bills_state ON bills(state);
 
 CREATE TABLE bill_splits (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  branch_id UUID NOT NULL REFERENCES branches(id) ON UPDATE CASCADE,
   bill_id UUID NOT NULL REFERENCES bills(id) ON UPDATE CASCADE ON DELETE CASCADE,
   table_session_id UUID NOT NULL REFERENCES table_sessions(id) ON UPDATE CASCADE,
   split_label TEXT,
@@ -273,12 +323,14 @@ CREATE TABLE bill_splits (
   CHECK (split_ratio IS NOT NULL OR split_amount >= 0)
 );
 
+CREATE INDEX idx_bill_splits_branch_id ON bill_splits(branch_id);
 CREATE INDEX idx_bill_splits_bill_id ON bill_splits(bill_id);
 CREATE INDEX idx_bill_splits_table_session_id ON bill_splits(table_session_id);
 CREATE INDEX idx_bill_splits_state ON bill_splits(state);
 
 CREATE TABLE payments (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  branch_id UUID NOT NULL REFERENCES branches(id) ON UPDATE CASCADE,
   bill_id UUID NOT NULL REFERENCES bills(id) ON UPDATE CASCADE,
   bill_split_id UUID REFERENCES bill_splits(id) ON UPDATE CASCADE,
   collected_by_user_id UUID REFERENCES users(id) ON UPDATE CASCADE,
@@ -295,6 +347,7 @@ CREATE TABLE payments (
   )
 );
 
+CREATE INDEX idx_payments_branch_id ON payments(branch_id);
 CREATE INDEX idx_payments_bill_id ON payments(bill_id);
 CREATE INDEX idx_payments_bill_split_id ON payments(bill_split_id);
 CREATE INDEX idx_payments_status ON payments(status);
@@ -302,6 +355,7 @@ CREATE INDEX idx_payments_method ON payments(method);
 
 CREATE TABLE debt_ledger (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  branch_id UUID NOT NULL REFERENCES branches(id) ON UPDATE CASCADE,
   table_session_id UUID REFERENCES table_sessions(id) ON UPDATE CASCADE,
   bill_id UUID REFERENCES bills(id) ON UPDATE CASCADE,
   payment_id UUID REFERENCES payments(id) ON UPDATE CASCADE,
@@ -314,6 +368,7 @@ CREATE TABLE debt_ledger (
   CHECK (amount <> 0)
 );
 
+CREATE INDEX idx_debt_ledger_branch_id ON debt_ledger(branch_id);
 CREATE INDEX idx_debt_ledger_session_id ON debt_ledger(table_session_id);
 CREATE INDEX idx_debt_ledger_bill_id ON debt_ledger(bill_id);
 CREATE INDEX idx_debt_ledger_payment_id ON debt_ledger(payment_id);
@@ -324,20 +379,25 @@ CREATE INDEX idx_debt_ledger_created_at ON debt_ledger(created_at);
 -- =====================
 CREATE TABLE inventory_items (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  sku TEXT UNIQUE,
-  name TEXT NOT NULL UNIQUE,
+  branch_id UUID NOT NULL REFERENCES branches(id) ON UPDATE CASCADE,
+  sku TEXT,
+  name TEXT NOT NULL,
   unit TEXT NOT NULL,
   reorder_level NUMERIC(12,3) NOT NULL DEFAULT 0 CHECK (reorder_level >= 0),
   current_stock NUMERIC(12,3) NOT NULL DEFAULT 0 CHECK (current_stock >= 0),
   is_active BOOLEAN NOT NULL DEFAULT TRUE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (branch_id, sku),
+  UNIQUE (branch_id, name)
 );
 
+CREATE INDEX idx_inventory_items_branch_id ON inventory_items(branch_id);
 CREATE INDEX idx_inventory_items_active ON inventory_items(is_active);
 
 CREATE TABLE stock_ledger (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  branch_id UUID NOT NULL REFERENCES branches(id) ON UPDATE CASCADE,
   inventory_item_id UUID NOT NULL REFERENCES inventory_items(id) ON UPDATE CASCADE,
   order_item_id UUID REFERENCES order_items(id) ON UPDATE CASCADE,
   entry_type stock_entry_type NOT NULL,
@@ -349,6 +409,7 @@ CREATE TABLE stock_ledger (
   CHECK (quantity_change <> 0)
 );
 
+CREATE INDEX idx_stock_ledger_branch_id ON stock_ledger(branch_id);
 CREATE INDEX idx_stock_ledger_inventory_item_id ON stock_ledger(inventory_item_id);
 CREATE INDEX idx_stock_ledger_order_item_id ON stock_ledger(order_item_id);
 CREATE INDEX idx_stock_ledger_entry_type ON stock_ledger(entry_type);
@@ -359,7 +420,8 @@ CREATE INDEX idx_stock_ledger_created_at ON stock_ledger(created_at);
 -- =====================
 CREATE TABLE promotions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  code TEXT NOT NULL UNIQUE,
+  branch_id UUID NOT NULL REFERENCES branches(id) ON UPDATE CASCADE,
+  code TEXT NOT NULL,
   name TEXT NOT NULL,
   promo_type promo_type NOT NULL,
   value NUMERIC(12,2) NOT NULL CHECK (value > 0),
@@ -372,9 +434,11 @@ CREATE TABLE promotions (
   precedence INTEGER NOT NULL DEFAULT 4 CHECK (precedence > 0),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CHECK (ends_at IS NULL OR ends_at >= starts_at)
+  CHECK (ends_at IS NULL OR ends_at >= starts_at),
+  UNIQUE (branch_id, code)
 );
 
+CREATE INDEX idx_promotions_branch_id ON promotions(branch_id);
 CREATE INDEX idx_promotions_active ON promotions(is_active);
 CREATE INDEX idx_promotions_starts_at ON promotions(starts_at);
 CREATE INDEX idx_promotions_ends_at ON promotions(ends_at);
@@ -384,6 +448,7 @@ CREATE INDEX idx_promotions_ends_at ON promotions(ends_at);
 -- =====================
 CREATE TABLE audit_logs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  branch_id UUID REFERENCES branches(id) ON UPDATE CASCADE,
   actor_user_id UUID REFERENCES users(id) ON UPDATE CASCADE,
   actor_role TEXT,
   action TEXT NOT NULL,
@@ -399,6 +464,7 @@ CREATE TABLE audit_logs (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE INDEX idx_audit_logs_branch_id ON audit_logs(branch_id);
 CREATE INDEX idx_audit_logs_actor_user_id ON audit_logs(actor_user_id);
 CREATE INDEX idx_audit_logs_action ON audit_logs(action);
 CREATE INDEX idx_audit_logs_entity ON audit_logs(entity_name, entity_id);

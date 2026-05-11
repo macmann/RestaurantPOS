@@ -1,5 +1,6 @@
 import { can, type AuthenticatedUser } from '../auth/policies';
 import { Actions } from '../auth/permissions';
+import { getCurrentBranchId } from '../config/branch';
 import { t, normalizeLocale, getTypographyForLocale } from '../i18n/service';
 import { listBills, type BillLineItem, type BillRecord, type BillSplit } from '../billing/repository';
 import { listInventoryItems, listStockMovements, type InventoryItemRecord, type StockMovementRecord } from '../inventory/repository';
@@ -99,6 +100,7 @@ function normalizeFilters(filters: ReportFilters = {}): NormalizedFilters {
   return {
     ...filters,
     locale: normalizeLocale(filters.locale),
+    branchId: filters.branchId ?? getCurrentBranchId(),
     dateFrom,
     dateTo,
   };
@@ -121,7 +123,7 @@ function isWithinRange(at: string, filters: NormalizedFilters): boolean {
 function matchesBranch(row: unknown, filters: NormalizedFilters): boolean {
   if (!filters.branchId) return true;
   const branchId = optionalRecordField(row, 'branchId');
-  return branchId === undefined || branchId === filters.branchId;
+  return branchId === filters.branchId;
 }
 
 function flattenBillSplits(bill: BillRecord): BillSplit[] {

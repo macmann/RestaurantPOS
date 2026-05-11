@@ -7,6 +7,7 @@ export type BillPromotionType = 'fixed_amount' | 'percentage';
 
 export interface TableOrderItem {
   id: string;
+  branchId?: string;
   orderId: string;
   tableSessionId: string;
   name: string;
@@ -100,6 +101,7 @@ export interface BillLineItem {
 
 export interface BillPayment {
   id: string;
+  branchId: string;
   splitLabel: SplitLabel;
   amount: number;
   method: PaymentMethod;
@@ -148,6 +150,7 @@ export interface ReceiptPayload {
 
 export interface DebtLedgerEntry {
   id: string;
+  branchId: string;
   tableSessionId: string;
   splitLabel: SplitLabel;
   amount: number;
@@ -160,6 +163,7 @@ export interface DebtLedgerEntry {
 
 export interface BillingAuditEntry {
   id: string;
+  branchId: string;
   tableSessionId: string;
   splitLabel: SplitLabel;
   action: string;
@@ -170,6 +174,7 @@ export interface BillingAuditEntry {
 
 export interface BillRecord {
   id: string;
+  branchId: string;
   tableSessionId: string;
   splits: Record<SplitLabel, BillSplit>;
   state: BillingState;

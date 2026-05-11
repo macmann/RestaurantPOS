@@ -2,6 +2,7 @@ export type StockMovementType = 'sale_deduction' | 'manual_adjustment' | 'wastag
 
 export interface InventoryItemRecord {
   id: string;
+  branchId: string;
   sku: string;
   name: string;
   unit: string;
@@ -12,6 +13,7 @@ export interface InventoryItemRecord {
 
 export interface StockMovementRecord {
   id: string;
+  branchId: string;
   itemId: string;
   movementType: StockMovementType;
   quantityDelta: number;
