@@ -2,6 +2,7 @@ export type Station = 'kitchen' | 'bar';
 export type KdsProgress = 'queued' | 'preparing' | 'ready' | 'served';
 
 export interface KdsItemState {
+  branchId: string;
   orderId: string;
   orderItemId: string;
   orderCreatedAt: string;

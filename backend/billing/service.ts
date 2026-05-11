@@ -1,4 +1,5 @@
 import { recordAuditEvent } from '../audit/service';
+import { getCurrentBranchId } from '../config/branch';
 import { getLocaleResource, getTypographyForLocale, normalizeLocale } from '../i18n/service';
 import {
   appendBillingAuditEntry,
@@ -338,6 +339,7 @@ export async function generateBillFromSessionItems(
   itemsBySplit: Partial<Record<SplitLabel, TableOrderItem[]>>,
   actorUserId: string,
   pricingInput?: Partial<BillPricingOptions>,
+  branchId = getCurrentBranchId(),
 ): Promise<BillRecord> {
   const now = new Date().toISOString();
   const existing = await getBillByTableSessionId(tableSessionId);
@@ -370,6 +372,7 @@ export async function generateBillFromSessionItems(
 
   const next: BillRecord = updateBillStateAndBreakdown({
     id: createId('bill'),
+    branchId,
     tableSessionId,
     splits,
     state: 'open',
@@ -381,6 +384,7 @@ export async function generateBillFromSessionItems(
 
   await appendBillingAuditEntry({
     id: createId('audit'),
+    branchId,
     tableSessionId,
     splitLabel: 'A',
     action: 'bill_generated',
@@ -412,6 +416,7 @@ export async function setBillTaxMode(input: {
 
   await appendBillingAuditEntry({
     id: createId('audit'),
+    branchId: bill.branchId,
     tableSessionId: bill.tableSessionId,
     splitLabel: 'A',
     action: 'bill_tax_mode_changed',
@@ -447,6 +452,7 @@ export async function applyBillPromotions(input: {
 
   await appendBillingAuditEntry({
     id: createId('audit'),
+    branchId: bill.branchId,
     tableSessionId: bill.tableSessionId,
     splitLabel: 'A',
     action: 'bill_promotions_applied',
@@ -492,6 +498,7 @@ export async function voidBill(input: {
 
   await appendBillingAuditEntry({
     id: createId('audit'),
+    branchId: bill.branchId,
     tableSessionId: bill.tableSessionId,
     splitLabel: 'A',
     action: 'bill_voided',
@@ -542,6 +549,7 @@ export async function recordSplitPayment(input: {
   const beforeSplit = structuredClone(split);
   const payment: BillPayment = {
     id: createId('pay'),
+    branchId: bill.branchId,
     splitLabel: input.splitLabel,
     amount: round2(input.amount),
     method: input.method,
@@ -556,6 +564,7 @@ export async function recordSplitPayment(input: {
   if (input.createDebtForUnpaidBalance !== false && bill.splits[input.splitLabel].unpaidBalance > 0) {
     const debtEntry = await appendDebtLedgerEntry({
       id: createId('debt'),
+      branchId: bill.branchId,
       tableSessionId: bill.tableSessionId,
       splitLabel: input.splitLabel,
       amount: bill.splits[input.splitLabel].unpaidBalance,
@@ -579,6 +588,7 @@ export async function recordSplitPayment(input: {
 
   await appendBillingAuditEntry({
     id: createId('audit'),
+    branchId: bill.branchId,
     tableSessionId: bill.tableSessionId,
     splitLabel: input.splitLabel,
     action: 'split_payment_recorded',
@@ -606,6 +616,7 @@ export async function settleDebt(input: {
 
   const debtEntry = await appendDebtLedgerEntry({
     id: createId('debt'),
+    branchId: bill.branchId,
     tableSessionId: input.tableSessionId,
     splitLabel: input.splitLabel,
     amount: round2(input.amount),
@@ -628,6 +639,7 @@ export async function settleDebt(input: {
 
   await appendBillingAuditEntry({
     id: createId('audit'),
+    branchId: bill.branchId,
     tableSessionId: input.tableSessionId,
     splitLabel: input.splitLabel,
     action: 'debt_settlement_recorded',

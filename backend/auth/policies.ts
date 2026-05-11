@@ -2,6 +2,7 @@ import { Action, RolePermissions, UserStatus } from './permissions';
 
 export interface AuthenticatedUser {
   id: string;
+  branchId?: string;
   role: string | string[];
   status: UserStatus;
 }

@@ -1,6 +1,7 @@
 import { recordAuditEvent } from '../audit/service';
 import { can, type AuthenticatedUser } from '../auth/policies';
 import { Actions } from '../auth/permissions';
+import { getCurrentBranchId } from '../config/branch';
 import { appendStockMovement, getDeductionTriggerPolicy } from '../inventory/service';
 import { syncOrderIntoKds } from '../kds/service';
 import {
@@ -14,6 +15,7 @@ import {
 } from './repository';
 
 export interface CreateOrderInput {
+  branchId?: string;
   serviceMode: ServiceMode;
   tableId?: string;
   takeoutName?: string;
@@ -83,6 +85,7 @@ export async function createOrderDraft(user: AuthenticatedUser, input: CreateOrd
 
   const order = await createOrder({
     id: createId('ord'),
+    branchId: input.branchId ?? user.branchId ?? getCurrentBranchId(),
     serviceMode: input.serviceMode,
     tableId: input.tableId,
     takeoutName: input.takeoutName?.trim(),
