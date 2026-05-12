@@ -203,6 +203,8 @@ export async function cancelOrder(user: AuthenticatedUser, orderId: string, inpu
 }
 
 export async function transitionOrderStatus(user: AuthenticatedUser, orderId: string, expectedVersion: number, nextStatus: OrderStatus): Promise<OrderRecord> {
+  if (!can(user, Actions.TransitionOrderStatus)) throw new Error('Forbidden: cannot transition order status.');
+
   const order = await updateOrderWithVersionCheck(orderId, expectedVersion, (draft) => {
     const roles = Array.isArray(user.role) ? user.role : [user.role];
     const allowed = roles.some((role) => (ROLE_STATUS_FLOW[role] ?? []).some((path) => path.from === draft.status && path.to === nextStatus));

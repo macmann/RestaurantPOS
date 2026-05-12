@@ -1,0 +1,12 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "commonjs",
+    "strict": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true
+  },
+  "include": ["backend/**/*.ts", "frontend/**/*.ts", "shared/**/*.ts", "tests/**/*.ts"],
+  "exclude": ["node_modules"]
+}
