@@ -10,12 +10,14 @@ export const Actions = {
   ViewAudit: 'audit:view',
   ManageMenu: 'menu:manage',
   ManageStaff: 'staff:manage',
+  ManageSystem: 'system:manage',
   TransitionOrderStatus: 'orders:transition_status',
 } as const;
 
 export type Action = (typeof Actions)[keyof typeof Actions];
 
 export const RolePermissions: Record<string, Action[]> = {
+  superadmin: Object.values(Actions),
   cashier: [Actions.CreateOrder, Actions.EditOrder, Actions.MarkDebt, Actions.CloseBill],
   waitstaff: [Actions.CreateOrder, Actions.EditOrder, Actions.TransitionOrderStatus],
   kitchen: [Actions.TransitionOrderStatus],

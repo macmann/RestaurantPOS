@@ -8,6 +8,7 @@ import { loadUser, requireActiveUser, requireAuth, authorize } from './auth/midd
 import { Actions, RolePermissions } from './auth/permissions';
 import { getCurrentBranchId, getRuntimeSettings } from './config/branch';
 import { listUsers } from './users/repository';
+import { ensureDefaultSuperadmin } from './users/bootstrap';
 import { activateUser, createStaffProfile, deactivateUser, updateStaffProfile } from './users/service';
 import { AdminMenuApi } from './menu/controller';
 import { createOrderDraft, editOrderBeforePayment, cancelOrder, transitionOrderStatus, getOrder } from './orders/service';
@@ -178,6 +179,7 @@ function permissionsForUser(user: AuthenticatedUser) {
 function buildAuthRouter(): Router {
   const router = express.Router();
   router.post('/login', send(async (req) => {
+    await ensureDefaultSuperadmin();
     const body = bodyObject(req);
     const identifier = requiredString(body.identifier ?? body.username ?? body.email ?? body.userId, 'identifier');
     const password = requiredString(body.password, 'password');
@@ -380,6 +382,9 @@ function errorHandler(error: unknown, _req: Request, res: Response, _next: NextF
 }
 
 export function createApp() {
+  void ensureDefaultSuperadmin().catch((error) => {
+    console.warn('Unable to seed default superadmin:', error);
+  });
   const app = express();
   app.disable('x-powered-by');
   app.use(express.json({ limit: '1mb' }));

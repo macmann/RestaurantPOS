@@ -18,6 +18,7 @@ export const appRoutes: AppRoute[] = [
   { path: '#/inventory-alerts', label: 'Inventory alerts', section: 'admin', requiredPermissions: [Actions.AdjustStock] },
   { path: '#/reports', label: 'Reports', section: 'admin', requiredPermissions: [Actions.ViewReports] },
   { path: '#/audit', label: 'Audit', section: 'admin', requiredPermissions: [Actions.ViewAudit] },
+  { path: '#/superadmin', label: 'Super admin panel', section: 'admin', requiredPermissions: [Actions.ManageSystem] },
   { path: '#/staff-settings', label: 'Staff & settings', section: 'admin', requiredPermissions: [Actions.ManageStaff] },
 ];
 
@@ -30,5 +31,6 @@ export function visibleRoutes(permissions: Action[]): AppRoute[] {
 }
 
 export function defaultRoute(permissions: Action[]): AppRoute {
+  if (permissions.includes(Actions.ManageSystem)) return appRoutes.find((route) => route.path === '#/superadmin') ?? appRoutes[0];
   return visibleRoutes(permissions)[0] ?? appRoutes[0];
 }
