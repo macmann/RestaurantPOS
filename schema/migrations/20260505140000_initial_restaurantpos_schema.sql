@@ -169,7 +169,6 @@ CREATE TABLE menu_items (
 CREATE INDEX idx_menu_items_branch_id ON menu_items(branch_id);
 CREATE INDEX idx_menu_items_category_id ON menu_items(category_id);
 CREATE INDEX idx_menu_items_available ON menu_items(is_available);
-
 -- =====================
 -- Table & session lifecycle
 -- =====================
@@ -395,6 +394,22 @@ CREATE TABLE inventory_items (
 CREATE INDEX idx_inventory_items_branch_id ON inventory_items(branch_id);
 CREATE INDEX idx_inventory_items_active ON inventory_items(is_active);
 
+
+CREATE TABLE menu_item_inventory_recipes (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  branch_id UUID NOT NULL REFERENCES branches(id) ON UPDATE CASCADE,
+  menu_item_id UUID NOT NULL REFERENCES menu_items(id) ON UPDATE CASCADE ON DELETE CASCADE,
+  inventory_item_id UUID NOT NULL REFERENCES inventory_items(id) ON UPDATE CASCADE,
+  quantity_per_unit NUMERIC(12,3) NOT NULL CHECK (quantity_per_unit > 0),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (menu_item_id, inventory_item_id)
+);
+
+CREATE INDEX idx_menu_item_inventory_recipes_branch_id ON menu_item_inventory_recipes(branch_id);
+CREATE INDEX idx_menu_item_inventory_recipes_menu_item_id ON menu_item_inventory_recipes(menu_item_id);
+CREATE INDEX idx_menu_item_inventory_recipes_inventory_item_id ON menu_item_inventory_recipes(inventory_item_id);
+
 CREATE TABLE stock_ledger (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   branch_id UUID NOT NULL REFERENCES branches(id) ON UPDATE CASCADE,
@@ -414,6 +429,21 @@ CREATE INDEX idx_stock_ledger_inventory_item_id ON stock_ledger(inventory_item_i
 CREATE INDEX idx_stock_ledger_order_item_id ON stock_ledger(order_item_id);
 CREATE INDEX idx_stock_ledger_entry_type ON stock_ledger(entry_type);
 CREATE INDEX idx_stock_ledger_created_at ON stock_ledger(created_at);
+
+CREATE TABLE inventory_deduction_guards (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  branch_id UUID NOT NULL REFERENCES branches(id) ON UPDATE CASCADE,
+  order_id UUID NOT NULL REFERENCES orders(id) ON UPDATE CASCADE ON DELETE CASCADE,
+  order_item_id UUID NOT NULL REFERENCES order_items(id) ON UPDATE CASCADE ON DELETE CASCADE,
+  trigger TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'COMPLETED',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  completed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (order_item_id, trigger)
+);
+
+CREATE INDEX idx_inventory_deduction_guards_order_id ON inventory_deduction_guards(order_id);
+CREATE INDEX idx_inventory_deduction_guards_order_item_id ON inventory_deduction_guards(order_item_id);
 
 -- =====================
 -- Promotions

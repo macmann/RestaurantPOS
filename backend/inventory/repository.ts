@@ -26,8 +26,31 @@ export interface StockMovementRecord {
   createdAt: string;
 }
 
+export interface MenuInventoryRecipeRecord {
+  id: string;
+  branchId: string;
+  menuItemId: string;
+  inventoryItemId: string;
+  quantityPerUnit: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface InventoryDeductionRecord {
+  id: string;
+  branchId: string;
+  orderId: string;
+  orderItemId: string;
+  trigger: string;
+  status: 'completed';
+  createdAt: string;
+  completedAt: string;
+}
+
 const inventoryItems = new Map<string, InventoryItemRecord>();
 const movementLedger = new Map<string, StockMovementRecord>();
+const recipeRows = new Map<string, MenuInventoryRecipeRecord>();
+const deductionLedger = new Map<string, InventoryDeductionRecord>();
 
 export async function createInventoryItem(record: InventoryItemRecord): Promise<InventoryItemRecord> {
   if (isSqlRepositoryEnabled()) return putRecord('inventory:items', record.id, record);
@@ -76,4 +99,30 @@ export async function listStockMovements(itemId?: string): Promise<StockMovement
   return filtered
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
     .map((row) => structuredClone(row));
+}
+
+export async function upsertMenuInventoryRecipe(record: MenuInventoryRecipeRecord): Promise<MenuInventoryRecipeRecord> {
+  if (isSqlRepositoryEnabled()) return putRecord('inventory:recipes', record.id, record);
+  recipeRows.set(record.id, structuredClone(record));
+  return structuredClone(record);
+}
+
+export async function listMenuInventoryRecipes(menuItemId?: string): Promise<MenuInventoryRecipeRecord[]> {
+  const rows = isSqlRepositoryEnabled() ? await listRecords<MenuInventoryRecipeRecord>('inventory:recipes') : [...recipeRows.values()];
+  const filtered = menuItemId ? rows.filter((row) => row.menuItemId === menuItemId) : rows;
+  return filtered
+    .sort((a, b) => a.menuItemId.localeCompare(b.menuItemId) || a.inventoryItemId.localeCompare(b.inventoryItemId))
+    .map((row) => structuredClone(row));
+}
+
+export async function getInventoryDeductionById(id: string): Promise<InventoryDeductionRecord | null> {
+  if (isSqlRepositoryEnabled()) return getRecord<InventoryDeductionRecord>('inventory:deductions', id);
+  const row = deductionLedger.get(id);
+  return row ? structuredClone(row) : null;
+}
+
+export async function createInventoryDeduction(record: InventoryDeductionRecord): Promise<InventoryDeductionRecord> {
+  if (isSqlRepositoryEnabled()) return putRecord('inventory:deductions', record.id, record);
+  deductionLedger.set(record.id, structuredClone(record));
+  return structuredClone(record);
 }

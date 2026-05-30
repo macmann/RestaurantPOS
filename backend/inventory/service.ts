@@ -4,17 +4,24 @@ import { Actions } from '../auth/permissions';
 import { getCurrentBranchId } from '../config/branch';
 import {
   createInventoryItem,
+  createInventoryDeduction,
   createStockMovement,
+  getInventoryDeductionById,
   getInventoryItemById,
   getInventoryItemBySku,
   listInventoryItems,
+  listMenuInventoryRecipes,
   listStockMovements,
+  upsertMenuInventoryRecipe,
+  type InventoryDeductionRecord,
   type InventoryItemRecord,
+  type MenuInventoryRecipeRecord,
   type StockMovementRecord,
   type StockMovementType,
 } from './repository';
 
 export type DeductionTriggerPolicy = 'on_in_preparation' | 'on_completed' | 'manual';
+export type NegativeStockPolicy = 'prevent' | 'allow';
 
 export interface InventoryItemInput {
   branchId?: string;
@@ -32,6 +39,14 @@ export interface StockMovementInput {
   quantityDelta: number;
   reason?: string;
   referenceId?: string;
+  idempotencyKey?: string;
+}
+
+export interface MenuInventoryRecipeInput {
+  branchId?: string;
+  menuItemId: string;
+  inventoryItemId: string;
+  quantityPerUnit: number;
 }
 
 export interface LowStockAlert {
@@ -47,6 +62,7 @@ export interface LowStockAlert {
 }
 
 let deductionTriggerPolicy: DeductionTriggerPolicy = 'on_in_preparation';
+let negativeStockPolicy: NegativeStockPolicy = 'prevent';
 
 function createId(prefix: string): string {
   return `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
@@ -58,6 +74,14 @@ function validateNonNegative(num: number, field: string): void {
 
 function validateNonZero(num: number, field: string): void {
   if (!Number.isFinite(num) || num === 0) throw new Error(`${field} must be a non-zero number.`);
+}
+
+function validatePositive(num: number, field: string): void {
+  if (!Number.isFinite(num) || num <= 0) throw new Error(`${field} must be greater than zero.`);
+}
+
+function createStableId(prefix: string, key: string): string {
+  return `${prefix}_${key.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 120)}`;
 }
 
 function normalizeText(value: string, field: string): string {
@@ -106,9 +130,13 @@ export async function appendStockMovement(input: StockMovementInput, actorUserId
 
   validateNonZero(input.quantityDelta, 'quantityDelta');
   const beforeBalance = await getCurrentBalance(input.itemId);
+  const afterCandidate = Math.round((beforeBalance + input.quantityDelta) * 1000) / 1000;
+  if (afterCandidate < 0 && negativeStockPolicy !== 'allow') {
+    throw new Error(`Insufficient stock for inventory item ${input.itemId}. Current balance ${beforeBalance}, requested change ${input.quantityDelta}.`);
+  }
 
   const row: StockMovementRecord = {
-    id: createId('mov'),
+    id: input.idempotencyKey ? createStableId('mov', input.idempotencyKey) : createId('mov'),
     branchId: input.branchId ?? item.branchId ?? getCurrentBranchId(),
     itemId: input.itemId,
     movementType: input.movementType,
@@ -149,6 +177,69 @@ export async function setDeductionTriggerPolicy(user: AuthenticatedUser, policy:
 
 export function getDeductionTriggerPolicy(): DeductionTriggerPolicy {
   return deductionTriggerPolicy;
+}
+
+export async function setNegativeStockPolicy(user: AuthenticatedUser, policy: NegativeStockPolicy): Promise<NegativeStockPolicy> {
+  if (!can(user, Actions.AdjustStock)) throw new Error('Forbidden: cannot configure inventory policy.');
+  negativeStockPolicy = policy;
+  return negativeStockPolicy;
+}
+
+export function getNegativeStockPolicy(): NegativeStockPolicy {
+  return negativeStockPolicy;
+}
+
+export function isNegativeStockAllowed(): boolean {
+  return negativeStockPolicy === 'allow';
+}
+
+export async function saveMenuInventoryRecipe(input: MenuInventoryRecipeInput): Promise<MenuInventoryRecipeRecord> {
+  validatePositive(input.quantityPerUnit, 'quantityPerUnit');
+  const inventoryItem = await getInventoryItemById(input.inventoryItemId);
+  if (!inventoryItem) throw new Error('Inventory item not found.');
+
+  const now = new Date().toISOString();
+  const id = createStableId('recipe', `${input.menuItemId}:${input.inventoryItemId}`);
+  return upsertMenuInventoryRecipe({
+    id,
+    branchId: input.branchId ?? inventoryItem.branchId ?? getCurrentBranchId(),
+    menuItemId: input.menuItemId,
+    inventoryItemId: input.inventoryItemId,
+    quantityPerUnit: Math.round(input.quantityPerUnit * 1000) / 1000,
+    createdAt: now,
+    updatedAt: now,
+  });
+}
+
+export async function listRecipeForMenuItem(menuItemId: string): Promise<MenuInventoryRecipeRecord[]> {
+  return listMenuInventoryRecipes(menuItemId);
+}
+
+export function createDeductionGuardId(orderItemId: string, trigger: string): string {
+  return createStableId('deduct', `${orderItemId}:${trigger}`);
+}
+
+export async function getCompletedInventoryDeduction(orderItemId: string, trigger: string): Promise<InventoryDeductionRecord | null> {
+  return getInventoryDeductionById(createDeductionGuardId(orderItemId, trigger));
+}
+
+export async function markInventoryDeductionCompleted(input: {
+  branchId: string;
+  orderId: string;
+  orderItemId: string;
+  trigger: string;
+}): Promise<InventoryDeductionRecord> {
+  const now = new Date().toISOString();
+  return createInventoryDeduction({
+    id: createDeductionGuardId(input.orderItemId, input.trigger),
+    branchId: input.branchId,
+    orderId: input.orderId,
+    orderItemId: input.orderItemId,
+    trigger: input.trigger,
+    status: 'completed',
+    createdAt: now,
+    completedAt: now,
+  });
 }
 
 export async function listInventoryWithBalances() {

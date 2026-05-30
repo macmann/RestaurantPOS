@@ -3,7 +3,15 @@ import { can, type AuthenticatedUser } from '../auth/policies';
 import { Actions } from '../auth/permissions';
 import { getCurrentBranchId } from '../config/branch';
 import { withTransaction } from '../db/client';
-import { appendStockMovement, getDeductionTriggerPolicy } from '../inventory/service';
+import {
+  appendStockMovement,
+  getCompletedInventoryDeduction,
+  getCurrentBalance,
+  getDeductionTriggerPolicy,
+  isNegativeStockAllowed,
+  listRecipeForMenuItem,
+  markInventoryDeductionCompleted,
+} from '../inventory/service';
 import { syncOrderIntoKds } from '../kds/service';
 import { getCategoryById, getItemById, type MenuItemRecord } from '../menu/repository';
 import { requireOpenTableSession } from '../tables/service';
@@ -270,10 +278,76 @@ export async function cancelOrder(user: AuthenticatedUser, orderId: string, inpu
   return order;
 }
 
+
+function deductionTriggerForStatus(nextStatus: OrderStatus): string | null {
+  const policy = getDeductionTriggerPolicy();
+  if (policy === 'on_in_preparation' && nextStatus === 'in_preparation') return policy;
+  if (policy === 'on_completed' && nextStatus === 'completed') return policy;
+  return null;
+}
+
+
+async function assertInventoryDeductionCanComplete(order: OrderRecord, trigger: string): Promise<void> {
+  const requiredByInventoryItem = new Map<string, number>();
+  for (const item of order.items) {
+    if (await getCompletedInventoryDeduction(item.id, trigger)) continue;
+
+    const recipeRows = await listRecipeForMenuItem(item.menuItemId);
+    if (recipeRows.length === 0) throw new Error(`Missing inventory recipe mapping for menu item ${item.menuItemId}.`);
+
+    for (const recipe of recipeRows) {
+      const required = Math.abs(item.quantity * recipe.quantityPerUnit);
+      requiredByInventoryItem.set(recipe.inventoryItemId, (requiredByInventoryItem.get(recipe.inventoryItemId) ?? 0) + required);
+    }
+  }
+
+  if (isNegativeStockAllowed()) return;
+  for (const [inventoryItemId, required] of requiredByInventoryItem) {
+    const balance = await getCurrentBalance(inventoryItemId);
+    if (Math.round((balance - required) * 1000) / 1000 < 0) {
+      throw new Error(`Insufficient stock for inventory item ${inventoryItemId}. Current balance ${balance}, required ${required}.`);
+    }
+  }
+}
+
+async function deductInventoryForOrder(order: OrderRecord, trigger: string, actorUserId: string): Promise<void> {
+  for (const item of order.items) {
+    const existingDeduction = await getCompletedInventoryDeduction(item.id, trigger);
+    if (existingDeduction) continue;
+
+    const recipeRows = await listRecipeForMenuItem(item.menuItemId);
+    if (recipeRows.length === 0) throw new Error(`Missing inventory recipe mapping for menu item ${item.menuItemId}.`);
+
+    for (const recipe of recipeRows) {
+      await appendStockMovement(
+        {
+          branchId: order.branchId,
+          itemId: recipe.inventoryItemId,
+          movementType: 'sale_deduction',
+          quantityDelta: -Math.abs(item.quantity * recipe.quantityPerUnit),
+          reason: `Auto deduction for order ${order.id}, order item ${item.id}`,
+          referenceId: order.id,
+          idempotencyKey: `${order.id}:${item.id}:${trigger}:${recipe.inventoryItemId}`,
+        },
+        actorUserId,
+      );
+    }
+
+    await markInventoryDeductionCompleted({ branchId: order.branchId, orderId: order.id, orderItemId: item.id, trigger });
+  }
+}
+
 export async function transitionOrderStatus(user: AuthenticatedUser, orderId: string, expectedVersion: number, nextStatus: OrderStatus): Promise<OrderRecord> {
   if (!can(user, Actions.TransitionOrderStatus)) throw new Error('Forbidden: cannot transition order status.');
 
   return withTransaction(async () => {
+    const pendingDeductionTrigger = deductionTriggerForStatus(nextStatus);
+    if (pendingDeductionTrigger) {
+      const currentOrder = await getOrderById(orderId);
+      if (!currentOrder) throw new Error('Order not found.');
+      await assertInventoryDeductionCanComplete(currentOrder, pendingDeductionTrigger);
+    }
+
     const order = await updateOrderWithVersionCheck(orderId, expectedVersion, (draft) => {
       assertBranchMatch(user, draft.branchId);
       const roles = Array.isArray(user.role) ? user.role : [user.role];
@@ -285,23 +359,9 @@ export async function transitionOrderStatus(user: AuthenticatedUser, orderId: st
       return draft;
     });
 
-    if (nextStatus === 'in_preparation' && getDeductionTriggerPolicy() === 'on_in_preparation') {
-      for (const item of order.items) {
-        try {
-          await appendStockMovement(
-            {
-              itemId: item.inventoryItemId ?? item.menuItemId,
-              movementType: 'sale_deduction',
-              quantityDelta: -Math.abs(item.quantity),
-              reason: `Auto deduction for order ${order.id}`,
-              referenceId: order.id,
-            },
-            user.id,
-          );
-        } catch {
-          // Skip deduction if no inventory mapping exists for the order item.
-        }
-      }
+    const deductionTrigger = pendingDeductionTrigger;
+    if (deductionTrigger) {
+      await deductInventoryForOrder(order, deductionTrigger, user.id);
     }
 
     await syncOrderIntoKds(order);
