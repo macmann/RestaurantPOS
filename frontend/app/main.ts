@@ -1,5 +1,6 @@
 import { getStoredSession, login, logout, type BrowserSession } from '../auth/session';
 import { appRoutes, canAccessRoute, defaultRoute, visibleRoutes, type AppRoute } from '../auth/navigation';
+import type { AuthenticatedUser } from '../../backend/auth/policies';
 import { loadKitchenQueue } from '../kds/kitchen-screen';
 import { loadBarQueue } from '../kds/bar-screen';
 import { loadOrderProgressForWaiter } from '../waiter/order-progress';
@@ -43,17 +44,20 @@ function renderLogin(): void {
   card.innerHTML = `
     <p class="eyebrow">RestaurantPOS</p>
     <h1>Sign in</h1>
-    <p>Enter an active backend user ID. The browser stores only the selected session user and sends it as <code>x-user-id</code>.</p>
-    <label>User ID<input name="userId" autocomplete="username" placeholder="manager-1" required /></label>
-    <button type="submit">Start session</button>
+    <p>Enter your staff username or email and password. The browser stores only a revocable session token.</p>
+    <label>Username or email<input name="identifier" autocomplete="username" placeholder="manager-1" required /></label>
+    <label>Password<input name="password" type="password" autocomplete="current-password" required /></label>
+    <button type="submit">Start secure session</button>
     <p class="form-error" hidden></p>
   `;
   card.addEventListener('submit', async (event) => {
     event.preventDefault();
-    const input = new FormData(card).get('userId');
+    const form = new FormData(card);
+    const input = form.get('identifier');
+    const password = form.get('password');
     const error = card.querySelector<HTMLParagraphElement>('.form-error');
     try {
-      session = await login(String(input ?? ''));
+      session = await login(String(input ?? ''), String(password ?? ''));
       navigate(defaultRoute(session.permissions).path);
     } catch (caught) {
       if (error) {
@@ -95,9 +99,10 @@ function renderShell(content: HTMLElement): void {
 
   const signOut = el('button', 'secondary', 'Sign out');
   signOut.addEventListener('click', () => {
-    logout();
-    session = null;
-    renderLogin();
+    void logout().finally(() => {
+      session = null;
+      renderLogin();
+    });
   });
   sidebar.append(signOut);
 
@@ -118,6 +123,100 @@ function page(title: string, subtitle: string, actions: string[] = []): HTMLElem
     grid.append(card);
   }
   section.append(header, grid);
+  return section;
+}
+
+
+function rolesFor(user: AuthenticatedUser): string {
+  return Array.isArray(user.role) ? user.role.join(',') : user.role;
+}
+
+async function renderStaffSettings(): Promise<HTMLElement> {
+  const section = page('Staff & settings administration', 'Create staff profiles, rotate passwords, assign roles, and deactivate access immediately.', ['Staff users', 'Role assignment', 'Activation', 'Branch settings']);
+  const panel = el('section', 'admin-panel');
+  const [users, settings] = await Promise.all([apiClient.listUsers(), apiClient.getSettings()]);
+  panel.innerHTML = `
+    <article class="card admin-card">
+      <h3>Create staff profile</h3>
+      <form class="staff-form">
+        <label>User ID<input name="id" placeholder="server-01" /></label>
+        <label>Username<input name="username" required /></label>
+        <label>Email<input name="email" type="email" /></label>
+        <label>Initial password<input name="password" type="password" minlength="8" required /></label>
+        <label>Role<select name="role"><option>waitstaff</option><option>cashier</option><option>kitchen</option><option>bar</option><option>shift_lead</option><option>inventory_clerk</option><option>manager</option><option>admin</option></select></label>
+        <label>Branch<input name="branchId" value="${session?.user.branchId ?? ''}" /></label>
+        <button type="submit">Create profile</button>
+        <p class="form-error" hidden></p>
+      </form>
+    </article>
+    <article class="card admin-card">
+      <h3>Runtime settings</h3>
+      <pre class="json-preview compact">${JSON.stringify(settings, null, 2)}</pre>
+    </article>
+  `;
+
+  const table = el('table', 'staff-table');
+  table.innerHTML = '<thead><tr><th>Staff</th><th>Role</th><th>Branch</th><th>Status</th><th>Update role/password</th><th>Access</th></tr></thead>';
+  const body = el('tbody');
+  for (const user of users) {
+    const row = el('tr');
+    row.innerHTML = `
+      <td><strong>${user.username ?? user.id}</strong><br><small>${user.email ?? user.id}</small></td>
+      <td>${rolesFor(user)}</td>
+      <td>${user.branchId ?? '—'}</td>
+      <td><span class="status-pill ${user.status}">${user.status}</span></td>
+      <td>
+        <form class="inline-staff-form" data-user-id="${user.id}">
+          <select name="role"><option ${rolesFor(user) === 'waitstaff' ? 'selected' : ''}>waitstaff</option><option ${rolesFor(user) === 'cashier' ? 'selected' : ''}>cashier</option><option ${rolesFor(user) === 'kitchen' ? 'selected' : ''}>kitchen</option><option ${rolesFor(user) === 'bar' ? 'selected' : ''}>bar</option><option ${rolesFor(user) === 'shift_lead' ? 'selected' : ''}>shift_lead</option><option ${rolesFor(user) === 'inventory_clerk' ? 'selected' : ''}>inventory_clerk</option><option ${rolesFor(user) === 'manager' ? 'selected' : ''}>manager</option><option ${rolesFor(user) === 'admin' ? 'selected' : ''}>admin</option></select>
+          <input name="password" type="password" minlength="8" placeholder="new password" />
+          <button type="submit">Save</button>
+        </form>
+      </td>
+      <td><button class="secondary toggle-staff" data-user-id="${user.id}" data-next-status="${user.status === 'active' ? 'inactive' : 'active'}">${user.status === 'active' ? 'Deactivate' : 'Activate'}</button></td>
+    `;
+    body.append(row);
+  }
+  table.append(body);
+  panel.append(table);
+  section.append(panel);
+
+  panel.querySelector<HTMLFormElement>('.staff-form')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget as HTMLFormElement;
+    const data = new FormData(form);
+    const error = form.querySelector<HTMLParagraphElement>('.form-error');
+    try {
+      await apiClient.createUser({
+        id: String(data.get('id') ?? '').trim() || undefined,
+        username: String(data.get('username') ?? ''),
+        email: String(data.get('email') ?? '').trim() || undefined,
+        password: String(data.get('password') ?? ''),
+        role: String(data.get('role') ?? 'waitstaff'),
+        branchId: String(data.get('branchId') ?? '').trim() || undefined,
+      });
+      render();
+    } catch (caught) {
+      if (error) {
+        error.hidden = false;
+        error.textContent = caught instanceof Error ? caught.message : 'Unable to create user.';
+      }
+    }
+  });
+
+  panel.querySelectorAll<HTMLFormElement>('.inline-staff-form').forEach((form) => form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const data = new FormData(form);
+    const password = String(data.get('password') ?? '');
+    await apiClient.updateUser(form.dataset.userId!, { role: String(data.get('role') ?? 'waitstaff'), password: password || undefined });
+    render();
+  }));
+
+  panel.querySelectorAll<HTMLButtonElement>('.toggle-staff').forEach((button) => button.addEventListener('click', async () => {
+    if (button.dataset.nextStatus === 'active') await apiClient.activateUser(button.dataset.userId!);
+    else await apiClient.deactivateUser(button.dataset.userId!);
+    render();
+  }));
+
   return section;
 }
 
@@ -177,8 +276,7 @@ async function renderRoute(): Promise<void> {
       await attachJsonPreview(content, () => loadAdminAuditViewer(session!.user));
       break;
     case '#/staff-settings':
-      content = page('Staff & settings administration', 'Administer users and branch/runtime settings.', ['Staff users', 'Activation', 'Branch settings', 'Inventory settings']);
-      await attachJsonPreview(content, async () => ({ users: await apiClient.listUsers(), settings: await apiClient.getSettings() }));
+      content = await renderStaffSettings();
       break;
     default:
       content = page(current.label, 'Route shell ready for production workflows.');

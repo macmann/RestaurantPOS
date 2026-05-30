@@ -4,6 +4,12 @@ import { listRecords, putRecord } from '../db/repositoryStore';
 export const AUDIT_ACTIONS = [
   'login_succeeded',
   'login_failed',
+  'logout_succeeded',
+  'user_created',
+  'user_updated',
+  'user_activated',
+  'user_deactivated',
+  'password_changed',
   'order_edited',
   'order_cancelled',
   'bill_voided',

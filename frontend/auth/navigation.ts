@@ -18,7 +18,7 @@ export const appRoutes: AppRoute[] = [
   { path: '#/inventory-alerts', label: 'Inventory alerts', section: 'admin', requiredPermissions: [Actions.AdjustStock] },
   { path: '#/reports', label: 'Reports', section: 'admin', requiredPermissions: [Actions.ViewReports] },
   { path: '#/audit', label: 'Audit', section: 'admin', requiredPermissions: [Actions.ViewAudit] },
-  { path: '#/staff-settings', label: 'Staff & settings', section: 'admin', requiredPermissions: [Actions.ViewAudit] },
+  { path: '#/staff-settings', label: 'Staff & settings', section: 'admin', requiredPermissions: [Actions.ManageStaff] },
 ];
 
 export function canAccessRoute(route: AppRoute, permissions: Action[]): boolean {
