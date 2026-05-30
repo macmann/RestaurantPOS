@@ -4,12 +4,17 @@
   "private": true,
   "type": "commonjs",
   "scripts": {
-    "typecheck": "npx tsc --noEmit",
-    "build": "npx tsc -p tsconfig.json --outDir dist",
-    "test:e2e": "npm run build -- --noEmit false && node dist/tests/e2e-pos-flow.test.js",
+    "typecheck": "tsc --noEmit",
+    "build": "npm run build:api && npm run build:frontend",
+    "test:e2e": "npm run build:api -- --noEmit false && node dist/tests/e2e-pos-flow.test.js",
     "dev:api": "tsx backend/server.ts",
     "start:api": "node dist/backend/server.js",
-    "start": "npm run start:api"
+    "start": "npm run start:api",
+    "dev:frontend": "npm run build:frontend && node scripts/preview-frontend.mjs",
+    "build:frontend": "node scripts/build-frontend.mjs",
+    "preview:frontend": "node scripts/preview-frontend.mjs",
+    "start:frontend": "npm run preview:frontend",
+    "build:api": "tsc -p tsconfig.json --outDir dist"
   },
   "dependencies": {
     "express": "^4.18.3"

@@ -1,12 +1,11 @@
-import { InventoryAdminApi } from '../../backend/inventory/controller';
-import { getLocaleResource } from '../../backend/i18n/service';
-import { buildLocaleSwitchState } from '../i18n/locale-switcher';
+import { buildLocaleSwitchState, getLocaleResource } from '../i18n/locale-switcher';
+import { apiClient } from '../api/client';
 
 export interface AdminInventoryAlertsState {
   loading: boolean;
   error?: string;
-  policy: Awaited<ReturnType<typeof InventoryAdminApi.getDeductionPolicy>>;
-  alerts: Awaited<ReturnType<typeof InventoryAdminApi.listAlerts>>;
+  policy: Awaited<ReturnType<typeof apiClient.getInventoryDeductionPolicy>>;
+  alerts: Awaited<ReturnType<typeof apiClient.getInventoryAlerts>>;
   title: string;
   localeSwitch: ReturnType<typeof buildLocaleSwitchState>;
 }
@@ -14,7 +13,7 @@ export interface AdminInventoryAlertsState {
 export async function loadAdminInventoryAlerts(locale?: string): Promise<AdminInventoryAlertsState> {
   const resource = getLocaleResource(locale);
   try {
-    const [policy, alerts] = await Promise.all([InventoryAdminApi.getDeductionPolicy(), InventoryAdminApi.listAlerts()]);
+    const [policy, alerts] = await Promise.all([apiClient.getInventoryDeductionPolicy(), apiClient.getInventoryAlerts()]);
     return { loading: false, policy, alerts, title: resource.screens.inventory_alerts, localeSwitch: buildLocaleSwitchState(resource.locale) };
   } catch (error) {
     return {

@@ -1,30 +1,23 @@
 import type { AuthenticatedUser } from '../../backend/auth/policies';
-import { getLocaleResource } from '../../backend/i18n/service';
-import { buildLocaleSwitchState } from '../i18n/locale-switcher';
-import {
-  createOrderDraft,
-  editOrderBeforePayment,
-  getOrder,
-  transitionOrderStatus,
-  type CreateOrderInput,
-  type EditOrderInput,
-} from '../../backend/orders/service';
+import { buildLocaleSwitchState, getLocaleResource } from '../i18n/locale-switcher';
+import type { CreateOrderInput, EditOrderInput } from '../../backend/orders/service';
+import { apiClient } from '../api/client';
 import type { OrderStatus } from '../../backend/orders/repository';
 
 export async function startDineInOrder(user: AuthenticatedUser, tableId: string, seed?: CreateOrderInput['items']) {
-  return createOrderDraft(user, { serviceMode: 'dine_in', tableId, items: seed });
+  return apiClient.createOrder(user.id, { serviceMode: 'dine_in', tableId, items: seed });
 }
 
 export async function startTakeoutOrder(user: AuthenticatedUser, customerName: string, seed?: CreateOrderInput['items']) {
-  return createOrderDraft(user, { serviceMode: 'takeout', takeoutName: customerName, items: seed });
+  return apiClient.createOrder(user.id, { serviceMode: 'takeout', takeoutName: customerName, items: seed });
 }
 
 export async function updateOrderCart(user: AuthenticatedUser, orderId: string, edit: EditOrderInput) {
-  return editOrderBeforePayment(user, orderId, edit);
+  return apiClient.editOrder(user.id, orderId, edit);
 }
 
 export async function advanceOrderStatus(user: AuthenticatedUser, orderId: string, expectedVersion: number, nextStatus: OrderStatus) {
-  return transitionOrderStatus(user, orderId, expectedVersion, nextStatus);
+  return apiClient.transitionOrderStatus(user.id, orderId, expectedVersion, nextStatus);
 }
 
 export async function loadOrderForScreen(orderId: string, locale?: string) {
@@ -32,6 +25,6 @@ export async function loadOrderForScreen(orderId: string, locale?: string) {
   return {
     title: resource.screens.orders,
     localeSwitch: buildLocaleSwitchState(resource.locale),
-    order: await getOrder(orderId),
+    order: await apiClient.getOrder(orderId),
   };
 }

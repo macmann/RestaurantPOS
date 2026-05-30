@@ -3,10 +3,10 @@ declare const require: { main?: unknown };
 declare const module: unknown;
 import express, { type NextFunction, type Request, type Response, type Router } from 'express';
 import { requireActiveUser, requireAuth, authorize } from './auth/middleware';
-import { Actions } from './auth/permissions';
+import { Actions, RolePermissions } from './auth/permissions';
 import { getCurrentBranchId, getRuntimeSettings } from './config/branch';
 import { saveUser, getUserById, listUsers } from './users/repository';
-import { activateUser, deactivateUser } from './users/service';
+import { activateUser, assertLoginAllowed, deactivateUser } from './users/service';
 import { AdminMenuApi } from './menu/controller';
 import { createOrderDraft, editOrderBeforePayment, cancelOrder, transitionOrderStatus, getOrder } from './orders/service';
 import { listOrders } from './orders/repository';
@@ -123,6 +123,25 @@ function parseLimit(value: unknown): number | undefined {
   const numeric = Number(value);
   if (!Number.isInteger(numeric) || numeric < 1) throw new HttpError(400, 'limit must be a positive integer.');
   return numeric;
+}
+
+
+function permissionsForUser(user: AuthenticatedUser) {
+  const roles = Array.isArray(user.role) ? user.role : [user.role];
+  return Array.from(new Set(roles.flatMap((role) => RolePermissions[role] ?? []))).sort();
+}
+
+function buildAuthRouter(): Router {
+  const router = express.Router();
+  router.post('/login', send(async (req) => {
+    const userId = requiredString(bodyObject(req).userId, 'userId');
+    await assertLoginAllowed(userId);
+    const user = await getUserById(userId);
+    if (!user) throw new HttpError(401, 'Invalid credentials.');
+    return { user, permissions: permissionsForUser(user) };
+  }));
+  router.get('/me', requireAuth, asyncRoute(requireActiveUser as AsyncHandler), send((req) => ({ user: requireUser(req), permissions: permissionsForUser(requireUser(req)) })));
+  return router;
 }
 
 function buildMenuRouter(): Router {
@@ -277,6 +296,7 @@ export function createApp() {
   app.use(express.json({ limit: '1mb' }));
   app.use(attachUser);
   app.get('/healthz', (_req: Request, res: Response) => res.json({ ok: true, at: new Date().toISOString() }));
+  app.use('/auth', buildAuthRouter());
 
   const api = express.Router();
   api.use(requireAuth, asyncRoute(requireActiveUser as AsyncHandler));
