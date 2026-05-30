@@ -24,6 +24,7 @@ export interface DatabaseConfig {
   user: string;
   password: string;
   ssl: boolean;
+  connectionString?: string;
 }
 
 type PgPoolConstructor = new (config: Record<string, unknown>) => PoolLike;
@@ -38,9 +39,28 @@ let pool: PoolLike | null = null;
 const { AsyncLocalStorage } = require('async_hooks') as { AsyncLocalStorage: new <T>() => AsyncLocalStorageLike<T> };
 const txStorage = new AsyncLocalStorage<DatabaseClient>();
 
+function readBoolean(value: string | undefined, fallback = false): boolean {
+  if (value === undefined) return fallback;
+  return ['1', 'true', 'yes', 'require'].includes(value.toLowerCase());
+}
+
 export function readDatabaseConfig(env: ProcessEnv = process.env): DatabaseConfig {
   const client = env.DB_CLIENT ?? 'postgres';
   if (client !== 'postgres') throw new Error(`Unsupported DB_CLIENT '${client}'. Only postgres is supported.`);
+
+  if (env.DATABASE_URL) {
+    const url = new URL(env.DATABASE_URL);
+    return {
+      client,
+      host: url.hostname,
+      port: Number.parseInt(url.port || '5432', 10),
+      database: decodeURIComponent(url.pathname.replace(/^\//, '')),
+      user: decodeURIComponent(url.username),
+      password: decodeURIComponent(url.password),
+      ssl: readBoolean(env.DB_SSL, url.searchParams.get('sslmode') === 'require'),
+      connectionString: env.DATABASE_URL,
+    };
+  }
 
   return {
     client,
@@ -49,7 +69,7 @@ export function readDatabaseConfig(env: ProcessEnv = process.env): DatabaseConfi
     database: env.DB_NAME ?? 'restaurant_pos',
     user: env.DB_USER ?? 'pos_user',
     password: env.DB_PASSWORD ?? '',
-    ssl: (env.DB_SSL ?? 'false').toLowerCase() === 'true',
+    ssl: readBoolean(env.DB_SSL),
   };
 }
 
@@ -59,7 +79,8 @@ function requirePgPool(): PgPoolConstructor {
 }
 
 export function isSqlRepositoryEnabled(): boolean {
-  return (process.env.POS_REPOSITORY_BACKEND ?? process.env.RESTAURANTPOS_REPOSITORY_BACKEND ?? '').toLowerCase() === 'postgres';
+  const backend = (process.env.POS_REPOSITORY_BACKEND ?? process.env.RESTAURANTPOS_REPOSITORY_BACKEND ?? '').toLowerCase();
+  return backend === 'postgres' || (!!process.env.DATABASE_URL && backend !== 'memory');
 }
 
 export function getDatabasePool(): PoolLike {
@@ -67,11 +88,13 @@ export function getDatabasePool(): PoolLike {
   const config = readDatabaseConfig();
   const Pool = requirePgPool();
   pool = new Pool({
-    host: config.host,
-    port: config.port,
-    database: config.database,
-    user: config.user,
-    password: config.password,
+    ...(config.connectionString ? { connectionString: config.connectionString } : {
+      host: config.host,
+      port: config.port,
+      database: config.database,
+      user: config.user,
+      password: config.password,
+    }),
     ssl: config.ssl ? { rejectUnauthorized: false } : false,
   });
   return pool;

@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: restaurant-pos
+    runtime: node
+    buildCommand: npm ci && npm run build
+    startCommand: npm run render:start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: APP_ENV
+        value: production
+      - key: POS_REPOSITORY_BACKEND
+        value: postgres
+      - key: DB_SSL
+        value: true
+      - key: DATABASE_URL
+        sync: false

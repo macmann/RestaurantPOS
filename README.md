@@ -2,7 +2,7 @@
 
 RestaurantPOS is a TypeScript point-of-sale foundation for restaurants. It models branch-scoped ordering, kitchen/bar display workflows, billing, inventory, reporting, auditing, localization, and LAN-first reconnect behavior.
 
-> **Current runtime status:** this repository currently contains domain modules, frontend view-model helpers, database schema files, and an end-to-end in-memory workflow test. It does **not** yet include a long-running HTTP server or packaged browser app entry point. Use the scripts below to type-check, build, and validate the POS flow.
+> **Current runtime status:** this repository builds a single deployable Node/Express application. The API serves `/api/*` and `/auth/*`, and the same process serves the compiled browser app from `dist/frontend` for all other routes.
 
 ## Repository layout
 
@@ -12,24 +12,22 @@ RestaurantPOS is a TypeScript point-of-sale foundation for restaurants. It model
 | `frontend/` | UI-facing TypeScript view-model helpers for order entry, billing, KDS/bar screens, admin screens, localization, and reconnect policy. |
 | `shared/` | Cross-cutting shared TypeScript contracts. |
 | `tests/` | End-to-end POS workflow test that exercises the domain modules after compilation. |
-| `schema/migrations/` | PostgreSQL schema migration for a future persistent deployment. |
+| `schema/migrations/` | PostgreSQL schema migration for persistent deployments. |
 | `docs/` | Architecture, LAN deployment, RBAC, ERD, pricing rules, MVP acceptance, and readiness documentation. |
 
 ## Prerequisites
 
 - Node.js 20 or newer is recommended because the code targets modern ECMAScript (`ES2022`) and uses APIs such as `structuredClone`.
 - npm, bundled with Node.js.
-- PostgreSQL 14+ only if you are preparing a persistent database from `schema/migrations/`. The current automated test flow uses in-memory repositories and does not require a running database.
+- PostgreSQL 14+ only if you are preparing a persistent database from `schema/migrations/` or deploying with persistent repositories. Local automated tests can still use in-memory repositories.
 
 ## Install dependencies
 
-This project intentionally has no checked-in dependency list beyond scripts that invoke TypeScript through `npx`. Install or resolve TypeScript before running checks:
+Install the checked-in dependencies before running checks or starting the application:
 
 ```bash
-npm install --save-dev typescript
+npm install
 ```
-
-Alternatively, if you do not want to write a local `package-lock.json`, `npx` can download TypeScript on demand when the scripts run.
 
 ## Environment configuration
 
@@ -52,18 +50,20 @@ Alternatively, if you do not want to write a local `package-lock.json`, `npx` ca
 
 | Variable | Required? | Default in code/template | Description |
 | --- | --- | --- | --- |
-| `APP_ENV` | No | `development` | Deployment environment label for operators and future server startup. |
+| `APP_ENV` | No | `development` | Deployment environment label for operators and server startup. |
 | `APP_NAME` | No | `RestaurantPOS` | Human-readable app name. |
-| `HOST` | No | `0.0.0.0` | Intended server bind address for a future HTTP/API process. |
-| `PORT` | No | `8080` | Intended server port for a future HTTP/API process. |
+| `HOST` | No | `0.0.0.0` | Server bind address for the combined HTTP/API process. |
+| `PORT` | No | `8080` | Server port for the combined HTTP/API process. Render provides this automatically. |
 | `LAN_BASE_URL` | Recommended for deployments | Example LAN URL | Base URL client devices should use on the restaurant network. |
 | `DB_CLIENT` | Required for persistent DB deployment | `postgres` | Database engine expected by the schema migration. |
-| `DB_HOST` | Required for persistent DB deployment | Example LAN IP | PostgreSQL host. |
+| `DATABASE_URL` | Recommended on Render | unset | Full PostgreSQL connection string. When set, it takes precedence over the individual `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, and `DB_PASSWORD` values. |
+| `DB_HOST` | Required for persistent DB deployment without `DATABASE_URL` | Example LAN IP | PostgreSQL host. |
 | `DB_PORT` | Required for persistent DB deployment | `5432` | PostgreSQL port. |
 | `DB_NAME` | Required for persistent DB deployment | `restaurant_pos` | PostgreSQL database name. |
 | `DB_USER` | Required for persistent DB deployment | `pos_user` | PostgreSQL user. |
 | `DB_PASSWORD` | Required for persistent DB deployment | `change_me` | PostgreSQL password. Change this for every environment. |
-| `DB_SSL` | No | `false` | Whether the PostgreSQL client should use SSL in a future persistent runtime. |
+| `DB_SSL` | No | `false` | Whether the PostgreSQL client should use SSL. Render deployments set this to `true`. |
+| `POS_REPOSITORY_BACKEND` | Required for persistent repositories | unset | Set to `postgres` to persist orders, billing, menu, inventory, sessions, audit, tables, and idempotency records in PostgreSQL. `DATABASE_URL` also enables PostgreSQL unless this is set to `memory`. |
 | `POS_BRANCH_ID` | Recommended | `main` in code | Stable branch/location key used to partition reports and records. Keep it unchanged for a physical branch. |
 | `POS_BRANCH_NAME` | Recommended | `Main Branch` in code | Human-readable branch name for manager UI and exports. |
 | `POS_LOCATION_LABEL` | No | unset | Address, mall, floor, or other location label for receipt/report context. |
@@ -79,7 +79,7 @@ Alternatively, if you do not want to write a local `package-lock.json`, `npx` ca
 | `DEFAULT_LOCALE` | No | `en-US` in template | Default locale expected by deployment tooling. Current i18n helpers support English and Myanmar resources internally. |
 | `DEFAULT_CURRENCY` | No | `USD` | Currency code for future receipt/report formatting. |
 | `TIMEZONE` | Recommended | `America/New_York` in template | Restaurant timezone for business-day reporting and operations. |
-| `LOG_LEVEL` | No | `info` | Intended logging verbosity for a future server runtime. |
+| `LOG_LEVEL` | No | `info` | Intended logging verbosity for the server runtime. |
 | `AUDIT_RETENTION_DAYS` | Recommended | `365` | Intended retention period for audit events. |
 
 ## How to run locally
@@ -96,7 +96,39 @@ npm run typecheck
 npm run build
 ```
 
-Compiled JavaScript is emitted to `dist/`.
+Compiled backend JavaScript is emitted to `dist/backend`, and the browser app is emitted to `dist/frontend`.
+
+
+### Run the single application
+
+After building, start the combined API and frontend server:
+
+```bash
+npm start
+```
+
+The server binds to `HOST` and `PORT` (`0.0.0.0:8080` by default). API routes stay under `/api/*`, authentication routes stay under `/auth/*`, health checks are available at `/healthz` and `/api/health`, and browser routes fall back to `dist/frontend/index.html`.
+
+### Render deployment
+
+This repo includes a Render Blueprint at `render.yaml` for one Node web service. It expects you to provide a PostgreSQL `DATABASE_URL`, so it works with Neon or another managed PostgreSQL provider instead of requiring a Render-managed database. The web service:
+
+1. installs dependencies and builds both backend and frontend with `npm ci && npm run build`,
+2. prompts for `DATABASE_URL` as a secret value in Render,
+3. runs `npm run render:start`, which applies migrations and starts the combined Express app, and
+4. uses `/healthz` as the Render HTTP health check.
+
+To deploy on Render with Neon, create a Neon PostgreSQL database, copy its pooled or direct PostgreSQL connection string, then create a new Blueprint from this repository and paste that value for `DATABASE_URL`. If you configure the service manually instead of using the Blueprint, use these settings:
+
+| Setting | Value |
+| --- | --- |
+| Runtime | Node |
+| Build command | `npm ci && npm run build` |
+| Start command | `npm run render:start` |
+| Health check path | `/healthz` |
+| Required env vars | `APP_ENV=production`, `POS_REPOSITORY_BACKEND=postgres`, `DB_SSL=true`, `DATABASE_URL=<your Neon or PostgreSQL connection string>` |
+
+Render provides `PORT`; do not hard-code it in the dashboard. Neon connection strings normally include `sslmode=require`; the app preserves the full `DATABASE_URL` when connecting with `pg`, so Neon-specific query parameters such as pooler options remain available.
 
 ### Run the end-to-end POS workflow
 
@@ -130,7 +162,7 @@ For a PostgreSQL-backed deployment, create the database/user matching `.env`, th
 npm run db:migrate
 ```
 
-The runner reads `DB_CLIENT`, `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, and `DB_SSL` from the environment.
+The runner reads `DATABASE_URL` when present; otherwise it reads `DB_CLIENT`, `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, and `DB_SSL` from the environment.
 
 ## LAN deployment notes
 
@@ -144,9 +176,11 @@ The runner reads `DB_CLIENT`, `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PA
 
 | Script | Command | Description |
 | --- | --- | --- |
-| `typecheck` | `npx tsc --noEmit` | Validates TypeScript without writing output. |
-| `build` | `npx tsc -p tsconfig.json --outDir dist` | Compiles all included TypeScript to `dist/`. |
-| `test:e2e` | `npm run build -- --noEmit false && node dist/tests/e2e-pos-flow.test.js` | Builds and executes the end-to-end POS flow test. |
+| `typecheck` | `tsc --noEmit` | Validates TypeScript without writing output. |
+| `build` | `npm run build:api && npm run build:frontend` | Compiles the backend/API and packaged browser app to `dist/`. |
+| `start` | `npm run start:api` | Starts the combined API/frontend Express application from `dist/backend/server.js`. |
+| `render:start` | `npm run db:migrate && npm run start:api` | Applies PostgreSQL migrations, then starts the combined app for Render. |
+| `test:e2e` | `npm run build:api -- --noEmit false && node dist/tests/e2e-pos-flow.test.js && ...` | Builds and executes the end-to-end POS flow tests. |
 
 ## Additional documentation
 
