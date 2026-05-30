@@ -2,11 +2,11 @@ declare const process: { env: Record<string, string | undefined> };
 declare const require: { main?: unknown };
 declare const module: unknown;
 import express, { type NextFunction, type Request, type Response, type Router } from 'express';
-import { requireActiveUser, requireAuth, authorize } from './auth/middleware';
+import { loadUser, requireActiveUser, requireAuth, authorize } from './auth/middleware';
 import { Actions, RolePermissions } from './auth/permissions';
 import { getCurrentBranchId, getRuntimeSettings } from './config/branch';
-import { saveUser, getUserById, listUsers } from './users/repository';
-import { activateUser, assertLoginAllowed, deactivateUser } from './users/service';
+import { listUsers } from './users/repository';
+import { activateUser, createStaffProfile, deactivateUser, updateStaffProfile } from './users/service';
 import { AdminMenuApi } from './menu/controller';
 import { createOrderDraft, editOrderBeforePayment, cancelOrder, transitionOrderStatus, getOrder } from './orders/service';
 import { listOrders } from './orders/repository';
@@ -27,6 +27,7 @@ import { ReportsApi } from './reports/controller';
 import { AdminAuditApi } from './audit/controller';
 import { TablesApi } from './tables/controller';
 import type { AuthenticatedUser } from './auth/policies';
+import { loginWithPassword, logoutSession } from './auth/service';
 
 const DEFAULT_PORT = 8080;
 const DEFAULT_HOST = '0.0.0.0';
@@ -42,19 +43,6 @@ class HttpError extends Error {
   ) {
     super(message);
   }
-}
-
-function getHeader(req: Request, name: string): string | undefined {
-  const value = (req as any).headers?.[name.toLowerCase()];
-  return Array.isArray(value) ? value[0] : value;
-}
-
-async function attachUser(req: Request, _res: Response, next: NextFunction): Promise<void> {
-  const userId = getHeader(req, 'x-user-id');
-  if (userId) {
-    req.user = (await getUserById(userId)) ?? undefined;
-  }
-  next();
 }
 
 function asyncRoute(handler: AsyncHandler): AsyncHandler {
@@ -135,11 +123,15 @@ function permissionsForUser(user: AuthenticatedUser) {
 function buildAuthRouter(): Router {
   const router = express.Router();
   router.post('/login', send(async (req) => {
-    const userId = requiredString(bodyObject(req).userId, 'userId');
-    await assertLoginAllowed(userId);
-    const user = await getUserById(userId);
-    if (!user) throw new HttpError(401, 'Invalid credentials.');
-    return { user, permissions: permissionsForUser(user) };
+    const body = bodyObject(req);
+    const identifier = requiredString(body.identifier ?? body.username ?? body.email ?? body.userId, 'identifier');
+    const password = requiredString(body.password, 'password');
+    const result = await loginWithPassword({ identifier, password });
+    return { ...result, permissions: permissionsForUser(result.user) };
+  }));
+  router.post('/logout', requireAuth, send(async (req) => {
+    if ((req as any).sessionToken) await logoutSession((req as any).sessionToken, req.user);
+    return { ok: true };
   }));
   router.get('/me', requireAuth, asyncRoute(requireActiveUser as AsyncHandler), send((req) => ({ user: requireUser(req), permissions: permissionsForUser(requireUser(req)) })));
   return router;
@@ -265,21 +257,12 @@ function buildAuditRouter(): Router {
 
 function buildUsersRouter(): Router {
   const router = express.Router();
-  router.use(authorize(Actions.ViewAudit));
+  router.use(authorize(Actions.ManageStaff));
   router.get('/', send(() => listUsers()));
-  router.post('/', send(async (req) => {
-    const body = bodyObject(req);
-    const user: AuthenticatedUser = {
-      id: requiredString(body.id, 'id'),
-      branchId: optionalString(body.branchId),
-      role: Array.isArray(body.role) ? body.role.map((role) => requiredString(role, 'role')) : requiredString(body.role, 'role'),
-      status: (optionalString(body.status) as any) ?? 'active',
-    };
-    await saveUser(user);
-    return user;
-  }, 201));
-  router.post('/:userId/activate', send((req) => activateUser(stringParam(req, 'userId'))));
-  router.post('/:userId/deactivate', send((req) => deactivateUser(stringParam(req, 'userId'))));
+  router.post('/', send((req) => createStaffProfile(requireUser(req), bodyObject(req) as any), 201));
+  router.patch('/:userId', send((req) => updateStaffProfile(requireUser(req), stringParam(req, 'userId'), bodyObject(req) as any)));
+  router.post('/:userId/activate', send((req) => activateUser(stringParam(req, 'userId'), requireUser(req))));
+  router.post('/:userId/deactivate', send((req) => deactivateUser(stringParam(req, 'userId'), requireUser(req))));
   return router;
 }
 
@@ -295,7 +278,7 @@ function buildSettingsRouter(): Router {
 function mapErrorToHttp(error: unknown): { statusCode: number; message: string; details?: unknown } {
   if (error instanceof HttpError) return { statusCode: error.statusCode, message: error.message, details: error.details };
   const message = error instanceof Error ? error.message : 'Unexpected server error.';
-  if (/authentication required/i.test(message)) return { statusCode: 401, message };
+  if (/authentication required|invalid credentials/i.test(message)) return { statusCode: 401, message };
   if (/forbidden|cannot .* permission|missing permission/i.test(message)) return { statusCode: 403, message };
   if (/not found|not exist/i.test(message)) return { statusCode: 404, message };
   if (/version conflict|already exists|already cancelled|already closed|active session already exists|cannot be modified|cannot be cancelled|cannot be voided|cannot close|cannot delete/i.test(message)) return { statusCode: 409, message };
@@ -312,7 +295,7 @@ export function createApp() {
   const app = express();
   app.disable('x-powered-by');
   app.use(express.json({ limit: '1mb' }));
-  app.use(attachUser);
+  app.use(asyncRoute(loadUser as AsyncHandler));
   app.get('/healthz', (_req: Request, res: Response) => res.json({ ok: true, at: new Date().toISOString() }));
   app.use('/auth', buildAuthRouter());
 

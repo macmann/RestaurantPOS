@@ -40,3 +40,18 @@ button, input { font: inherit; }
   .app-shell { grid-template-columns: 1fr; }
   .sidebar { position: static; }
 }
+
+.admin-panel { display: grid; gap: 1rem; }
+.admin-card { display: grid; gap: 1rem; }
+.staff-form, .inline-staff-form { display: grid; gap: 0.75rem; }
+.staff-form { grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); align-items: end; }
+.staff-form label, .inline-staff-form label { display: grid; gap: 0.35rem; font-weight: 700; }
+.staff-form input, .staff-form select, .inline-staff-form input, .inline-staff-form select { border: 1px solid #cdd6e1; border-radius: 0.65rem; padding: 0.65rem 0.75rem; }
+.staff-form button, .inline-staff-form button { border: 0; border-radius: 0.65rem; padding: 0.7rem 0.9rem; background: #0f766e; color: #fff; font-weight: 800; cursor: pointer; }
+.staff-table { width: 100%; border-collapse: collapse; overflow: hidden; border-radius: 1rem; background: #fff; box-shadow: 0 10px 30px rgb(21 32 43 / 6%); }
+.staff-table th, .staff-table td { padding: 0.85rem; border-bottom: 1px solid #d9e2ec; text-align: left; vertical-align: top; }
+.staff-table th { background: #f0f4f8; color: #334e68; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; }
+.status-pill { display: inline-flex; border-radius: 999px; padding: 0.2rem 0.55rem; font-size: 0.75rem; font-weight: 900; text-transform: uppercase; }
+.status-pill.active { background: #dcfce7; color: #166534; }
+.status-pill.inactive { background: #fee2e2; color: #991b1b; }
+.json-preview.compact { max-height: 14rem; margin: 0; }

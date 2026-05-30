@@ -9,6 +9,7 @@ export const Actions = {
   ViewReports: 'reports:view',
   ViewAudit: 'audit:view',
   ManageMenu: 'menu:manage',
+  ManageStaff: 'staff:manage',
   TransitionOrderStatus: 'orders:transition_status',
 } as const;
 
@@ -37,6 +38,7 @@ export const RolePermissions: Record<string, Action[]> = {
     Actions.ViewReports,
     Actions.ViewAudit,
     Actions.ManageMenu,
+    Actions.ManageStaff,
     Actions.TransitionOrderStatus,
   ],
   admin: [
@@ -48,6 +50,7 @@ export const RolePermissions: Record<string, Action[]> = {
     Actions.ViewReports,
     Actions.ViewAudit,
     Actions.ManageMenu,
+    Actions.ManageStaff,
     Actions.TransitionOrderStatus,
   ],
 };

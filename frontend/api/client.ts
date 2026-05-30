@@ -48,10 +48,13 @@ export class ApiClientError extends Error {
 export interface LoginResponse {
   user: AuthenticatedUser;
   permissions: Action[];
+  token: string;
+  expiresAt: string;
 }
 
 export interface RequestOptions extends Omit<RequestInit, 'body' | 'headers'> {
   userId?: string;
+  token?: string;
   body?: unknown;
   headers?: Record<string, string>;
 }
@@ -102,15 +105,15 @@ async function requestInProcess<T>(path: string, method: string, body: unknown, 
   const parts = url.pathname.split('/').filter(Boolean);
 
   if (url.pathname === '/auth/login') {
-    const users = await backendModule<any>('../../backend/users/repository.js');
-    const service = await backendModule<any>('../../backend/users/service.js');
+    const service = await backendModule<any>('../../backend/auth/service.js');
     const permissions = await backendModule<any>('../../backend/auth/permissions.js');
-    const loginBody = body as { userId?: string };
-    await service.assertLoginAllowed(loginBody.userId);
-    const user = await users.getUserById(loginBody.userId);
-    const roles = Array.isArray(user.role) ? user.role : [user.role];
-    return { user, permissions: Array.from(new Set(roles.flatMap((role: string) => permissions.RolePermissions[role] ?? []))).sort() } as T;
+    const loginBody = body as { identifier?: string; username?: string; email?: string; userId?: string; password?: string };
+    const result = await service.loginWithPassword({ identifier: loginBody.identifier ?? loginBody.username ?? loginBody.email ?? loginBody.userId ?? '', password: loginBody.password ?? '' });
+    const roles = Array.isArray(result.user.role) ? result.user.role : [result.user.role];
+    return { ...result, permissions: Array.from(new Set(roles.flatMap((role: string) => permissions.RolePermissions[role] ?? []))).sort() } as T;
   }
+
+  if (url.pathname === '/auth/logout') return { ok: true } as T;
 
   if (parts[0] !== 'api') throw new ApiClientError('Route not found.', 404);
 
@@ -180,7 +183,13 @@ async function requestInProcess<T>(path: string, method: string, body: unknown, 
 
   if (parts[1] === 'users') {
     const users = await backendModule<any>('../../backend/users/repository.js');
-    return users.listUsers() as Promise<T>;
+    const service = await backendModule<any>('../../backend/users/service.js');
+    const actor = await userFor(userId);
+    if (parts.length === 2 && method === 'GET') return users.listUsers() as Promise<T>;
+    if (parts.length === 2 && method === 'POST') return service.createStaffProfile(actor, body) as Promise<T>;
+    if (parts.length === 3 && method === 'PATCH') return service.updateStaffProfile(actor, parts[2], body) as Promise<T>;
+    if (parts.length === 4 && parts[3] === 'activate') return service.activateUser(parts[2], actor) as Promise<T>;
+    if (parts.length === 4 && parts[3] === 'deactivate') return service.deactivateUser(parts[2], actor) as Promise<T>;
   }
 
   if (parts[1] === 'settings') {
@@ -199,11 +208,16 @@ async function requestInProcess<T>(path: string, method: string, body: unknown, 
 
 export class RestaurantApiClient {
   private currentUserId?: string;
+  private currentToken?: string;
 
   constructor(private baseUrl = apiBase()) {}
 
   setSessionUser(userId: string | undefined): void {
     this.currentUserId = userId;
+  }
+
+  setSessionToken(token: string | undefined): void {
+    this.currentToken = token;
   }
 
   getSessionUser(): string | undefined {
@@ -213,7 +227,9 @@ export class RestaurantApiClient {
   async request<T>(path: string, options: RequestOptions = {}): Promise<T> {
     const headers: Record<string, string> = { ...(options.headers ?? {}) };
     const userId = options.userId ?? this.currentUserId;
-    if (userId) headers['x-user-id'] = userId;
+    const token = options.token ?? this.currentToken;
+    if (token) headers.authorization = `Bearer ${token}`;
+    else if (userId) headers['x-user-id'] = userId;
 
     let body: BodyInit | undefined;
     if (options.body !== undefined) {
@@ -230,8 +246,12 @@ export class RestaurantApiClient {
     return parseResponse<T>(response);
   }
 
-  login(userId: string): Promise<LoginResponse> {
-    return this.request<LoginResponse>('/auth/login', { method: 'POST', body: { userId }, userId });
+  login(identifier: string, password: string): Promise<LoginResponse> {
+    return this.request<LoginResponse>('/auth/login', { method: 'POST', body: { identifier, password } });
+  }
+
+  logout(): Promise<{ ok: boolean }> {
+    return this.request<{ ok: boolean }>('/auth/logout', { method: 'POST' });
   }
 
   me(): Promise<LoginResponse> {
@@ -344,6 +364,22 @@ export class RestaurantApiClient {
 
   listUsers() {
     return this.request<AuthenticatedUser[]>('/api/users');
+  }
+
+  createUser(input: { id?: string; username: string; email?: string; password: string; role: string | string[]; branchId?: string; status?: 'active' | 'inactive' }) {
+    return this.request<AuthenticatedUser>('/api/users', { method: 'POST', body: input });
+  }
+
+  updateUser(userId: string, input: { username?: string; email?: string; password?: string; role?: string | string[]; branchId?: string; status?: 'active' | 'inactive' }) {
+    return this.request<AuthenticatedUser>(`/api/users/${encodeURIComponent(userId)}`, { method: 'PATCH', body: input });
+  }
+
+  activateUser(userId: string) {
+    return this.request<AuthenticatedUser>(`/api/users/${encodeURIComponent(userId)}/activate`, { method: 'POST' });
+  }
+
+  deactivateUser(userId: string) {
+    return this.request<AuthenticatedUser>(`/api/users/${encodeURIComponent(userId)}/deactivate`, { method: 'POST' });
   }
 
   getSettings() {
