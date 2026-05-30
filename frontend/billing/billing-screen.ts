@@ -1,12 +1,5 @@
-import {
-  applyBillPromotions,
-  generateBillFromSessionItems,
-  getBillCalculationBreakdown,
-  getPrintedReceiptPayload,
-  setBillTaxMode,
-} from '../../backend/billing/service';
-import { getLocaleResource } from '../../backend/i18n/service';
-import { buildLocaleSwitchState } from '../i18n/locale-switcher';
+import { buildLocaleSwitchState, getLocaleResource } from '../i18n/locale-switcher';
+import { apiClient } from '../api/client';
 import type { BillPricingOptions, BillPromotion, SplitLabel, TableOrderItem } from '../../backend/billing/repository';
 
 export interface BillingScreenViewModel {
@@ -16,16 +9,16 @@ export interface BillingScreenViewModel {
     label: string;
     rate: number;
   };
-  calculationBreakdown: Awaited<ReturnType<typeof getBillCalculationBreakdown>>;
-  receiptPreview: Awaited<ReturnType<typeof getPrintedReceiptPayload>>;
+  calculationBreakdown: Awaited<ReturnType<typeof apiClient.getBillBreakdown>>;
+  receiptPreview: Awaited<ReturnType<typeof apiClient.getReceipt>>;
   localeSwitch: ReturnType<typeof buildLocaleSwitchState>;
   labels: { title: string; taxEnabled: string; taxExempt: string };
 }
 
 export async function openBillingScreen(tableSessionId: string, locale?: string): Promise<BillingScreenViewModel> {
   const resource = getLocaleResource(locale);
-  const calculationBreakdown = await getBillCalculationBreakdown(tableSessionId);
-  const receiptPreview = await getPrintedReceiptPayload(tableSessionId, resource.locale);
+  const calculationBreakdown = await apiClient.getBillBreakdown(tableSessionId);
+  const receiptPreview = await apiClient.getReceipt(tableSessionId, resource.locale);
 
   return {
     tableSessionId,
@@ -48,7 +41,7 @@ export async function startBillForBillingScreen(input: {
   pricing?: Partial<BillPricingOptions>;
   locale?: string;
 }): Promise<BillingScreenViewModel> {
-  await generateBillFromSessionItems(input.tableSessionId, input.itemsBySplit, input.actorUserId, input.pricing);
+  await apiClient.createBill({ tableSessionId: input.tableSessionId, itemsBySplit: input.itemsBySplit, pricing: input.pricing, locale: input.locale }, input.actorUserId);
   return openBillingScreen(input.tableSessionId, input.locale);
 }
 
@@ -59,7 +52,7 @@ export async function toggleBillTax(input: {
   actorUserId: string;
   locale?: string;
 }): Promise<BillingScreenViewModel> {
-  await setBillTaxMode(input);
+  await apiClient.setBillTaxMode({ tableSessionId: input.tableSessionId, taxMode: input.taxMode, taxRate: input.taxRate }, input.actorUserId);
   return openBillingScreen(input.tableSessionId, input.locale);
 }
 
@@ -69,6 +62,6 @@ export async function updateBillLevelPromotions(input: {
   actorUserId: string;
   locale?: string;
 }): Promise<BillingScreenViewModel> {
-  await applyBillPromotions(input);
+  await apiClient.applyBillPromotions({ tableSessionId: input.tableSessionId, billPromotions: input.billPromotions }, input.actorUserId);
   return openBillingScreen(input.tableSessionId, input.locale);
 }

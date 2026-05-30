@@ -1,17 +1,15 @@
-import { onKdsEvent } from '../../backend/kds/controller';
-import { getLocaleResource } from '../../backend/i18n/service';
-import { buildLocaleSwitchState } from '../i18n/locale-switcher';
-import { getKdsSnapshot } from '../../backend/kds/service';
+import { buildLocaleSwitchState, getLocaleResource } from '../i18n/locale-switcher';
+import { apiClient } from '../api/client';
 
 export async function loadOrderProgressForWaiter(locale?: string) {
   const resource = getLocaleResource(locale);
   return {
     title: resource.screens.waiter_progress,
     localeSwitch: buildLocaleSwitchState(resource.locale),
-    snapshot: await getKdsSnapshot(),
+    snapshot: await apiClient.getKdsSnapshot(),
   };
 }
 
-export function subscribeOrderProgressForWaiter(onUpdate: Parameters<typeof onKdsEvent>[0]) {
-  return onKdsEvent(onUpdate);
+export function subscribeOrderProgressForWaiter(onUpdate: Parameters<typeof apiClient.subscribeKds>[1]) {
+  return apiClient.subscribeKds(undefined, onUpdate);
 }

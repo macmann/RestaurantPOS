@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "outDir": "dist/frontend/assets",
+    "rootDir": "."
+  },
+  "include": [
+    "frontend/**/*.ts",
+    "backend/auth/permissions.ts",
+    "backend/i18n/resources.ts"
+  ],
+  "exclude": ["node_modules", "dist"]
+}
