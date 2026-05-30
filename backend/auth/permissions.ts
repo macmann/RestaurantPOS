@@ -19,7 +19,7 @@ export type Action = (typeof Actions)[keyof typeof Actions];
 export const RolePermissions: Record<string, Action[]> = {
   superadmin: Object.values(Actions),
   cashier: [Actions.CreateOrder, Actions.EditOrder, Actions.MarkDebt, Actions.CloseBill],
-  waitstaff: [Actions.CreateOrder, Actions.EditOrder, Actions.TransitionOrderStatus],
+  waitstaff: [Actions.CreateOrder, Actions.EditOrder, Actions.CloseBill, Actions.TransitionOrderStatus],
   kitchen: [Actions.TransitionOrderStatus],
   bar: [Actions.TransitionOrderStatus],
   shift_lead: [

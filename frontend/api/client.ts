@@ -148,6 +148,10 @@ async function requestInProcess<T>(path: string, method: string, body: unknown, 
   if (url.pathname === '/auth/login') {
     const service = await backendModule<any>('../../backend/auth/service.js');
     const permissions = await backendModule<any>('../../backend/auth/permissions.js');
+    const bootstrap = await backendModule<any>('../../backend/bootstrap/demoData.js');
+    const usersBootstrap = await backendModule<any>('../../backend/users/bootstrap.js');
+    await usersBootstrap.ensureDefaultSuperadmin();
+    await bootstrap.ensureStarterRestaurantData();
     const loginBody = body as { identifier?: string; username?: string; email?: string; userId?: string; password?: string };
     const result = await service.loginWithPassword({ identifier: loginBody.identifier ?? loginBody.username ?? loginBody.email ?? loginBody.userId ?? '', password: loginBody.password ?? '' });
     const roles = Array.isArray(result.user.role) ? result.user.role : [result.user.role];
@@ -210,6 +214,7 @@ async function requestInProcess<T>(path: string, method: string, body: unknown, 
     const { AdminMenuApi } = await backendModule<any>('../../backend/menu/controller.js');
     if (parts.length === 2 && method === 'GET') return AdminMenuApi.list() as Promise<T>;
     if (parts[2] === 'categories' && method === 'POST') return AdminMenuApi.createCategory(body) as Promise<T>;
+    if (parts[2] === 'items' && method === 'POST') return AdminMenuApi.createItem(body) as Promise<T>;
   }
 
   if (parts[1] === 'inventory') {

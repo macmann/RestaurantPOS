@@ -28,6 +28,7 @@ import {
 import { InventoryAdminApi } from './inventory/controller';
 import { ReportsApi } from './reports/controller';
 import { AdminAuditApi } from './audit/controller';
+import { ensureStarterRestaurantData } from './bootstrap/demoData';
 import { TablesApi } from './tables/controller';
 import type { AuthenticatedUser } from './auth/policies';
 import { loginWithPassword, logoutSession } from './auth/service';
@@ -180,6 +181,7 @@ function buildAuthRouter(): Router {
   const router = express.Router();
   router.post('/login', send(async (req) => {
     await ensureDefaultSuperadmin();
+    await ensureStarterRestaurantData();
     const body = bodyObject(req);
     const identifier = requiredString(body.identifier ?? body.username ?? body.email ?? body.userId, 'identifier');
     const password = requiredString(body.password, 'password');
@@ -196,8 +198,8 @@ function buildAuthRouter(): Router {
 
 function buildMenuRouter(): Router {
   const router = express.Router();
-  router.use(authorize(Actions.ManageMenu));
   router.get('/', send(() => AdminMenuApi.list()));
+  router.use(authorize(Actions.ManageMenu));
   router.post('/categories', send((req) => AdminMenuApi.createCategory(bodyObject(req) as any), 201));
   router.patch('/categories/:categoryId', send((req) => AdminMenuApi.updateCategory(stringParam(req, 'categoryId'), bodyObject(req) as any)));
   router.delete('/categories/:categoryId', send((req) => AdminMenuApi.deleteCategory(stringParam(req, 'categoryId'))));
@@ -382,8 +384,11 @@ function errorHandler(error: unknown, _req: Request, res: Response, _next: NextF
 }
 
 export function createApp() {
-  void ensureDefaultSuperadmin().catch((error) => {
-    console.warn('Unable to seed default superadmin:', error);
+  void (async () => {
+    await ensureDefaultSuperadmin();
+    await ensureStarterRestaurantData();
+  })().catch((error) => {
+    console.warn('Unable to seed starter restaurant data:', error);
   });
   const app = express();
   app.disable('x-powered-by');

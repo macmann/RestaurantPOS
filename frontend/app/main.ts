@@ -10,6 +10,8 @@ import { loadAdminInventoryAlerts } from '../admin/inventory-alerts';
 import { loadAdminAuditViewer } from '../admin/audit-viewer';
 import { apiClient } from '../api/client';
 import { loadCashierTableFloor } from '../cashier/table-floor';
+import type { OrderRecord, OrderStatus } from '../../backend/orders/repository';
+import type { SplitLabel, TableOrderItem } from '../../backend/billing/repository';
 
 const rootElement = document.querySelector<HTMLDivElement>('#app');
 if (!rootElement) throw new Error('App root not found.');
@@ -20,6 +22,8 @@ let route = window.location.hash || defaultRoute(session?.permissions ?? []).pat
 let apiStatus = apiClient.getNetworkStatus();
 let apiStatusMessage = 'API connection healthy.';
 let healthTimer: number | undefined;
+let selectedTableId: string | undefined;
+let selectedSplitCount = 1;
 
 apiClient.onNetworkStatus((status, detail) => {
   apiStatus = status;
@@ -287,6 +291,249 @@ async function attachJsonPreview(container: HTMLElement, loader: () => Promise<u
   }
 }
 
+
+type MenuItemForPos = {
+  id: string;
+  name: string;
+  price: number;
+  prepStation?: string;
+  isAvailable?: boolean;
+};
+
+type MenuCategoryForPos = {
+  id: string;
+  name: string;
+  items: MenuItemForPos[];
+};
+
+function money(value: number): string {
+  return `${Math.round(value).toLocaleString()} MMK`;
+}
+
+function findOpenOrder(orders: OrderRecord[], tableSessionId: string): OrderRecord | undefined {
+  return orders.filter((order) => order.tableSessionId === tableSessionId && order.status !== 'cancelled').at(-1);
+}
+
+function orderItemsForBill(orders: OrderRecord[], tableSessionId: string, splitCount: number): Partial<Record<SplitLabel, TableOrderItem[]>> {
+  const labels = ['A', 'B', 'C'] as SplitLabel[];
+  const result: Partial<Record<SplitLabel, TableOrderItem[]>> = { A: [], B: [], C: [] };
+  const items = orders
+    .filter((order) => order.tableSessionId === tableSessionId && order.status !== 'cancelled')
+    .flatMap((order) => order.items.map((item) => ({
+      id: item.id,
+      branchId: order.branchId,
+      orderId: order.id,
+      tableSessionId,
+      name: item.name,
+      quantity: item.quantity,
+      unitPrice: item.unitPrice,
+      lineTax: 0,
+    })));
+
+  items.forEach((item, index) => {
+    const label = labels[index % splitCount];
+    result[label]!.push(item);
+  });
+  return result;
+}
+
+async function advanceOrderThroughService(order: OrderRecord): Promise<OrderRecord> {
+  let current = order;
+  const flow: OrderStatus[] = current.status === 'pending'
+    ? ['in_preparation', 'completed', 'delivered']
+    : current.status === 'in_preparation'
+      ? ['completed', 'delivered']
+      : current.status === 'completed'
+        ? ['delivered']
+        : [];
+
+  for (const nextStatus of flow) {
+    current = await apiClient.transitionOrderStatus(session!.user.id, current.id, current.version, nextStatus);
+  }
+  return current;
+}
+
+async function addMenuItemToOrder(tableSessionId: string, menuItemId: string, activeOrder?: OrderRecord): Promise<void> {
+  if (!session) return;
+  if (!activeOrder || activeOrder.status === 'delivered') {
+    await apiClient.createOrder(session.user.id, {
+      serviceMode: 'dine_in',
+      tableSessionId,
+      items: [{ menuItemId, quantity: 1 }],
+    });
+  } else {
+    await apiClient.editOrder(session.user.id, activeOrder.id, {
+      expectedVersion: activeOrder.version,
+      addItems: [{ menuItemId, quantity: 1 }],
+      reason: 'POS quick add',
+    });
+  }
+  render();
+}
+
+async function changeOrderItemQuantity(order: OrderRecord, itemId: string, quantity: number): Promise<void> {
+  if (!session) return;
+  if (quantity <= 0) {
+    await apiClient.editOrder(session.user.id, order.id, { expectedVersion: order.version, removeItemIds: [itemId], reason: 'POS remove item' });
+  } else {
+    await apiClient.editOrder(session.user.id, order.id, { expectedVersion: order.version, modifyItems: [{ id: itemId, quantity }], reason: 'POS quantity change' });
+  }
+  render();
+}
+
+async function payAndCleanTable(tableSessionId: string): Promise<void> {
+  if (!session) return;
+  const orders = await apiClient.listOrders();
+  const linkedOrders = orders.filter((order) => order.tableSessionId === tableSessionId && order.status !== 'cancelled');
+  if (!linkedOrders.length || !linkedOrders.some((order) => order.items.length)) throw new Error('Add menu items before taking payment.');
+
+  for (const order of linkedOrders.filter((row) => row.status !== 'delivered')) {
+    await advanceOrderThroughService(order);
+  }
+
+  const refreshedOrders = await apiClient.listOrders();
+  try {
+    await apiClient.createBill({
+      tableSessionId,
+      itemsBySplit: orderItemsForBill(refreshedOrders, tableSessionId, selectedSplitCount),
+      pricing: { taxMode: 'taxable', taxRate: 0 },
+    }, session.user.id);
+  } catch (caught) {
+    if (!(caught instanceof Error) || !/already exists/i.test(caught.message)) throw caught;
+  }
+
+  const receipt = await apiClient.getReceipt(tableSessionId);
+  for (const split of receipt.splits) {
+    const paid = split.payments.reduce((sum, payment) => sum + payment.amount, 0);
+    const balance = Math.round((split.calculationBreakdown.totalDue - paid) * 100) / 100;
+    if (balance <= 0) continue;
+    await apiClient.recordSplitPayment({
+      tableSessionId,
+      splitLabel: split.label,
+      amount: balance,
+      method: 'cash',
+      createDebtForUnpaidBalance: false,
+    }, session.user.id, `pos-paid-${tableSessionId}-${split.label}-${Date.now()}`);
+  }
+  await apiClient.closeTableSession(session.user.id, tableSessionId);
+  selectedTableId = undefined;
+  render();
+}
+
+async function renderRestaurantPos(): Promise<HTMLElement> {
+  const section = page('Restaurant POS', 'Select a table, enter menu items, split a bill, mark paid, and clean the table for the next guest.');
+  section.classList.add('pos-page');
+
+  const status = el('p', 'pos-status');
+  status.hidden = true;
+  const workspace = el('div', 'pos-workspace');
+  section.append(status, workspace);
+
+  const [floor, menu, orders] = await Promise.all([
+    loadCashierTableFloor(session!.user.branchId),
+    apiClient.listMenu() as Promise<MenuCategoryForPos[]>,
+    apiClient.listOrders(),
+  ]);
+  if (!selectedTableId) selectedTableId = floor.tables.find((row) => row.status !== 'inactive')?.table.id;
+  const selected = floor.tables.find((row) => row.table.id === selectedTableId) ?? floor.tables[0];
+  const activeOrder = selected?.activeSession ? findOpenOrder(orders, selected.activeSession.id) : undefined;
+
+  const floorPanel = el('section', 'pos-panel table-panel');
+  floorPanel.innerHTML = `<div class="pos-panel-heading"><h3>Table floor</h3><span>${floor.counts.available} available · ${floor.counts.occupied} occupied</span></div>`;
+  const tableGrid = el('div', 'table-grid');
+  for (const row of floor.tables) {
+    const button = el('button', `table-tile ${row.status} ${row.table.id === selected?.table.id ? 'selected' : ''}`);
+    button.type = 'button';
+    button.innerHTML = `<strong>${row.table.name}</strong><span>${row.status}</span><small>${row.activeSession ? `${row.activeSession.guestCount} guests` : `${row.table.capacity} seats`}</small>`;
+    button.addEventListener('click', () => {
+      selectedTableId = row.table.id;
+      render();
+    });
+    tableGrid.append(button);
+  }
+  floorPanel.append(tableGrid);
+
+  const orderPanel = el('section', 'pos-panel order-panel');
+  if (!selected) {
+    orderPanel.innerHTML = '<h3>No tables configured</h3><p>Starter data will be seeded at sign-in. Refresh or sign in again if this remains empty.</p>';
+  } else if (!selected.activeSession) {
+    orderPanel.innerHTML = `<h3>${selected.table.name}</h3><p class="muted">Available table. Open it to start ordering immediately.</p>`;
+    const openForm = el('form', 'open-table-form');
+    openForm.innerHTML = '<label>Guests<input name="guestCount" type="number" min="1" value="2" /></label><button type="submit">Open table</button>';
+    openForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const guestCount = Number(new FormData(openForm).get('guestCount') ?? 1);
+      try {
+        await apiClient.openTableSession(session!.user.id, selected.table.id, guestCount, session!.user.branchId);
+        render();
+      } catch (caught) {
+        status.hidden = false;
+        status.textContent = caught instanceof Error ? caught.message : 'Unable to open table.';
+      }
+    });
+    orderPanel.append(openForm);
+  } else {
+    orderPanel.innerHTML = `<div class="pos-panel-heading"><h3>${selected.table.name} order</h3><span>Occupied · ${selected.activeSession.guestCount} guests</span></div>`;
+    const cart = el('div', 'cart-list');
+    if (!activeOrder?.items.length) cart.append(el('p', 'muted', 'Tap menu items to start this table order.'));
+    for (const item of activeOrder?.items ?? []) {
+      const row = el('div', 'cart-row');
+      row.innerHTML = `<div><strong>${item.name}</strong><small>${money(item.unitPrice)} each</small></div><div class="quantity-controls"><button type="button" data-delta="-1">−</button><span>${item.quantity}</span><button type="button" data-delta="1">+</button></div><strong>${money(item.lineTotal)}</strong>`;
+      row.querySelectorAll<HTMLButtonElement>('button').forEach((button) => button.addEventListener('click', () => {
+        void changeOrderItemQuantity(activeOrder!, item.id, item.quantity + Number(button.dataset.delta));
+      }));
+      cart.append(row);
+    }
+
+    const checkout = el('div', 'checkout-box');
+    checkout.innerHTML = `
+      <label>Split bill
+        <select name="splitCount">
+          <option value="1" ${selectedSplitCount === 1 ? 'selected' : ''}>No split</option>
+          <option value="2" ${selectedSplitCount === 2 ? 'selected' : ''}>Split A / B</option>
+          <option value="3" ${selectedSplitCount === 3 ? 'selected' : ''}>Split A / B / C</option>
+        </select>
+      </label>
+      <div><span>Subtotal</span><strong>${money(activeOrder?.subtotal ?? 0)}</strong></div>
+      <button type="button" class="pay-clean">Mark paid & clean table</button>
+    `;
+    checkout.querySelector<HTMLSelectElement>('select')?.addEventListener('change', (event) => {
+      selectedSplitCount = Number((event.currentTarget as HTMLSelectElement).value);
+      render();
+    });
+    checkout.querySelector<HTMLButtonElement>('.pay-clean')?.addEventListener('click', async () => {
+      try {
+        await payAndCleanTable(selected.activeSession!.id);
+      } catch (caught) {
+        status.hidden = false;
+        status.textContent = caught instanceof Error ? caught.message : 'Unable to complete payment and clean table.';
+      }
+    });
+    orderPanel.append(cart, checkout);
+  }
+
+  const menuPanel = el('section', 'pos-panel menu-panel');
+  menuPanel.innerHTML = '<div class="pos-panel-heading"><h3>Order menu</h3><span>Tap to add</span></div>';
+  for (const category of menu) {
+    const group = el('div', 'menu-category');
+    group.append(el('h4', '', category.name));
+    const itemGrid = el('div', 'menu-grid');
+    for (const item of category.items.filter((row) => row.isAvailable !== false)) {
+      const button = el('button', 'menu-item-card');
+      button.type = 'button';
+      button.innerHTML = `<strong>${item.name}</strong><span>${money(item.price)}</span><small>${item.prepStation ?? 'service'}</small>`;
+      button.disabled = !selected?.activeSession;
+      button.addEventListener('click', () => void addMenuItemToOrder(selected!.activeSession!.id, item.id, activeOrder));
+      itemGrid.append(button);
+    }
+    group.append(itemGrid);
+    menuPanel.append(group);
+  }
+
+  workspace.append(floorPanel, orderPanel, menuPanel);
+  return section;
+}
+
 async function renderRoute(): Promise<void> {
   if (!session) return renderLogin();
   const current = activeRoute();
@@ -294,15 +541,9 @@ async function renderRoute(): Promise<void> {
 
   switch (current.path) {
     case '#/tables':
-      content = page('Table floor', 'Open table sessions and monitor available, occupied, and inactive tables.', ['Open session', 'Guest count', 'Occupied status', 'Close session']);
-      await attachJsonPreview(content, () => loadCashierTableFloor(session!.user.branchId));
-      break;
     case '#/orders':
-      content = page('Cashier order entry', 'Create dine-in and takeout drafts, edit carts, and advance order status.', ['Dine-in order', 'Takeout order', 'Cart editor', 'Status transition']);
-      await attachJsonPreview(content, () => apiClient.listOrders());
-      break;
     case '#/billing':
-      content = page('Billing', 'Generate bills, toggle tax, apply promotions, preview receipts, and take payments.', ['Bill generation', 'Tax mode', 'Promotions', 'Receipt preview']);
+      content = await renderRestaurantPos();
       break;
     case '#/kitchen':
       content = page('Kitchen KDS', 'Kitchen station queue with live KDS event stream support.', ['Queued items', 'Preparing', 'Ready']);
