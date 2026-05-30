@@ -3,6 +3,9 @@ import { getCurrentBranchId } from '../config/branch';
 import { requireOpenTableSession } from '../tables/service';
 import { withTransaction } from '../db/client';
 import { getLocaleResource, getTypographyForLocale, normalizeLocale } from '../i18n/service';
+import { getPaymentTerminalAdapter } from '../integrations/paymentTerminal';
+import { getCashDrawerAdapter } from '../hardware/cashDrawer';
+import { getReceiptPrinterAdapter, type ReceiptPrintResult } from '../hardware/receiptPrinter';
 import {
   appendBillingAuditEntry,
   appendDebtLedgerEntry,
@@ -39,6 +42,18 @@ function round2(value: number): number {
 
 function assertNonNegativeMoney(value: number, label: string): void {
   if (!Number.isFinite(value) || value < 0) throw new Error(`${label} must be a non-negative finite number.`);
+}
+
+function isExternalPaymentMethod(method: PaymentMethod): boolean {
+  return method !== 'cash';
+}
+
+function getPaymentContribution(payment: BillPayment): number {
+  const type = payment.type ?? 'payment';
+  if (type === 'refund') return -payment.amount;
+  if (type === 'void') return 0;
+  if (payment.status === 'voided' || payment.status === 'failed') return 0;
+  return payment.amount;
 }
 
 function normalizePricing(pricing?: Partial<BillPricingOptions>): BillPricingOptions {
@@ -238,7 +253,7 @@ function applyBillLevelPricing(splits: BillRecord['splits'], pricing: BillPricin
           amount: round2(discountAllocations[index] * (promotion.amount / Math.max(billLevelDiscount, 1))),
         })),
       };
-      const amountPaid = round2(splits[label].payments.reduce((sum, p) => sum + p.amount, 0));
+      const amountPaid = round2(splits[label].payments.reduce((sum, p) => sum + getPaymentContribution(p), 0));
       const unpaidBalance = round2(Math.max(calculationBreakdown.totalDue - amountPaid, 0));
       const previousState = splits[label].state;
       let state: BillingState = 'open';
@@ -305,7 +320,7 @@ function updateBillStateAndBreakdown(bill: BillRecord): BillRecord {
 }
 
 function buildReceiptPayload(bill: BillRecord, localeInput?: string): ReceiptPayload {
-  const totalPaid = round2(SPLIT_LABELS.reduce((sum, label) => sum + bill.splits[label].amountPaid, 0));
+  const totalPaid = round2(SPLIT_LABELS.reduce((sum, label) => sum + bill.splits[label].payments.reduce((paymentSum, payment) => paymentSum + getPaymentContribution(payment), 0), 0));
   const balanceDue = round2(Math.max(bill.calculationBreakdown.totalDue - totalPaid, 0));
   const locale = normalizeLocale(localeInput);
   const resource = getLocaleResource(locale);
@@ -539,6 +554,32 @@ export async function getPrintedReceiptPayload(tableSessionId: string, locale?: 
   return buildReceiptPayload(bill, locale);
 }
 
+export async function printBillReceipt(input: {
+  tableSessionId: string;
+  actorUserId: string;
+  locale?: string;
+  copies?: number;
+  printerId?: string;
+}): Promise<ReceiptPrintResult> {
+  const bill = await getBillByTableSessionId(input.tableSessionId);
+  if (!bill) throw new Error('Bill not found for table session.');
+  const payload = buildReceiptPayload(bill, input.locale);
+  const result = await getReceiptPrinterAdapter().printReceipt({ payload, copies: input.copies, printerId: input.printerId });
+  bill.receiptPayload = payload;
+  await saveBill(bill);
+  await appendBillingAuditEntry({
+    id: createId('audit'),
+    branchId: bill.branchId,
+    tableSessionId: bill.tableSessionId,
+    splitLabel: 'A',
+    action: 'receipt_printed',
+    actorUserId: input.actorUserId,
+    at: result.printedAt,
+    details: { printJobId: result.printJobId, printerId: result.printerId, locale: result.locale, fontFamily: result.fontFamily, copies: result.copyCount },
+  });
+  return result;
+}
+
 export async function recordSplitPayment(input: {
   tableSessionId: string;
   splitLabel: SplitLabel;
@@ -556,17 +597,96 @@ export async function recordSplitPayment(input: {
 
     const split = bill.splits[input.splitLabel];
     const beforeSplit = structuredClone(split);
-    const payment: BillPayment = {
-      id: createId('pay'),
+    const paymentId = createId('pay');
+    const amount = round2(input.amount);
+    const paidAt = input.paidAt ?? new Date().toISOString();
+    let payment: BillPayment = {
+      id: paymentId,
       branchId: bill.branchId,
       splitLabel: input.splitLabel,
-      amount: round2(input.amount),
+      amount,
       method: input.method,
-      paidAt: input.paidAt ?? new Date().toISOString(),
+      paidAt,
       receivedByUserId: input.actorUserId,
+      type: 'payment',
+      status: 'captured',
     };
 
+    if (isExternalPaymentMethod(input.method)) {
+      const adapter = getPaymentTerminalAdapter();
+      const idempotencyKey = `${bill.id}:${input.splitLabel}:${paymentId}`;
+      const authorization = await adapter.authorize({
+        amount,
+        currency: 'MMK',
+        branchId: bill.branchId,
+        tableSessionId: bill.tableSessionId,
+        splitLabel: input.splitLabel,
+        billId: bill.id,
+        actorUserId: input.actorUserId,
+        paymentMethod: input.method,
+        idempotencyKey,
+      });
+      if (authorization.status !== 'authorized') throw new Error(`Payment authorization declined: ${authorization.declineReason ?? authorization.reference}`);
+      const capture = await adapter.capture({
+        amount,
+        currency: 'MMK',
+        branchId: bill.branchId,
+        tableSessionId: bill.tableSessionId,
+        splitLabel: input.splitLabel,
+        billId: bill.id,
+        actorUserId: input.actorUserId,
+        paymentMethod: input.method,
+        idempotencyKey,
+        authorizationId: authorization.authorizationId,
+      });
+      if (capture.status !== 'captured') throw new Error(`Payment capture failed: ${capture.failureReason ?? capture.reference}`);
+      payment = {
+        ...payment,
+        paidAt: capture.capturedAt,
+        externalReference: {
+          provider: capture.provider,
+          rail: authorization.rail,
+          authorizationId: authorization.authorizationId,
+          captureId: capture.captureId,
+          reference: capture.reference,
+          raw: { authorization: authorization.raw, capture: capture.raw },
+        },
+      };
+    }
+
     split.payments.push(payment);
+
+    if (input.method === 'cash') {
+      const drawer = await getCashDrawerAdapter().open({
+        branchId: bill.branchId,
+        tableSessionId: bill.tableSessionId,
+        splitLabel: input.splitLabel,
+        billId: bill.id,
+        paymentId: payment.id,
+        actorUserId: input.actorUserId,
+        amount: payment.amount,
+        reason: 'cash_payment',
+      });
+      await appendBillingAuditEntry({
+        id: createId('audit'),
+        branchId: bill.branchId,
+        tableSessionId: bill.tableSessionId,
+        splitLabel: input.splitLabel,
+        action: 'cash_drawer_opened',
+        actorUserId: input.actorUserId,
+        at: drawer.openedAt,
+        details: { paymentId: payment.id, amount: payment.amount, drawerId: drawer.drawerId, eventId: drawer.eventId, reason: 'cash_payment' },
+      });
+      await recordAuditEvent({
+        action: 'cash_drawer_opened',
+        actor: { userId: input.actorUserId },
+        timestamp: drawer.openedAt,
+        entity: { type: 'hardware_device', id: drawer.drawerId, label: `${bill.tableSessionId}:${input.splitLabel}` },
+        after: drawer,
+        metadata: { tableSessionId: bill.tableSessionId, splitLabel: input.splitLabel, paymentId: payment.id, amount: payment.amount },
+      });
+    }
+
     bill.splits[input.splitLabel] = split;
     updateBillStateAndBreakdown(bill);
 
@@ -605,11 +725,228 @@ export async function recordSplitPayment(input: {
       action: 'split_payment_recorded',
       actorUserId: input.actorUserId,
       at: payment.paidAt,
-      details: { paymentId: payment.id, amount: payment.amount, method: payment.method },
+      details: { paymentId: payment.id, amount: payment.amount, method: payment.method, status: payment.status, externalReference: payment.externalReference },
     });
 
     return saveBill(bill);
 
+  });
+}
+
+export async function refundSplitPayment(input: {
+  tableSessionId: string;
+  splitLabel: SplitLabel;
+  paymentId: string;
+  amount: number;
+  actorUserId: string;
+  reason: string;
+}): Promise<BillRecord> {
+  return withTransaction(async () => {
+    const bill = await getBillByTableSessionId(input.tableSessionId);
+    if (!bill) throw new Error('Bill not found for table session.');
+    if (input.amount <= 0) throw new Error('Refund amount must be greater than zero.');
+    const reason = input.reason.trim();
+    if (!reason) throw new Error('A refund reason is required.');
+
+    const split = bill.splits[input.splitLabel];
+    const original = split.payments.find((payment) => payment.id === input.paymentId && (payment.type ?? 'payment') === 'payment');
+    if (!original) throw new Error('Original payment not found for split.');
+    const alreadyReversed = original.status === 'voided'
+      ? original.amount
+      : round2(split.payments.filter((payment) => payment.linkedPaymentId === original.id && payment.type === 'refund').reduce((sum, payment) => sum + payment.amount, 0));
+    const refundable = round2(original.amount - alreadyReversed);
+    const amount = round2(input.amount);
+    if (amount > refundable) throw new Error('Refund amount exceeds remaining captured amount.');
+
+    const refundId = createId('refund');
+    let refundPayment: BillPayment = {
+      id: refundId,
+      branchId: bill.branchId,
+      splitLabel: input.splitLabel,
+      amount,
+      method: original.method,
+      paidAt: new Date().toISOString(),
+      receivedByUserId: input.actorUserId,
+      type: 'refund',
+      status: 'refunded',
+      linkedPaymentId: original.id,
+      reason,
+    };
+
+    if (isExternalPaymentMethod(original.method)) {
+      const captureId = original.externalReference?.captureId;
+      if (!captureId) throw new Error('External payment capture reference is required for refund.');
+      const refund = await getPaymentTerminalAdapter().refund({
+        amount,
+        currency: 'MMK',
+        branchId: bill.branchId,
+        tableSessionId: bill.tableSessionId,
+        splitLabel: input.splitLabel,
+        billId: bill.id,
+        actorUserId: input.actorUserId,
+        paymentMethod: original.method,
+        idempotencyKey: `${bill.id}:${input.splitLabel}:${refundId}`,
+        captureId,
+        originalPaymentId: original.id,
+        reason,
+      });
+      if (refund.status !== 'refunded') throw new Error(`Payment refund failed: ${refund.failureReason ?? refund.reference}`);
+      refundPayment = {
+        ...refundPayment,
+        paidAt: refund.refundedAt,
+        externalReference: {
+          provider: refund.provider,
+          rail: original.externalReference?.rail,
+          captureId: refund.captureId,
+          refundId: refund.refundId,
+          reference: refund.reference,
+          raw: refund.raw,
+        },
+      };
+    } else {
+      const drawer = await getCashDrawerAdapter().open({
+        branchId: bill.branchId,
+        tableSessionId: bill.tableSessionId,
+        splitLabel: input.splitLabel,
+        billId: bill.id,
+        paymentId: refundPayment.id,
+        actorUserId: input.actorUserId,
+        amount,
+        reason: 'cash_refund',
+      });
+      await appendBillingAuditEntry({
+        id: createId('audit'),
+        branchId: bill.branchId,
+        tableSessionId: bill.tableSessionId,
+        splitLabel: input.splitLabel,
+        action: 'cash_drawer_opened',
+        actorUserId: input.actorUserId,
+        at: drawer.openedAt,
+        details: { paymentId: refundPayment.id, amount, drawerId: drawer.drawerId, eventId: drawer.eventId, reason: 'cash_refund' },
+      });
+    }
+
+    split.payments.push(refundPayment);
+    bill.splits[input.splitLabel] = split;
+    updateBillStateAndBreakdown(bill);
+
+    await appendBillingAuditEntry({
+      id: createId('audit'),
+      branchId: bill.branchId,
+      tableSessionId: bill.tableSessionId,
+      splitLabel: input.splitLabel,
+      action: 'split_payment_refunded',
+      actorUserId: input.actorUserId,
+      at: refundPayment.paidAt,
+      details: { paymentId: original.id, refundId: refundPayment.id, amount, method: original.method, externalReference: refundPayment.externalReference, reason },
+    });
+    await recordAuditEvent({
+      action: 'payment_refunded',
+      actor: { userId: input.actorUserId },
+      timestamp: refundPayment.paidAt,
+      entity: { type: 'bill_split', id: `${bill.id}:${input.splitLabel}`, label: `${bill.tableSessionId}:${input.splitLabel}` },
+      before: { payment: original, splitAmountPaid: round2(split.amountPaid + amount) },
+      after: { refund: refundPayment, split: bill.splits[input.splitLabel] },
+      reason,
+      metadata: { tableSessionId: bill.tableSessionId, splitLabel: input.splitLabel, paymentId: original.id },
+    });
+
+    return saveBill(bill);
+  });
+}
+
+export async function voidSplitPayment(input: {
+  tableSessionId: string;
+  splitLabel: SplitLabel;
+  paymentId: string;
+  actorUserId: string;
+  reason: string;
+}): Promise<BillRecord> {
+  return withTransaction(async () => {
+    const bill = await getBillByTableSessionId(input.tableSessionId);
+    if (!bill) throw new Error('Bill not found for table session.');
+    const reason = input.reason.trim();
+    if (!reason) throw new Error('A void reason is required.');
+    const split = bill.splits[input.splitLabel];
+    const original = split.payments.find((payment) => payment.id === input.paymentId && (payment.type ?? 'payment') === 'payment');
+    if (!original) throw new Error('Original payment not found for split.');
+    const refundedAmount = round2(split.payments.filter((payment) => payment.linkedPaymentId === original.id && payment.type === 'refund').reduce((sum, payment) => sum + payment.amount, 0));
+    if (refundedAmount > 0) throw new Error('Refunded payments cannot be voided; refund the remaining amount instead.');
+    const alreadyReversed = split.payments.some((payment) => payment.linkedPaymentId === original.id && payment.type === 'void');
+    if (alreadyReversed || original.status === 'voided') throw new Error('Payment has already been voided.');
+
+    const voidId = createId('void');
+    let voidPayment: BillPayment = {
+      id: voidId,
+      branchId: bill.branchId,
+      splitLabel: input.splitLabel,
+      amount: original.amount,
+      method: original.method,
+      paidAt: new Date().toISOString(),
+      receivedByUserId: input.actorUserId,
+      type: 'void',
+      status: 'voided',
+      linkedPaymentId: original.id,
+      reason,
+    };
+
+    if (isExternalPaymentMethod(original.method)) {
+      const voided = await getPaymentTerminalAdapter().voidPayment({
+        branchId: bill.branchId,
+        tableSessionId: bill.tableSessionId,
+        splitLabel: input.splitLabel,
+        billId: bill.id,
+        actorUserId: input.actorUserId,
+        paymentMethod: original.method,
+        idempotencyKey: `${bill.id}:${input.splitLabel}:${voidId}`,
+        authorizationId: original.externalReference?.authorizationId,
+        captureId: original.externalReference?.captureId,
+        originalPaymentId: original.id,
+        reason,
+      });
+      if (voided.status !== 'voided') throw new Error(`Payment void failed: ${voided.failureReason ?? voided.reference}`);
+      voidPayment = {
+        ...voidPayment,
+        paidAt: voided.voidedAt,
+        externalReference: {
+          provider: voided.provider,
+          rail: original.externalReference?.rail,
+          authorizationId: original.externalReference?.authorizationId,
+          captureId: original.externalReference?.captureId,
+          voidId: voided.voidId,
+          reference: voided.reference,
+          raw: voided.raw,
+        },
+      };
+    }
+
+    original.status = 'voided';
+    split.payments.push(voidPayment);
+    bill.splits[input.splitLabel] = split;
+    updateBillStateAndBreakdown(bill);
+
+    await appendBillingAuditEntry({
+      id: createId('audit'),
+      branchId: bill.branchId,
+      tableSessionId: bill.tableSessionId,
+      splitLabel: input.splitLabel,
+      action: 'split_payment_voided',
+      actorUserId: input.actorUserId,
+      at: voidPayment.paidAt,
+      details: { paymentId: original.id, voidId: voidPayment.id, amount: original.amount, method: original.method, externalReference: voidPayment.externalReference, reason },
+    });
+    await recordAuditEvent({
+      action: 'payment_voided',
+      actor: { userId: input.actorUserId },
+      timestamp: voidPayment.paidAt,
+      entity: { type: 'bill_split', id: `${bill.id}:${input.splitLabel}`, label: `${bill.tableSessionId}:${input.splitLabel}` },
+      before: { payment: { ...original, status: 'captured' } },
+      after: { payment: original, void: voidPayment, split: bill.splits[input.splitLabel] },
+      reason,
+      metadata: { tableSessionId: bill.tableSessionId, splitLabel: input.splitLabel, paymentId: original.id },
+    });
+
+    return saveBill(bill);
   });
 }
 

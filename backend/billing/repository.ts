@@ -2,7 +2,9 @@ import { isSqlRepositoryEnabled } from '../db/client';
 import { getRecord, listRecords, putRecord } from '../db/repositoryStore';
 
 export type BillingState = 'open' | 'partially_paid' | 'paid' | 'debt' | 'void';
-export type PaymentMethod = 'cash' | 'wave_money' | 'kbzpay';
+export type PaymentMethod = 'cash' | 'card' | 'wallet' | 'bank_transfer' | 'wave_money' | 'kbzpay';
+export type BillPaymentStatus = 'authorized' | 'captured' | 'settled' | 'refunded' | 'voided' | 'failed';
+export type BillPaymentEntryType = 'payment' | 'refund' | 'void';
 export type SplitLabel = 'A' | 'B' | 'C';
 export type TaxMode = 'taxable' | 'tax_exempt';
 export type ReceiptLabelKey = 'receipt' | 'table_session' | 'total_paid' | 'balance_due' | 'split' | 'subtotal' | 'discount' | 'tax' | 'total_due';
@@ -102,6 +104,17 @@ export interface BillLineItem {
   calculation: BillLineCalculationBreakdown;
 }
 
+export interface ExternalPaymentReference {
+  provider: string;
+  rail?: 'card' | 'wallet' | 'bank_transfer';
+  authorizationId?: string;
+  captureId?: string;
+  refundId?: string;
+  voidId?: string;
+  reference: string;
+  raw?: Record<string, unknown>;
+}
+
 export interface BillPayment {
   id: string;
   branchId: string;
@@ -110,6 +123,11 @@ export interface BillPayment {
   method: PaymentMethod;
   paidAt: string;
   receivedByUserId: string;
+  type?: BillPaymentEntryType;
+  status?: BillPaymentStatus;
+  externalReference?: ExternalPaymentReference;
+  linkedPaymentId?: string;
+  reason?: string;
 }
 
 export interface BillSplit {
