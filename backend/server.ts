@@ -25,6 +25,7 @@ import {
 import { InventoryAdminApi } from './inventory/controller';
 import { ReportsApi } from './reports/controller';
 import { AdminAuditApi } from './audit/controller';
+import { TablesApi } from './tables/controller';
 import type { AuthenticatedUser } from './auth/policies';
 
 const DEFAULT_PORT = 8080;
@@ -159,6 +160,23 @@ function buildMenuRouter(): Router {
   return router;
 }
 
+
+function buildTablesRouter(): Router {
+  const router = express.Router();
+  router.get('/', send((req) => TablesApi.listFloor(optionalString(queryObject(req).branchId) ?? getCurrentBranchId())));
+  router.post('/', authorize(Actions.CreateOrder), send((req) => TablesApi.createTable(bodyObject(req) as any), 201));
+  router.patch('/:tableId', authorize(Actions.CreateOrder), send((req) => TablesApi.updateTable(stringParam(req, 'tableId'), bodyObject(req) as any)));
+  router.delete('/:tableId', authorize(Actions.CreateOrder), send((req) => TablesApi.removeTable(stringParam(req, 'tableId'))));
+  router.get('/:tableId/sessions', send((req) => TablesApi.listSessionsForTable(stringParam(req, 'tableId'))));
+  router.post('/:tableId/sessions', authorize(Actions.CreateOrder), send((req) => {
+    const body = bodyObject(req);
+    return TablesApi.openSession(requireUser(req), { tableId: stringParam(req, 'tableId'), guestCount: requiredNumber(body.guestCount, 'guestCount'), branchId: optionalString(body.branchId) });
+  }, 201));
+  router.get('/sessions/:tableSessionId', send((req) => TablesApi.getSession(stringParam(req, 'tableSessionId'))));
+  router.post('/sessions/:tableSessionId/close', authorize(Actions.CreateOrder), send((req) => TablesApi.closeSession(requireUser(req), stringParam(req, 'tableSessionId'))));
+  return router;
+}
+
 function buildOrdersRouter(): Router {
   const router = express.Router();
   router.get('/', send(() => listOrders()));
@@ -280,7 +298,7 @@ function mapErrorToHttp(error: unknown): { statusCode: number; message: string; 
   if (/authentication required/i.test(message)) return { statusCode: 401, message };
   if (/forbidden|cannot .* permission|missing permission/i.test(message)) return { statusCode: 403, message };
   if (/not found|not exist/i.test(message)) return { statusCode: 404, message };
-  if (/version conflict|already exists|already cancelled|cannot be modified|cannot be cancelled|cannot be voided/i.test(message)) return { statusCode: 409, message };
+  if (/version conflict|already exists|already cancelled|already closed|active session already exists|cannot be modified|cannot be cancelled|cannot be voided|cannot close|cannot delete/i.test(message)) return { statusCode: 409, message };
   if (/invalid|required|must be|use a, b, or c|greater than zero|non-negative|non-zero/i.test(message)) return { statusCode: 400, message };
   return { statusCode: 500, message };
 }
@@ -301,6 +319,7 @@ export function createApp() {
   const api = express.Router();
   api.use(requireAuth, asyncRoute(requireActiveUser as AsyncHandler));
   api.use('/menu', buildMenuRouter());
+  api.use('/tables', buildTablesRouter());
   api.use('/orders', buildOrdersRouter());
   api.use('/kds', buildKdsRouter());
   api.use('/billing', buildBillingRouter());

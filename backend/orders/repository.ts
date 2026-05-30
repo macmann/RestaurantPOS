@@ -28,6 +28,7 @@ export interface OrderRecord {
   branchId: string;
   serviceMode: ServiceMode;
   tableId?: string;
+  tableSessionId?: string;
   takeoutName?: string;
   status: OrderStatus;
   items: OrderItem[];

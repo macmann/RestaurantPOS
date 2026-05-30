@@ -4,8 +4,8 @@ import type { CreateOrderInput, EditOrderInput } from '../../backend/orders/serv
 import { apiClient } from '../api/client';
 import type { OrderStatus } from '../../backend/orders/repository';
 
-export async function startDineInOrder(user: AuthenticatedUser, tableId: string, seed?: CreateOrderInput['items']) {
-  return apiClient.createOrder(user.id, { serviceMode: 'dine_in', tableId, items: seed });
+export async function startDineInOrder(user: AuthenticatedUser, tableSessionId: string, seed?: CreateOrderInput['items']) {
+  return apiClient.createOrder(user.id, { serviceMode: 'dine_in', tableSessionId, items: seed });
 }
 
 export async function startTakeoutOrder(user: AuthenticatedUser, customerName: string, seed?: CreateOrderInput['items']) {

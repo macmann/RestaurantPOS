@@ -9,6 +9,8 @@ import type { InventoryAdminApi } from '../../backend/inventory/controller';
 import type { AdminAuditApi } from '../../backend/audit/controller';
 import type { Station, KdsProgress } from '../../backend/kds/repository';
 import type { KdsEvent, KdsSnapshot } from '../../backend/kds/service';
+import type { TableFloorState } from '../../backend/tables/service';
+import type { TableSessionRecord } from '../../backend/tables/repository';
 import type { AdminAuditViewerFilters } from '../admin/audit-viewer';
 
 type BillBreakdown = Awaited<ReturnType<typeof getBillCalculationBreakdown>>;
@@ -111,6 +113,19 @@ async function requestInProcess<T>(path: string, method: string, body: unknown, 
   }
 
   if (parts[0] !== 'api') throw new ApiClientError('Route not found.', 404);
+
+
+  if (parts[1] === 'tables') {
+    const { TablesApi } = await backendModule<any>('../../backend/tables/controller.js');
+    if (parts.length === 2 && method === 'GET') return TablesApi.listFloor(url.searchParams.get('branchId') ?? undefined) as Promise<T>;
+    if (parts.length === 2 && method === 'POST') return TablesApi.createTable(body) as Promise<T>;
+    if (parts.length === 3 && method === 'PATCH') return TablesApi.updateTable(parts[2], body) as Promise<T>;
+    if (parts.length === 3 && method === 'DELETE') return TablesApi.removeTable(parts[2]) as Promise<T>;
+    if (parts.length === 4 && parts[3] === 'sessions' && method === 'GET') return TablesApi.listSessionsForTable(parts[2]) as Promise<T>;
+    if (parts.length === 4 && parts[3] === 'sessions' && method === 'POST') return TablesApi.openSession(await userFor(userId), { ...(body as object), tableId: parts[2] }) as Promise<T>;
+    if (parts.length === 4 && parts[2] === 'sessions' && method === 'GET') return TablesApi.getSession(parts[3]) as Promise<T>;
+    if (parts.length === 5 && parts[2] === 'sessions' && parts[4] === 'close' && method === 'POST') return TablesApi.closeSession(await userFor(userId), parts[3]) as Promise<T>;
+  }
 
   if (parts[1] === 'orders') {
     const service = await backendModule<any>('../../backend/orders/service.js');
@@ -221,6 +236,23 @@ export class RestaurantApiClient {
 
   me(): Promise<LoginResponse> {
     return this.request<LoginResponse>('/auth/me');
+  }
+
+
+  listTableFloor(branchId?: string): Promise<TableFloorState[]> {
+    return this.request<TableFloorState[]>(`/api/tables${queryString({ branchId })}`);
+  }
+
+  createTable(input: { id?: string; branchId?: string; name: string; capacity: number; status?: 'active' | 'inactive' }) {
+    return this.request('/api/tables', { method: 'POST', body: input });
+  }
+
+  openTableSession(userId: string, tableId: string, guestCount: number, branchId?: string): Promise<TableSessionRecord> {
+    return this.request<TableSessionRecord>(`/api/tables/${encodeURIComponent(tableId)}/sessions`, { method: 'POST', userId, body: { guestCount, branchId } });
+  }
+
+  closeTableSession(userId: string, tableSessionId: string): Promise<TableSessionRecord> {
+    return this.request<TableSessionRecord>(`/api/tables/sessions/${encodeURIComponent(tableSessionId)}/close`, { method: 'POST', userId });
   }
 
   listOrders(): Promise<OrderRecord[]> {

@@ -5,6 +5,7 @@ import { getCurrentBranchId } from '../config/branch';
 import { withTransaction } from '../db/client';
 import { appendStockMovement, getDeductionTriggerPolicy } from '../inventory/service';
 import { syncOrderIntoKds } from '../kds/service';
+import { requireOpenTableSession } from '../tables/service';
 import {
   createOrder,
   getOrderById,
@@ -19,6 +20,7 @@ export interface CreateOrderInput {
   branchId?: string;
   serviceMode: ServiceMode;
   tableId?: string;
+  tableSessionId?: string;
   takeoutName?: string;
   items?: Array<Pick<OrderItem, 'menuItemId' | 'name' | 'station' | 'quantity' | 'unitPrice' | 'note'>>;
 }
@@ -69,9 +71,10 @@ function normalizeReason(reason: string | undefined, requiredMessage: string): s
 
 export async function createOrderDraft(user: AuthenticatedUser, input: CreateOrderInput): Promise<OrderRecord> {
   if (!can(user, Actions.CreateOrder)) throw new Error('Forbidden: cannot create order.');
-  if (input.serviceMode === 'dine_in' && !input.tableId) throw new Error('tableId is required for dine-in orders.');
+  if (input.serviceMode === 'dine_in' && !input.tableSessionId) throw new Error('tableSessionId is required for dine-in orders.');
   if (input.serviceMode === 'takeout' && !input.takeoutName?.trim()) throw new Error('takeoutName is required for takeout orders.');
 
+  const session = input.serviceMode === 'dine_in' ? await requireOpenTableSession(input.tableSessionId!) : undefined;
   const now = new Date().toISOString();
   const items: OrderItem[] = (input.items ?? []).map((item) => ({
     id: createId('ord_item'),
@@ -86,9 +89,10 @@ export async function createOrderDraft(user: AuthenticatedUser, input: CreateOrd
 
   const order = await createOrder({
     id: createId('ord'),
-    branchId: input.branchId ?? user.branchId ?? getCurrentBranchId(),
+    branchId: session?.branchId ?? input.branchId ?? user.branchId ?? getCurrentBranchId(),
     serviceMode: input.serviceMode,
-    tableId: input.tableId,
+    tableId: session?.tableId ?? input.tableId,
+    tableSessionId: session?.id,
     takeoutName: input.takeoutName?.trim(),
     status: 'pending',
     items,
