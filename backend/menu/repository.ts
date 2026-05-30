@@ -1,3 +1,6 @@
+import { isSqlRepositoryEnabled } from '../db/client';
+import { deleteRecord, getRecord, listRecords, putRecord } from '../db/repositoryStore';
+
 export interface MenuCategoryRecord {
   id: string;
   branchId: string;
@@ -25,76 +28,87 @@ const categories = new Map<string, MenuCategoryRecord>();
 const items = new Map<string, MenuItemRecord>();
 
 export async function listCategories(): Promise<MenuCategoryRecord[]> {
-  return [...categories.values()].sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
+  const rows = isSqlRepositoryEnabled() ? await listRecords<MenuCategoryRecord>('menu:categories') : [...categories.values()];
+  return rows.sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
 }
 
 export async function getCategoryById(id: string): Promise<MenuCategoryRecord | null> {
+  if (isSqlRepositoryEnabled()) return getRecord<MenuCategoryRecord>('menu:categories', id);
   return categories.get(id) ?? null;
 }
 
 export async function getCategoryByName(name: string): Promise<MenuCategoryRecord | null> {
   const normalized = name.trim().toLowerCase();
-  for (const category of categories.values()) {
+  const rows = isSqlRepositoryEnabled() ? await listRecords<MenuCategoryRecord>('menu:categories') : [...categories.values()];
+  for (const category of rows) {
     if (category.name.trim().toLowerCase() === normalized) return category;
   }
   return null;
 }
 
 export async function createCategory(record: MenuCategoryRecord): Promise<MenuCategoryRecord> {
+  if (isSqlRepositoryEnabled()) return putRecord('menu:categories', record.id, record);
   categories.set(record.id, record);
   return record;
 }
 
 export async function updateCategory(id: string, patch: Partial<MenuCategoryRecord>): Promise<MenuCategoryRecord | null> {
-  const current = categories.get(id);
+  const current = isSqlRepositoryEnabled() ? await getRecord<MenuCategoryRecord>('menu:categories', id) : categories.get(id);
   if (!current) return null;
 
   const next = { ...current, ...patch, id: current.id };
+  if (isSqlRepositoryEnabled()) return putRecord('menu:categories', id, next);
   categories.set(id, next);
   return next;
 }
 
 export async function deleteCategory(id: string): Promise<boolean> {
-  for (const item of items.values()) {
+  const itemRows = isSqlRepositoryEnabled() ? await listRecords<MenuItemRecord>('menu:items') : [...items.values()];
+  for (const item of itemRows) {
     if (item.categoryId === id) {
-      items.delete(item.id);
+      if (isSqlRepositoryEnabled()) await deleteRecord('menu:items', item.id);
+      else items.delete(item.id);
     }
   }
 
-  return categories.delete(id);
+  return isSqlRepositoryEnabled() ? deleteRecord('menu:categories', id) : categories.delete(id);
 }
 
 export async function listItems(categoryId?: string): Promise<MenuItemRecord[]> {
-  const all = [...items.values()];
+  const all = isSqlRepositoryEnabled() ? await listRecords<MenuItemRecord>('menu:items') : [...items.values()];
   return categoryId ? all.filter((item) => item.categoryId === categoryId) : all;
 }
 
 export async function getItemById(id: string): Promise<MenuItemRecord | null> {
+  if (isSqlRepositoryEnabled()) return getRecord<MenuItemRecord>('menu:items', id);
   return items.get(id) ?? null;
 }
 
 export async function getItemByNameInCategory(categoryId: string, name: string): Promise<MenuItemRecord | null> {
   const normalized = name.trim().toLowerCase();
-  for (const item of items.values()) {
+  const itemRows = isSqlRepositoryEnabled() ? await listRecords<MenuItemRecord>('menu:items') : [...items.values()];
+  for (const item of itemRows) {
     if (item.categoryId === categoryId && item.name.trim().toLowerCase() === normalized) return item;
   }
   return null;
 }
 
 export async function createItem(record: MenuItemRecord): Promise<MenuItemRecord> {
+  if (isSqlRepositoryEnabled()) return putRecord('menu:items', record.id, record);
   items.set(record.id, record);
   return record;
 }
 
 export async function updateItem(id: string, patch: Partial<MenuItemRecord>): Promise<MenuItemRecord | null> {
-  const current = items.get(id);
+  const current = isSqlRepositoryEnabled() ? await getRecord<MenuItemRecord>('menu:items', id) : items.get(id);
   if (!current) return null;
 
   const next = { ...current, ...patch, id: current.id };
+  if (isSqlRepositoryEnabled()) return putRecord('menu:items', id, next);
   items.set(id, next);
   return next;
 }
 
 export async function deleteItem(id: string): Promise<boolean> {
-  return items.delete(id);
+  return isSqlRepositoryEnabled() ? deleteRecord('menu:items', id) : items.delete(id);
 }

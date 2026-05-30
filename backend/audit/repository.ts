@@ -1,3 +1,6 @@
+import { isSqlRepositoryEnabled } from '../db/client';
+import { listRecords, putRecord } from '../db/repositoryStore';
+
 export const AUDIT_ACTIONS = [
   'login_succeeded',
   'login_failed',
@@ -59,6 +62,7 @@ export interface AuditFilterOptions {
 const auditEvents: AuditEventRecord[] = [];
 
 export async function appendAuditEvent(event: AuditEventRecord): Promise<AuditEventRecord> {
+  if (isSqlRepositoryEnabled()) return putRecord('audit:events', event.id, event);
   auditEvents.push(structuredClone(event));
   return structuredClone(event);
 }
@@ -67,7 +71,8 @@ export async function listAuditEvents(filter: AuditEventFilter = {}): Promise<Au
   const query = filter.query?.trim().toLowerCase();
   const reasonQuery = filter.reason?.trim().toLowerCase();
   const limit = typeof filter.limit === 'number' ? Math.max(0, Math.floor(filter.limit)) : undefined;
-  const rows = auditEvents
+  const sourceEvents = isSqlRepositoryEnabled() ? await listRecords<AuditEventRecord>('audit:events') : auditEvents;
+  const rows = sourceEvents
     .filter((event) => {
       if (filter.action && event.action !== filter.action) return false;
       if (filter.actorUserId && event.actor.userId !== filter.actorUserId) return false;

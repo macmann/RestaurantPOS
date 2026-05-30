@@ -1,3 +1,6 @@
+import { isSqlRepositoryEnabled } from '../db/client';
+import { getRecord, listRecords, putRecord } from '../db/repositoryStore';
+
 export type BillingState = 'open' | 'partially_paid' | 'paid' | 'debt' | 'void';
 export type PaymentMethod = 'cash' | 'wave_money' | 'kbzpay';
 export type SplitLabel = 'A' | 'B' | 'C';
@@ -190,35 +193,40 @@ const debtLedgerEntries: DebtLedgerEntry[] = [];
 const auditEntries: BillingAuditEntry[] = [];
 
 export async function saveBill(bill: BillRecord): Promise<BillRecord> {
+  if (isSqlRepositoryEnabled()) return putRecord('billing:bills', bill.tableSessionId, bill);
   billsBySession.set(bill.tableSessionId, structuredClone(bill));
   return structuredClone(bill);
 }
 
 export async function listBills(): Promise<BillRecord[]> {
-  return [...billsBySession.values()]
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-    .map((bill) => structuredClone(bill));
+  const rows = isSqlRepositoryEnabled() ? await listRecords<BillRecord>('billing:bills') : [...billsBySession.values()].map((bill) => structuredClone(bill));
+  return rows.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
 export async function getBillByTableSessionId(tableSessionId: string): Promise<BillRecord | null> {
+  if (isSqlRepositoryEnabled()) return getRecord<BillRecord>('billing:bills', tableSessionId);
   const found = billsBySession.get(tableSessionId);
   return found ? structuredClone(found) : null;
 }
 
 export async function appendDebtLedgerEntry(entry: DebtLedgerEntry): Promise<DebtLedgerEntry> {
+  if (isSqlRepositoryEnabled()) return putRecord('billing:debt', entry.id, entry);
   debtLedgerEntries.push(structuredClone(entry));
   return structuredClone(entry);
 }
 
 export async function listDebtLedgerByTableSessionId(tableSessionId: string): Promise<DebtLedgerEntry[]> {
-  return debtLedgerEntries.filter((x) => x.tableSessionId === tableSessionId).map((x) => structuredClone(x));
+  const rows = isSqlRepositoryEnabled() ? await listRecords<DebtLedgerEntry>('billing:debt') : debtLedgerEntries;
+  return rows.filter((x) => x.tableSessionId === tableSessionId).map((x) => structuredClone(x));
 }
 
 export async function appendBillingAuditEntry(entry: BillingAuditEntry): Promise<BillingAuditEntry> {
+  if (isSqlRepositoryEnabled()) return putRecord('billing:audit', entry.id, entry);
   auditEntries.push(structuredClone(entry));
   return structuredClone(entry);
 }
 
 export async function listBillingAuditByTableSessionId(tableSessionId: string): Promise<BillingAuditEntry[]> {
-  return auditEntries.filter((x) => x.tableSessionId === tableSessionId).map((x) => structuredClone(x));
+  const rows = isSqlRepositoryEnabled() ? await listRecords<BillingAuditEntry>('billing:audit') : auditEntries;
+  return rows.filter((x) => x.tableSessionId === tableSessionId).map((x) => structuredClone(x));
 }

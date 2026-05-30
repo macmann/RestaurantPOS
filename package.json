@@ -14,10 +14,13 @@
     "build:frontend": "node scripts/build-frontend.mjs",
     "preview:frontend": "node scripts/preview-frontend.mjs",
     "start:frontend": "npm run preview:frontend",
-    "build:api": "tsc -p tsconfig.json --outDir dist"
+    "build:api": "tsc -p tsconfig.json --outDir dist",
+    "db:migrate": "tsx scripts/migrate-database.ts",
+    "test:integration": "npm run build:api -- --noEmit false && node dist/tests/sql-repositories.integration.test.js"
   },
   "dependencies": {
-    "express": "^4.18.3"
+    "express": "^4.18.3",
+    "pg": "^8.11.5"
   },
   "devDependencies": {
     "@types/node": "^20.11.30",
