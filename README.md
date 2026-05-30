@@ -99,6 +99,16 @@ npm run build
 Compiled backend JavaScript is emitted to `dist/backend`, and the browser app is emitted to `dist/frontend`.
 
 
+### Default superadmin login
+
+The API automatically creates a default superadmin account when the application starts or before the first login request if it is missing:
+
+| Username | Password | Role |
+| --- | --- | --- |
+| `superadmin` | `password123` | `superadmin` |
+
+Use this account to open the **Super admin panel**, create role-based staff accounts, and then rotate or deactivate bootstrap credentials for production deployments.
+
 ### Run the single application
 
 After building, start the combined API and frontend server:

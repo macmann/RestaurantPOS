@@ -25,10 +25,13 @@ async function runApiIntegration(): Promise<void> {
 
   const server = await startTestServer();
   try {
+    const superadmin = await login(server.baseUrl, 'superadmin', 'password123');
     const manager = await login(server.baseUrl, 'manager-api', password);
     const waiter = await login(server.baseUrl, 'waiter-api', password);
     const kitchen = await login(server.baseUrl, 'kitchen-api', password);
     const cashier = await login(server.baseUrl, 'cashier-api', password);
+    assert(superadmin.permissions.includes('system:manage'), 'Default superadmin login should return system management permissions.');
+    assert(superadmin.user.role === 'superadmin', 'Default superadmin should have the superadmin role.');
     assert(manager.permissions.includes('menu:manage'), 'Manager login should return real RBAC permissions.');
 
     const floor = await apiRequest<{ data: Array<{ table: { id: string }; status: string }> }>(server.baseUrl, `/api/tables?branchId=${branchId}`, { token: cashier.token });

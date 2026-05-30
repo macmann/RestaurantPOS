@@ -1,6 +1,7 @@
 import { getStoredSession, login, logout, type BrowserSession } from '../auth/session';
 import { appRoutes, canAccessRoute, defaultRoute, visibleRoutes, type AppRoute } from '../auth/navigation';
 import type { AuthenticatedUser } from '../../backend/auth/policies';
+import { RolePermissions } from '../../backend/auth/permissions';
 import { loadKitchenQueue } from '../kds/kitchen-screen';
 import { loadBarQueue } from '../kds/bar-screen';
 import { loadOrderProgressForWaiter } from '../waiter/order-progress';
@@ -171,23 +172,35 @@ function page(title: string, subtitle: string, actions: string[] = []): HTMLElem
 }
 
 
+const assignableRoles = Object.keys(RolePermissions);
+
+function roleOptions(selectedRole?: string): string {
+  return assignableRoles.map((role) => `<option value="${role}" ${role === selectedRole ? 'selected' : ''}>${role}</option>`).join('');
+}
+
 function rolesFor(user: AuthenticatedUser): string {
   return Array.isArray(user.role) ? user.role.join(',') : user.role;
 }
 
-async function renderStaffSettings(): Promise<HTMLElement> {
-  const section = page('Staff & settings administration', 'Create staff profiles, rotate passwords, assign roles, and deactivate access immediately.', ['Staff users', 'Role assignment', 'Activation', 'Branch settings']);
+async function renderStaffSettings(isSuperadminPanel = false): Promise<HTMLElement> {
+  const section = page(
+    isSuperadminPanel ? 'Super admin account panel' : 'Staff & settings administration',
+    isSuperadminPanel
+      ? 'Use the seeded superadmin account to create staff users and assign each account to the correct role.'
+      : 'Create staff profiles, rotate passwords, assign roles, and deactivate access immediately.',
+    ['Staff users', 'Role assignment', 'Activation', 'Branch settings'],
+  );
   const panel = el('section', 'admin-panel');
   const [users, settings] = await Promise.all([apiClient.listUsers(), apiClient.getSettings()]);
   panel.innerHTML = `
     <article class="card admin-card">
-      <h3>Create staff profile</h3>
+      <h3>${isSuperadminPanel ? 'Create role-based account' : 'Create staff profile'}</h3>
       <form class="staff-form">
         <label>User ID<input name="id" placeholder="server-01" /></label>
         <label>Username<input name="username" required /></label>
         <label>Email<input name="email" type="email" /></label>
         <label>Initial password<input name="password" type="password" minlength="8" required /></label>
-        <label>Role<select name="role"><option>waitstaff</option><option>cashier</option><option>kitchen</option><option>bar</option><option>shift_lead</option><option>inventory_clerk</option><option>manager</option><option>admin</option></select></label>
+        <label>Role<select name="role">${roleOptions('waitstaff')}</select></label>
         <label>Branch<input name="branchId" value="${session?.user.branchId ?? ''}" /></label>
         <button type="submit">Create profile</button>
         <p class="form-error" hidden></p>
@@ -211,7 +224,7 @@ async function renderStaffSettings(): Promise<HTMLElement> {
       <td><span class="status-pill ${user.status}">${user.status}</span></td>
       <td>
         <form class="inline-staff-form" data-user-id="${user.id}">
-          <select name="role"><option ${rolesFor(user) === 'waitstaff' ? 'selected' : ''}>waitstaff</option><option ${rolesFor(user) === 'cashier' ? 'selected' : ''}>cashier</option><option ${rolesFor(user) === 'kitchen' ? 'selected' : ''}>kitchen</option><option ${rolesFor(user) === 'bar' ? 'selected' : ''}>bar</option><option ${rolesFor(user) === 'shift_lead' ? 'selected' : ''}>shift_lead</option><option ${rolesFor(user) === 'inventory_clerk' ? 'selected' : ''}>inventory_clerk</option><option ${rolesFor(user) === 'manager' ? 'selected' : ''}>manager</option><option ${rolesFor(user) === 'admin' ? 'selected' : ''}>admin</option></select>
+          <select name="role">${roleOptions(rolesFor(user))}</select>
           <input name="password" type="password" minlength="8" placeholder="new password" />
           <button type="submit">Save</button>
         </form>
@@ -318,6 +331,9 @@ async function renderRoute(): Promise<void> {
     case '#/audit':
       content = page('Audit', 'Filter and inspect auditable events from the backend audit API.', ['Search', 'Entity filters', 'Reason filters', 'Snapshots']);
       await attachJsonPreview(content, () => loadAdminAuditViewer(session!.user));
+      break;
+    case '#/superadmin':
+      content = await renderStaffSettings(true);
       break;
     case '#/staff-settings':
       content = await renderStaffSettings();
