@@ -28,6 +28,7 @@ import { AdminAuditApi } from './audit/controller';
 import { TablesApi } from './tables/controller';
 import type { AuthenticatedUser } from './auth/policies';
 import { loginWithPassword, logoutSession } from './auth/service';
+import { getIdempotencyRecord, idempotencyFingerprint, idempotencyMatches, saveIdempotencyRecord } from './network-idempotency';
 
 const DEFAULT_PORT = 8080;
 const DEFAULT_HOST = '0.0.0.0';
@@ -57,8 +58,38 @@ function asyncRoute(handler: AsyncHandler): AsyncHandler {
 
 function send<T>(handler: ServiceResultHandler<T>, status = 200): AsyncHandler {
   return asyncRoute(async (req, res) => {
+    const rawReq = req as any;
+    const headerValue = rawReq.headers?.['idempotency-key'];
+    const idempotencyKey = typeof headerValue === 'string' ? headerValue.trim() : Array.isArray(headerValue) ? String(headerValue[0] ?? '').trim() : '';
+    const method = String(rawReq.method ?? 'GET').toUpperCase();
+    const path = String(rawReq.originalUrl ?? rawReq.url ?? '');
+    const canReplay = idempotencyKey && !['GET', 'HEAD', 'OPTIONS'].includes(method);
+    const fingerprint = canReplay ? idempotencyFingerprint({ userId: req.user?.id, method, path, body: req.body }) : null;
+
+    if (canReplay && fingerprint) {
+      const existing = await getIdempotencyRecord(idempotencyKey);
+      if (existing) {
+        if (!idempotencyMatches(existing, fingerprint)) {
+          throw new HttpError(409, 'Idempotency key was already used for a different request.');
+        }
+        res.setHeader('X-Idempotency-Replayed', 'true');
+        res.status(existing.statusCode).json(existing.responseBody);
+        return;
+      }
+    }
+
     const data = await handler(req);
-    res.status(status).json({ data });
+    const responseBody = { data };
+    if (canReplay && fingerprint) {
+      await saveIdempotencyRecord({
+        key: idempotencyKey,
+        ...fingerprint,
+        statusCode: status,
+        responseBody,
+        createdAt: new Date().toISOString(),
+      });
+    }
+    res.status(status).json(responseBody);
   });
 }
 
@@ -297,6 +328,7 @@ export function createApp() {
   app.use(express.json({ limit: '1mb' }));
   app.use(asyncRoute(loadUser as AsyncHandler));
   app.get('/healthz', (_req: Request, res: Response) => res.json({ ok: true, at: new Date().toISOString() }));
+  app.get('/api/health', (_req: Request, res: Response) => res.json({ data: { ok: true, status: 'healthy', at: new Date().toISOString() } }));
   app.use('/auth', buildAuthRouter());
 
   const api = express.Router();

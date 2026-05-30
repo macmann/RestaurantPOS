@@ -12,6 +12,7 @@ import type { KdsEvent, KdsSnapshot } from '../../backend/kds/service';
 import type { TableFloorState } from '../../backend/tables/service';
 import type { TableSessionRecord } from '../../backend/tables/repository';
 import type { AdminAuditViewerFilters } from '../admin/audit-viewer';
+import { maxAttemptsForOperation, reconnectDelayMs, shouldRetryLanFailure, type LanOperationKind } from '../network/reconnect-policy';
 
 type BillBreakdown = Awaited<ReturnType<typeof getBillCalculationBreakdown>>;
 type ReceiptPayload = Awaited<ReturnType<typeof getPrintedReceiptPayload>>;
@@ -35,6 +36,9 @@ export interface ApiErrorBody {
   details?: unknown;
 }
 
+export type ApiNetworkStatus = 'online' | 'degraded' | 'offline';
+export type ApiNetworkListener = (status: ApiNetworkStatus, detail?: { message?: string; attempt?: number }) => void;
+
 export class ApiClientError extends Error {
   constructor(
     message: string,
@@ -57,6 +61,8 @@ export interface RequestOptions extends Omit<RequestInit, 'body' | 'headers'> {
   token?: string;
   body?: unknown;
   headers?: Record<string, string>;
+  operationKind?: LanOperationKind;
+  idempotencyKey?: string;
 }
 
 function apiBase(): string {
@@ -73,6 +79,41 @@ function queryString(query?: Record<string, unknown>): string {
   }
   const encoded = params.toString();
   return encoded ? `?${encoded}` : '';
+}
+
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function stableStringify(value: unknown): string {
+  if (value === undefined) return '';
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  const object = value as Record<string, unknown>;
+  return `{${Object.keys(object).sort().map((key) => `${JSON.stringify(key)}:${stableStringify(object[key])}`).join(',')}}`;
+}
+
+function requestFingerprint(method: string, path: string, body: unknown): string {
+  return `${method.toUpperCase()} ${path} ${stableStringify(body)}`;
+}
+
+function randomKeyPart(): string {
+  const cryptoRef = globalThis.crypto;
+  if (cryptoRef && 'randomUUID' in cryptoRef && typeof cryptoRef.randomUUID === 'function') return cryptoRef.randomUUID();
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
+function createIdempotencyKey(method: string, path: string): string {
+  return `pos:${method.toUpperCase()}:${path}:${randomKeyPart()}`;
+}
+
+function isLanFailureStatus(status: number): boolean {
+  return status === 408 || status === 425 || status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
+}
+
+function inferOperationKind(method: string): LanOperationKind {
+  return method.toUpperCase() === 'GET' ? 'read' : 'unsafe_write';
 }
 
 async function parseResponse<T>(response: Response): Promise<T> {
@@ -162,6 +203,7 @@ async function requestInProcess<T>(path: string, method: string, body: unknown, 
     if (parts[4] === 'receipt') return billing.getPrintedReceiptPayload(tableSessionId, url.searchParams.get('locale') ?? undefined) as Promise<T>;
     if (parts[4] === 'tax') return billing.setBillTaxMode({ ...(body as object), tableSessionId, actorUserId: userId }) as Promise<T>;
     if (parts[4] === 'promotions') return billing.applyBillPromotions({ ...(body as object), tableSessionId, actorUserId: userId }) as Promise<T>;
+    if (parts[4] === 'payments') return billing.recordSplitPayment({ ...(body as object), tableSessionId, actorUserId: userId }) as Promise<T>;
   }
 
   if (parts[1] === 'menu') {
@@ -209,6 +251,9 @@ async function requestInProcess<T>(path: string, method: string, body: unknown, 
 export class RestaurantApiClient {
   private currentUserId?: string;
   private currentToken?: string;
+  private readonly listeners = new Set<ApiNetworkListener>();
+  private networkStatus: ApiNetworkStatus = 'online';
+  private readonly inFlightWrites = new Map<string, Promise<unknown>>();
 
   constructor(private baseUrl = apiBase()) {}
 
@@ -222,6 +267,25 @@ export class RestaurantApiClient {
 
   getSessionUser(): string | undefined {
     return this.currentUserId;
+  }
+
+  getNetworkStatus(): ApiNetworkStatus {
+    return this.networkStatus;
+  }
+
+  onNetworkStatus(listener: ApiNetworkListener): () => void {
+    this.listeners.add(listener);
+    listener(this.networkStatus);
+    return () => this.listeners.delete(listener);
+  }
+
+  private setNetworkStatus(status: ApiNetworkStatus, detail?: { message?: string; attempt?: number }): void {
+    this.networkStatus = status;
+    for (const listener of this.listeners) listener(status, detail);
+  }
+
+  async health(): Promise<{ ok: boolean; status: string; at: string }> {
+    return this.request<{ ok: boolean; status: string; at: string }>('/api/health', { operationKind: 'read' });
   }
 
   async request<T>(path: string, options: RequestOptions = {}): Promise<T> {
@@ -238,12 +302,51 @@ export class RestaurantApiClient {
     }
 
     const method = options.method ?? 'GET';
+    const operationKind = options.operationKind ?? inferOperationKind(method);
+    if (operationKind === 'idempotent_write') headers['idempotency-key'] = options.idempotencyKey ?? headers['idempotency-key'] ?? createIdempotencyKey(method, path);
+    else if (options.idempotencyKey) headers['idempotency-key'] = options.idempotencyKey;
+
     if (typeof window === 'undefined' && !this.baseUrl) {
       return requestInProcess<T>(path, method, options.body, userId);
     }
 
-    const response = await fetch(`${this.baseUrl}${path}`, { ...options, headers, body });
-    return parseResponse<T>(response);
+    const maxAttempts = maxAttemptsForOperation(operationKind);
+    const dedupeKey = operationKind !== 'read' ? requestFingerprint(method, path, options.body) : undefined;
+    if (dedupeKey && this.inFlightWrites.has(dedupeKey)) return this.inFlightWrites.get(dedupeKey) as Promise<T>;
+
+    const run = async (): Promise<T> => {
+      let attempt = 1;
+      for (;;) {
+        try {
+          const response = await fetch(`${this.baseUrl}${path}`, { ...options, headers, body });
+          if (!response.ok && isLanFailureStatus(response.status) && shouldRetryLanFailure(operationKind, attempt)) {
+            this.setNetworkStatus('degraded', { message: `Retrying ${method} ${path} after HTTP ${response.status} (attempt ${attempt + 1}/${maxAttempts}).`, attempt });
+            await sleep(reconnectDelayMs(attempt));
+            attempt += 1;
+            continue;
+          }
+          const parsed = await parseResponse<T>(response);
+          if (attempt > 1 || this.networkStatus !== 'online') this.setNetworkStatus('online', { message: 'API connection restored.', attempt });
+          return parsed;
+        } catch (caught) {
+          if (caught instanceof ApiClientError) throw caught;
+          if (!shouldRetryLanFailure(operationKind, attempt)) {
+            this.setNetworkStatus('offline', { message: caught instanceof Error ? caught.message : 'API request failed.', attempt });
+            throw caught;
+          }
+          this.setNetworkStatus('degraded', { message: `${caught instanceof Error ? caught.message : 'API request failed; retrying.'} Retrying attempt ${attempt + 1}/${maxAttempts}.`, attempt });
+          await sleep(reconnectDelayMs(attempt));
+          attempt += 1;
+        }
+      }
+    };
+
+    const promise = run();
+    if (dedupeKey) {
+      this.inFlightWrites.set(dedupeKey, promise);
+      promise.then(() => this.inFlightWrites.delete(dedupeKey), () => this.inFlightWrites.delete(dedupeKey));
+    }
+    return promise;
   }
 
   login(identifier: string, password: string): Promise<LoginResponse> {
@@ -280,7 +383,7 @@ export class RestaurantApiClient {
   }
 
   createOrder(userId: string, input: CreateOrderInput): Promise<OrderRecord> {
-    return this.request<OrderRecord>('/api/orders', { method: 'POST', userId, body: input });
+    return this.request<OrderRecord>('/api/orders', { method: 'POST', userId, body: input, operationKind: 'idempotent_write' });
   }
 
   getOrder(orderId: string): Promise<OrderRecord | null> {
@@ -288,7 +391,7 @@ export class RestaurantApiClient {
   }
 
   editOrder(userId: string, orderId: string, edit: EditOrderInput): Promise<OrderRecord> {
-    return this.request<OrderRecord>(`/api/orders/${encodeURIComponent(orderId)}`, { method: 'PATCH', userId, body: edit });
+    return this.request<OrderRecord>(`/api/orders/${encodeURIComponent(orderId)}`, { method: 'PATCH', userId, body: edit, operationKind: 'idempotent_write' });
   }
 
   transitionOrderStatus(userId: string, orderId: string, expectedVersion: number, nextStatus: OrderStatus): Promise<OrderRecord> {
@@ -296,6 +399,7 @@ export class RestaurantApiClient {
       method: 'POST',
       userId,
       body: { expectedVersion, nextStatus },
+      operationKind: 'idempotent_write',
     });
   }
 
@@ -308,12 +412,22 @@ export class RestaurantApiClient {
       method: 'PATCH',
       userId,
       body: { progress },
+      operationKind: 'idempotent_write',
     });
   }
 
   subscribeKds(station: Station | undefined, onUpdate: (event: KdsEvent) => void): () => void {
     const source = new EventSource(`${this.baseUrl}/api/kds/events${queryString({ station })}`);
-    source.onmessage = (event) => onUpdate(JSON.parse(event.data) as KdsEvent);
+    source.onmessage = (event) => {
+      this.setNetworkStatus('online', { message: 'KDS stream connected.' });
+      onUpdate(JSON.parse(event.data) as KdsEvent);
+    };
+    source.onerror = () => {
+      this.setNetworkStatus('degraded', { message: 'KDS stream disconnected; reloading snapshot.' });
+      void this.getKdsSnapshot(station).then((snapshot) => onUpdate({ type: 'snapshot', at: new Date().toISOString(), payload: snapshot })).catch((caught) => {
+        this.setNetworkStatus('offline', { message: caught instanceof Error ? caught.message : 'KDS reload failed.' });
+      });
+    };
     return () => source.close();
   }
 
@@ -323,7 +437,7 @@ export class RestaurantApiClient {
     pricing?: Partial<BillPricingOptions>;
     locale?: string;
   }, userId?: string) {
-    return this.request('/api/billing/bills', { method: 'POST', userId, body: input });
+    return this.request('/api/billing/bills', { method: 'POST', userId, body: input, operationKind: 'idempotent_write' });
   }
 
   getBillBreakdown(tableSessionId: string): Promise<BillBreakdown> {
@@ -335,11 +449,15 @@ export class RestaurantApiClient {
   }
 
   setBillTaxMode(input: { tableSessionId: string; taxMode: BillPricingOptions['taxMode']; taxRate?: number }, userId?: string) {
-    return this.request(`/api/billing/bills/${encodeURIComponent(input.tableSessionId)}/tax`, { method: 'PATCH', userId, body: input });
+    return this.request(`/api/billing/bills/${encodeURIComponent(input.tableSessionId)}/tax`, { method: 'PATCH', userId, body: input, operationKind: 'idempotent_write' });
   }
 
   applyBillPromotions(input: { tableSessionId: string; billPromotions: BillPromotion[] }, userId?: string) {
-    return this.request(`/api/billing/bills/${encodeURIComponent(input.tableSessionId)}/promotions`, { method: 'PATCH', userId, body: input });
+    return this.request(`/api/billing/bills/${encodeURIComponent(input.tableSessionId)}/promotions`, { method: 'PATCH', userId, body: input, operationKind: 'idempotent_write' });
+  }
+
+  recordSplitPayment(input: { tableSessionId: string; splitLabel: SplitLabel; amount: number; method: string; createDebtForUnpaidBalance?: boolean }, userId?: string, idempotencyKey?: string) {
+    return this.request(`/api/billing/bills/${encodeURIComponent(input.tableSessionId)}/payments`, { method: 'POST', userId, body: input, operationKind: 'unsafe_write', idempotencyKey });
   }
 
   listMenu(): Promise<MenuCategories> {
