@@ -59,6 +59,7 @@ export interface CancelOrderInput {
 const ROLE_STATUS_FLOW: Record<string, Array<{ from: OrderStatus; to: OrderStatus }>> = {
   waitstaff: [
     { from: 'pending', to: 'in_preparation' },
+    { from: 'in_preparation', to: 'completed' },
     { from: 'completed', to: 'delivered' },
   ],
   kitchen: [{ from: 'in_preparation', to: 'completed' }],

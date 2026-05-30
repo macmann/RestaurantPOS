@@ -4,6 +4,7 @@ This matrix defines route-level authorization for core POS actions. Permissions 
 
 ## Roles
 
+- **Waitstaff**: floor service, order capture, table cleanup, and same-shift payment closeout.
 - **Cashier**: front-of-house order and billing execution.
 - **Shift Lead**: supervises shift activity; can handle exceptions.
 - **Inventory Clerk**: manages stock movement and adjustments.
@@ -12,15 +13,15 @@ This matrix defines route-level authorization for core POS actions. Permissions 
 
 ## Explicit Action Matrix
 
-| Action | Cashier | Shift Lead | Inventory Clerk | Manager | Admin |
-|---|---:|---:|---:|---:|---:|
-| Create order (`orders:create`) | ✅ | ✅ | ❌ | ✅ | ✅ |
-| Edit order (`orders:edit`) | ✅ (own/open order) | ✅ | ❌ | ✅ | ✅ |
-| Adjust stock (`stock:adjust`) | ❌ | ✅ (limited) | ✅ | ✅ | ✅ |
-| Mark debt (`billing:mark_debt`) | ✅ | ✅ | ❌ | ✅ | ✅ |
-| Close bill (`billing:close`) | ✅ | ✅ | ❌ | ✅ | ✅ |
-| View reports (`reports:view`) | ❌ | ❌ | ❌ | ✅ | ✅ |
-| View audit log (`audit:view`) | ❌ | ❌ | ❌ | ✅ | ✅ |
+| Action | Waitstaff | Cashier | Shift Lead | Inventory Clerk | Manager | Admin |
+|---|---:|---:|---:|---:|---:|---:|
+| Create order (`orders:create`) | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ |
+| Edit order (`orders:edit`) | ✅ (own/open order) | ✅ (own/open order) | ✅ | ❌ | ✅ | ✅ |
+| Adjust stock (`stock:adjust`) | ❌ | ❌ | ✅ (limited) | ✅ | ✅ | ✅ |
+| Mark debt (`billing:mark_debt`) | ❌ | ✅ | ✅ | ❌ | ✅ | ✅ |
+| Close bill (`billing:close`) | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ |
+| View reports (`reports:view`) | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ |
+| View audit log (`audit:view`) | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ |
 
 ## Route Mapping
 
@@ -31,6 +32,7 @@ The backend should enforce action checks at route boundaries:
 - `POST /inventory/adjustments` → `stock:adjust`
 - `POST /billing/:id/mark-debt` → `billing:mark_debt`
 - `POST /billing/:id/close` → `billing:close`
+- `POST /orders/:id/status` → `orders:transition_status`
 - `GET /reports/*` → `reports:view`
 - `GET /audit` → `audit:view`
 
