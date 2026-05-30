@@ -2,11 +2,10 @@ import { getStoredSession, login, logout, type BrowserSession } from '../auth/se
 import { appRoutes, canAccessRoute, defaultRoute, visibleRoutes, type AppRoute } from '../auth/navigation';
 import type { AuthenticatedUser } from '../../backend/auth/policies';
 import { RolePermissions } from '../../backend/auth/permissions';
-import { loadKitchenQueue } from '../kds/kitchen-screen';
-import { loadBarQueue } from '../kds/bar-screen';
+import { loadKitchenQueue, setKitchenItemProgress } from '../kds/kitchen-screen';
+import { loadBarQueue, setBarItemProgress } from '../kds/bar-screen';
 import { loadOrderProgressForWaiter } from '../waiter/order-progress';
 import { loadAdminMenuDashboard } from '../admin/menu-management';
-import { loadAdminInventoryAlerts } from '../admin/inventory-alerts';
 import { loadAdminAuditViewer } from '../admin/audit-viewer';
 import { apiClient } from '../api/client';
 import { loadCashierTableFloor } from '../cashier/table-floor';
@@ -281,6 +280,226 @@ async function renderStaffSettings(isSuperadminPanel = false): Promise<HTMLEleme
   return section;
 }
 
+
+function emptyState(text: string): HTMLElement {
+  return el('p', 'empty-state', text);
+}
+
+function badge(value: string, tone = ''): HTMLElement {
+  return el('span', `badge ${tone}`.trim(), value.replace(/_/g, ' '));
+}
+
+function formatElapsed(seconds: number): string {
+  const minutes = Math.floor(seconds / 60);
+  return minutes > 0 ? `${minutes}m ${seconds % 60}s` : `${seconds}s`;
+}
+
+async function renderKdsStation(station: 'kitchen' | 'bar'): Promise<HTMLElement> {
+  const title = station === 'kitchen' ? 'Kitchen KDS' : 'Bar KDS';
+  const section = page(title, `${title} tickets are grouped by station with action buttons for prep progress.`);
+  const state = station === 'kitchen' ? await loadKitchenQueue() : await loadBarQueue();
+  const group = state.queue.groups.find((row) => row.station === station);
+  const board = el('div', 'kds-board');
+  const items = group?.items ?? [];
+  if (!items.length) board.append(emptyState(`No ${station} tickets are waiting.`));
+  for (const item of items) {
+    const ticket = el('article', `kds-ticket ${item.progress}`);
+    ticket.innerHTML = `
+      <div class="ticket-head"><strong>${item.quantity}× ${item.itemName}</strong><span>${formatElapsed(item.elapsedSeconds)}</span></div>
+      <p>Order ${item.orderId.slice(-8)}${item.note ? ` · ${item.note}` : ''}</p>
+      <div class="ticket-actions"></div>
+    `;
+    ticket.querySelector('.ticket-head')?.append(badge(item.progress, item.progress));
+    const actions = ticket.querySelector<HTMLElement>('.ticket-actions')!;
+    for (const next of ['preparing', 'ready'] as const) {
+      const button = el('button', next === item.progress ? 'secondary' : '', next === 'preparing' ? 'Start prep' : 'Mark ready');
+      button.type = 'button';
+      button.disabled = item.progress === next || item.progress === 'served';
+      button.addEventListener('click', async () => {
+        if (station === 'kitchen') await setKitchenItemProgress(session!.user, item.orderId, item.orderItemId, next);
+        else await setBarItemProgress(session!.user, item.orderId, item.orderItemId, next);
+        render();
+      });
+      actions.append(button);
+    }
+    board.append(ticket);
+  }
+  section.append(board);
+  return section;
+}
+
+async function renderWaiterProgress(): Promise<HTMLElement> {
+  const section = page('Waiter progress', 'Track kitchen and bar readiness for orders before updating guests.');
+  const state = await loadOrderProgressForWaiter();
+  const lanes = el('div', 'progress-lanes');
+  for (const group of state.snapshot.groups) {
+    const lane = el('section', 'progress-lane');
+    lane.append(el('h3', '', group.station === 'kitchen' ? 'Kitchen' : 'Bar'));
+    if (!group.items.length) lane.append(emptyState('No active items.'));
+    for (const item of group.items) {
+      const row = el('div', 'progress-row');
+      row.innerHTML = `<strong>${item.quantity}× ${item.itemName}</strong><small>Order ${item.orderId.slice(-8)} · ${formatElapsed(item.elapsedSeconds)}</small>`;
+      row.append(badge(item.progress, item.progress));
+      lane.append(row);
+    }
+    lanes.append(lane);
+  }
+  section.append(lanes);
+  return section;
+}
+
+async function renderMenuAdmin(): Promise<HTMLElement> {
+  const section = page('Menu admin', 'Create items, route them to kitchen or bar, toggle availability, and flag promotions.');
+  const state = await loadAdminMenuDashboard();
+  const panel = el('section', 'admin-panel menu-admin-panel');
+  const categories = state.categories;
+  panel.innerHTML = `
+    <article class="card admin-card">
+      <h3>Create category</h3>
+      <form class="staff-form category-form">
+        <label>Name<input name="name" required placeholder="Specials" /></label>
+        <label>Sort order<input name="sortOrder" type="number" value="10" /></label>
+        <button type="submit">Add category</button>
+        <p class="form-error" hidden></p>
+      </form>
+    </article>
+    <article class="card admin-card">
+      <h3>Create menu item</h3>
+      <form class="staff-form item-form">
+        <label>Category<select name="categoryId">${categories.map((cat) => `<option value="${cat.id}">${cat.name}</option>`).join('')}</select></label>
+        <label>Name<input name="name" required placeholder="Tea leaf salad" /></label>
+        <label>Price<input name="price" type="number" min="0" step="0.01" required /></label>
+        <label>Station<select name="prepStation"><option value="kitchen">Kitchen</option><option value="bar">Bar</option></select></label>
+        <label>Description<input name="description" /></label>
+        <button type="submit">Add item</button>
+        <p class="form-error" hidden></p>
+      </form>
+    </article>
+  `;
+  const list = el('div', 'menu-admin-list');
+  if (!categories.length) list.append(emptyState('No categories yet. Create one to start building the menu.'));
+  for (const category of categories) {
+    const card = el('article', 'card menu-category-admin');
+    card.append(el('h3', '', `${category.name} (${category.items.length})`));
+    if (!category.items.length) card.append(emptyState('No menu items in this category.'));
+    for (const item of category.items) {
+      const row = el('div', 'menu-admin-row');
+      row.innerHTML = `<div><strong>${item.name}</strong><small>${money(item.price)} · ${item.prepStation ?? 'service'}${item.description ? ` · ${item.description}` : ''}</small></div>`;
+      row.append(badge(item.isAvailable ? 'available' : 'hidden', item.isAvailable ? 'ready' : 'queued'));
+      row.append(badge(item.isPromotional ? 'promo' : 'regular'));
+      const availability = el('button', 'secondary', item.isAvailable ? 'Hide' : 'Show');
+      availability.addEventListener('click', async () => { await apiClient.setMenuItemAvailability(item.id, !item.isAvailable); render(); });
+      const promo = el('button', 'secondary', item.isPromotional ? 'Remove promo' : 'Make promo');
+      promo.addEventListener('click', async () => { await apiClient.setMenuItemPromotional(item.id, !item.isPromotional); render(); });
+      row.append(availability, promo);
+      card.append(row);
+    }
+    list.append(card);
+  }
+  panel.append(list);
+  panel.querySelector<HTMLFormElement>('.category-form')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget as HTMLFormElement);
+    await apiClient.createMenuCategory({ name: String(data.get('name') ?? ''), sortOrder: Number(data.get('sortOrder') ?? 0) });
+    render();
+  });
+  panel.querySelector<HTMLFormElement>('.item-form')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget as HTMLFormElement);
+    await apiClient.createMenuItem({
+      categoryId: String(data.get('categoryId') ?? ''),
+      name: String(data.get('name') ?? ''),
+      description: String(data.get('description') ?? '') || undefined,
+      price: Number(data.get('price') ?? 0),
+      prepStation: String(data.get('prepStation') ?? 'kitchen') as 'kitchen' | 'bar',
+    });
+    render();
+  });
+  section.append(panel);
+  return section;
+}
+
+async function renderInventoryAlerts(): Promise<HTMLElement> {
+  const section = page('Inventory alerts', 'Monitor stock, create inventory masters, post adjustments, and choose deduction timing.');
+  const [items, alerts, policy] = await Promise.all([apiClient.listInventoryItems(), apiClient.getInventoryAlerts(), apiClient.getInventoryDeductionPolicy()]);
+  const panel = el('section', 'admin-panel inventory-panel');
+  panel.innerHTML = `
+    <article class="card admin-card"><h3>Deduction policy</h3><form class="inline-staff-form policy-form"><label>When to deduct stock<select name="policy"><option value="on_in_preparation" ${policy === 'on_in_preparation' ? 'selected' : ''}>When prep starts</option><option value="on_completed" ${policy === 'on_completed' ? 'selected' : ''}>When item completes</option><option value="manual" ${policy === 'manual' ? 'selected' : ''}>Manual only</option></select></label><button type="submit">Save policy</button></form></article>
+    <article class="card admin-card"><h3>Create inventory item</h3><form class="staff-form inventory-item-form"><label>SKU<input name="sku" required /></label><label>Name<input name="name" required /></label><label>Unit<input name="unit" value="each" required /></label><label>Minimum<input name="minimumThreshold" type="number" step="0.001" value="5" /></label><label>Current stock<input name="currentStock" type="number" step="0.001" value="0" /></label><button type="submit">Create item</button></form></article>
+  `;
+  const alertGrid = el('div', 'card-grid');
+  if (!alerts.length) alertGrid.append(el('article', 'card', 'No low-stock alerts.'));
+  for (const alert of alerts) {
+    const card = el('article', `card alert-card ${alert.severity}`);
+    card.innerHTML = `<h3>${alert.itemName}</h3><p>${alert.currentBalance} ${alert.unit} remaining · minimum ${alert.minimumThreshold}</p>`;
+    card.append(badge(alert.severity, alert.severity));
+    alertGrid.append(card);
+  }
+  const table = el('table', 'staff-table inventory-table');
+  table.innerHTML = '<thead><tr><th>Item</th><th>Balance</th><th>Threshold</th><th>Post movement</th></tr></thead>';
+  const body = el('tbody');
+  for (const item of items) {
+    const row = el('tr');
+    row.innerHTML = `<td><strong>${item.name}</strong><br><small>${item.sku}</small></td><td>${item.currentBalance} ${item.unit}</td><td>${item.minimumThreshold} ${item.unit}</td><td><form class="inline-staff-form movement-form" data-item-id="${item.id}"><select name="movementType"><option value="restock">Restock</option><option value="manual_adjustment">Manual adjustment</option><option value="wastage">Wastage</option></select><input name="quantityDelta" type="number" step="0.001" placeholder="Qty +/-" required /><input name="reason" placeholder="Reason" /><button type="submit">Post</button></form></td>`;
+    body.append(row);
+  }
+  table.append(body);
+  panel.append(alertGrid, table);
+  panel.querySelector<HTMLFormElement>('.policy-form')?.addEventListener('submit', async (event) => { event.preventDefault(); await apiClient.setInventoryDeductionPolicy(String(new FormData(event.currentTarget as HTMLFormElement).get('policy')) as any); render(); });
+  panel.querySelector<HTMLFormElement>('.inventory-item-form')?.addEventListener('submit', async (event) => {
+    event.preventDefault(); const data = new FormData(event.currentTarget as HTMLFormElement);
+    await apiClient.createInventoryItem({ sku: String(data.get('sku') ?? ''), name: String(data.get('name') ?? ''), unit: String(data.get('unit') ?? ''), minimumThreshold: Number(data.get('minimumThreshold') ?? 0), currentStock: Number(data.get('currentStock') ?? 0) }); render();
+  });
+  panel.querySelectorAll<HTMLFormElement>('.movement-form').forEach((form) => form.addEventListener('submit', async (event) => {
+    event.preventDefault(); const data = new FormData(form); const type = String(data.get('movementType') ?? 'restock') as any; let qty = Number(data.get('quantityDelta') ?? 0); if (type === 'wastage' && qty > 0) qty *= -1;
+    await apiClient.addInventoryMovement({ itemId: form.dataset.itemId!, movementType: type, quantityDelta: qty, reason: String(data.get('reason') ?? '') || undefined }); render();
+  }));
+  section.append(panel);
+  return section;
+}
+
+async function renderReports(): Promise<HTMLElement> {
+  const section = page('Reports', 'Review sales, inventory usage, and financial summary without reading raw API payloads.');
+  const [sales, inventory, financial] = await Promise.all([apiClient.getSalesReport('day') as Promise<any>, apiClient.getInventoryUsageReport(), apiClient.getFinancialSummaryReport()]);
+  const cards = el('div', 'report-grid');
+  const salesCard = el('article', 'card report-card');
+  salesCard.innerHTML = `<h3>Daily sales</h3><p><strong>${money(sales.summary?.revenue ?? 0)}</strong> revenue · ${sales.summary?.orderCount ?? 0} orders</p>`;
+  const salesRows = el('div', 'report-rows');
+  for (const row of sales.rows ?? []) salesRows.append(el('p', '', `${row.periodLabel}: ${money(row.revenue)} across ${row.orderCount} orders`));
+  salesCard.append(salesRows);
+  const invCard = el('article', 'card report-card');
+  invCard.innerHTML = `<h3>Inventory usage</h3><p>${inventory.summary.itemCount} items · ${inventory.summary.totalUsed} used · ${inventory.summary.totalWastage} wastage</p>`;
+  const finCard = el('article', 'card report-card');
+  finCard.innerHTML = `<h3>Financial summary</h3><p>${money(financial.summary.revenue)} revenue · ${money(financial.summary.grossProfit)} gross profit · ${financial.summary.grossMarginPercent}% margin</p>`;
+  cards.append(salesCard, invCard, finCard);
+  section.append(cards);
+  return section;
+}
+
+async function renderAudit(): Promise<HTMLElement> {
+  const section = page('Audit', 'Search audit history by keyword and inspect event summaries with before/after details.');
+  const panel = el('section', 'admin-panel');
+  const form = el('form', 'staff-form audit-filter-form');
+  form.innerHTML = '<label>Search<input name="query" placeholder="order, payment, user, reason" /></label><label>Limit<input name="limit" type="number" value="50" min="1" /></label><button type="submit">Search audit</button>';
+  const results = el('div', 'audit-results');
+  async function load(filters = {}) {
+    const state = await loadAdminAuditViewer(session!.user, { limit: 50, ...filters });
+    results.replaceChildren();
+    if (state.error) results.append(el('p', 'pos-status', state.error));
+    if (!state.rows.length) results.append(emptyState(state.emptyState));
+    for (const row of state.rows) {
+      const card = el('article', 'card audit-card');
+      card.innerHTML = `<h3>${row.action.replace(/_/g, ' ')}</h3><p>${row.summary}</p><details><summary>Snapshots</summary><pre>${row.beforeSnapshot}</pre><pre>${row.afterSnapshot}</pre></details>`;
+      results.append(card);
+    }
+  }
+  form.addEventListener('submit', async (event) => { event.preventDefault(); const data = new FormData(form); await load({ query: String(data.get('query') ?? ''), limit: Number(data.get('limit') ?? 50) }); });
+  await load();
+  panel.append(form, results);
+  section.append(panel);
+  return section;
+}
+
 async function attachJsonPreview(container: HTMLElement, loader: () => Promise<unknown>): Promise<void> {
   const pre = el('pre', 'json-preview', 'Loading…');
   container.append(pre);
@@ -546,32 +765,25 @@ async function renderRoute(): Promise<void> {
       content = await renderRestaurantPos();
       break;
     case '#/kitchen':
-      content = page('Kitchen KDS', 'Kitchen station queue with live KDS event stream support.', ['Queued items', 'Preparing', 'Ready']);
-      await attachJsonPreview(content, () => loadKitchenQueue());
+      content = await renderKdsStation('kitchen');
       break;
     case '#/bar':
-      content = page('Bar KDS', 'Bar station queue built on the same KDS API endpoints.', ['Drink queue', 'Preparing', 'Ready']);
-      await attachJsonPreview(content, () => loadBarQueue());
+      content = await renderKdsStation('bar');
       break;
     case '#/waiter-progress':
-      content = page('Waiter progress', 'Waitstaff progress view across kitchen and bar stations.', ['Kitchen progress', 'Bar progress', 'Guest updates']);
-      await attachJsonPreview(content, () => loadOrderProgressForWaiter());
+      content = await renderWaiterProgress();
       break;
     case '#/menu-admin':
-      content = page('Menu admin', 'Manage categories, menu items, availability, and promotions.', ['Categories', 'Items', 'Availability', 'Promotions']);
-      await attachJsonPreview(content, () => loadAdminMenuDashboard());
+      content = await renderMenuAdmin();
       break;
     case '#/inventory-alerts':
-      content = page('Inventory alerts', 'Review low-stock alerts and current inventory deduction policy.', ['Low stock', 'Deduction policy', 'Stock actions']);
-      await attachJsonPreview(content, () => loadAdminInventoryAlerts());
+      content = await renderInventoryAlerts();
       break;
     case '#/reports':
-      content = page('Reports', 'Sales, inventory usage, and financial summary report shells.', ['Sales by day', 'Sales by week', 'Sales by month', 'Financial summary']);
-      await attachJsonPreview(content, () => apiClient.getSalesReport('day'));
+      content = await renderReports();
       break;
     case '#/audit':
-      content = page('Audit', 'Filter and inspect auditable events from the backend audit API.', ['Search', 'Entity filters', 'Reason filters', 'Snapshots']);
-      await attachJsonPreview(content, () => loadAdminAuditViewer(session!.user));
+      content = await renderAudit();
       break;
     case '#/superadmin':
       content = await renderStaffSettings(true);

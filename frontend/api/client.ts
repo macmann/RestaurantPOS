@@ -18,8 +18,11 @@ type BillBreakdown = Awaited<ReturnType<typeof getBillCalculationBreakdown>>;
 type ReceiptPayload = Awaited<ReturnType<typeof getPrintedReceiptPayload>>;
 type MenuCategories = Awaited<ReturnType<typeof AdminMenuApi.list>>;
 type InventoryAlerts = Awaited<ReturnType<typeof InventoryAdminApi.listAlerts>>;
+type InventoryItems = Awaited<ReturnType<typeof InventoryAdminApi.listItems>>;
 type InventoryDeductionPolicy = Awaited<ReturnType<typeof InventoryAdminApi.getDeductionPolicy>>;
 type AuditSearchResult = Awaited<ReturnType<typeof AdminAuditApi.search>>;
+type InventoryUsageReport = Awaited<ReturnType<typeof import('../../backend/reports/controller').ReportsApi.inventoryUsage>>;
+type FinancialSummaryReport = Awaited<ReturnType<typeof import('../../backend/reports/controller').ReportsApi.financialSummary>>;
 
 declare global {
   // Optional deploy-time override, for example when the API is hosted on another origin.
@@ -215,12 +218,20 @@ async function requestInProcess<T>(path: string, method: string, body: unknown, 
     if (parts.length === 2 && method === 'GET') return AdminMenuApi.list() as Promise<T>;
     if (parts[2] === 'categories' && method === 'POST') return AdminMenuApi.createCategory(body) as Promise<T>;
     if (parts[2] === 'items' && method === 'POST') return AdminMenuApi.createItem(body) as Promise<T>;
+    if (parts[2] === 'items' && parts.length === 4 && method === 'PATCH') return AdminMenuApi.updateItem(parts[3], body) as Promise<T>;
+    if (parts[2] === 'items' && parts.length === 5 && parts[4] === 'availability' && method === 'PATCH') return AdminMenuApi.setAvailability(parts[3], Boolean((body as any).isAvailable)) as Promise<T>;
+    if (parts[2] === 'items' && parts.length === 5 && parts[4] === 'promotional' && method === 'PATCH') return AdminMenuApi.setPromotional(parts[3], Boolean((body as any).isPromotional)) as Promise<T>;
+    if (parts[2] === 'items' && parts.length === 4 && method === 'DELETE') return AdminMenuApi.deleteItem(parts[3]) as Promise<T>;
   }
 
   if (parts[1] === 'inventory') {
     const { InventoryAdminApi } = await backendModule<any>('../../backend/inventory/controller.js');
+    if (parts[2] === 'items' && method === 'GET') return InventoryAdminApi.listItems() as Promise<T>;
+    if (parts[2] === 'items' && method === 'POST') return InventoryAdminApi.createItem(body) as Promise<T>;
+    if (parts[2] === 'movements' && method === 'POST') return InventoryAdminApi.addMovement(body, userId) as Promise<T>;
     if (parts[2] === 'alerts') return InventoryAdminApi.listAlerts() as Promise<T>;
-    if (parts[2] === 'deduction-policy') return InventoryAdminApi.getDeductionPolicy() as Promise<T>;
+    if (parts[2] === 'deduction-policy' && method === 'GET') return InventoryAdminApi.getDeductionPolicy() as Promise<T>;
+    if (parts[2] === 'deduction-policy' && method === 'PUT') return InventoryAdminApi.setDeductionPolicy(await userFor(userId), (body as any).policy) as Promise<T>;
   }
 
   if (parts[1] === 'audit' && parts[2] === 'events') {
@@ -248,6 +259,8 @@ async function requestInProcess<T>(path: string, method: string, body: unknown, 
   if (parts[1] === 'reports') {
     const { ReportsApi } = await backendModule<any>('../../backend/reports/controller.js');
     if (parts[2] === 'sales') return ReportsApi.sales(await userFor(userId), parts[3], Object.fromEntries(url.searchParams.entries())) as Promise<T>;
+    if (parts[2] === 'inventory-usage') return ReportsApi.inventoryUsage(await userFor(userId), Object.fromEntries(url.searchParams.entries())) as Promise<T>;
+    if (parts[2] === 'financial-summary') return ReportsApi.financialSummary(await userFor(userId), Object.fromEntries(url.searchParams.entries())) as Promise<T>;
   }
 
   throw new ApiClientError('Route not found.', 404);
@@ -473,12 +486,48 @@ export class RestaurantApiClient {
     return this.request('/api/menu/categories', { method: 'POST', body: input });
   }
 
+  createMenuItem(input: { categoryId: string; name: string; description?: string; price: number; prepStation?: 'kitchen' | 'bar'; isAvailable?: boolean; isPromotional?: boolean }) {
+    return this.request('/api/menu/items', { method: 'POST', body: input });
+  }
+
+  updateMenuItem(itemId: string, input: { name?: string; description?: string; price?: number; prepStation?: 'kitchen' | 'bar'; isAvailable?: boolean; isPromotional?: boolean }) {
+    return this.request(`/api/menu/items/${encodeURIComponent(itemId)}`, { method: 'PATCH', body: input });
+  }
+
+  deleteMenuItem(itemId: string) {
+    return this.request(`/api/menu/items/${encodeURIComponent(itemId)}`, { method: 'DELETE' });
+  }
+
+  setMenuItemAvailability(itemId: string, isAvailable: boolean) {
+    return this.request(`/api/menu/items/${encodeURIComponent(itemId)}/availability`, { method: 'PATCH', body: { isAvailable } });
+  }
+
+  setMenuItemPromotional(itemId: string, isPromotional: boolean) {
+    return this.request(`/api/menu/items/${encodeURIComponent(itemId)}/promotional`, { method: 'PATCH', body: { isPromotional } });
+  }
+
+  listInventoryItems(): Promise<InventoryItems> {
+    return this.request<InventoryItems>('/api/inventory/items');
+  }
+
+  createInventoryItem(input: { sku: string; name: string; unit: string; minimumThreshold: number; currentStock: number }) {
+    return this.request('/api/inventory/items', { method: 'POST', body: input });
+  }
+
+  addInventoryMovement(input: { itemId: string; movementType: 'restock' | 'manual_adjustment' | 'wastage' | 'sale_deduction'; quantityDelta: number; reason?: string }) {
+    return this.request('/api/inventory/movements', { method: 'POST', body: input, operationKind: 'idempotent_write' });
+  }
+
   getInventoryAlerts(): Promise<InventoryAlerts> {
     return this.request<InventoryAlerts>('/api/inventory/alerts');
   }
 
   getInventoryDeductionPolicy(): Promise<InventoryDeductionPolicy> {
     return this.request<InventoryDeductionPolicy>('/api/inventory/deduction-policy');
+  }
+
+  setInventoryDeductionPolicy(policy: InventoryDeductionPolicy) {
+    return this.request('/api/inventory/deduction-policy', { method: 'PUT', body: { policy } });
   }
 
   searchAuditEvents(filters: AdminAuditViewerFilters, userId?: string): Promise<AuditSearchResult> {
@@ -511,6 +560,14 @@ export class RestaurantApiClient {
 
   getSalesReport(period: 'day' | 'week' | 'month') {
     return this.request(`/api/reports/sales/${period}`);
+  }
+
+  getInventoryUsageReport(): Promise<InventoryUsageReport> {
+    return this.request<InventoryUsageReport>('/api/reports/inventory-usage');
+  }
+
+  getFinancialSummaryReport(): Promise<FinancialSummaryReport> {
+    return this.request<FinancialSummaryReport>('/api/reports/financial-summary');
   }
 }
 
