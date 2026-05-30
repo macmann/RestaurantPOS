@@ -29,7 +29,12 @@ export interface ItemInput {
   name: string;
   description?: string;
   price: number;
+  prepStation?: 'kitchen' | 'bar';
+  taxMode?: 'taxable' | 'tax_exempt';
+  taxRate?: number;
+  inventoryItemId?: string;
   isAvailable?: boolean;
+  isActive?: boolean;
   isPromotional?: boolean;
 }
 
@@ -41,6 +46,15 @@ function nowIso() {
 
 function createId(prefix: string): string {
   return `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function assertValidStation(station: string | undefined): asserts station is 'kitchen' | 'bar' | undefined {
+  if (station !== undefined && station !== 'kitchen' && station !== 'bar') throw new Error('prepStation must be kitchen or bar.');
+}
+
+function assertValidTaxMetadata(taxMode: string | undefined, taxRate: number | undefined): void {
+  if (taxMode !== undefined && taxMode !== 'taxable' && taxMode !== 'tax_exempt') throw new Error('taxMode must be taxable or tax_exempt.');
+  if (taxRate !== undefined) assertValidPrice(taxRate);
 }
 
 function assertValidPrice(price: number): void {
@@ -111,6 +125,8 @@ export async function adminCreateItem(input: ItemInput): Promise<MenuItemRecord>
 
   const name = assertName(input.name, 'Item');
   assertValidPrice(input.price);
+  assertValidStation(input.prepStation);
+  assertValidTaxMetadata(input.taxMode, input.taxRate);
 
   const duplicate = await getItemByNameInCategory(input.categoryId, name);
   if (duplicate) throw new Error(`Item '${name}' already exists in this category.`);
@@ -123,7 +139,12 @@ export async function adminCreateItem(input: ItemInput): Promise<MenuItemRecord>
     name,
     description: input.description?.trim() || undefined,
     price: Math.round(input.price * 100) / 100,
+    prepStation: input.prepStation,
+    taxMode: input.taxMode ?? 'taxable',
+    taxRate: input.taxRate !== undefined ? Math.round(input.taxRate * 100) / 100 : 0,
+    inventoryItemId: input.inventoryItemId,
     isAvailable: input.isAvailable ?? true,
+    isActive: input.isActive ?? true,
     isPromotional: input.isPromotional ?? false,
     createdAt: now,
     updatedAt: now,
@@ -143,6 +164,8 @@ export async function adminUpdateItem(id: string, input: Partial<ItemInput>) {
   if (typeof input.price === 'number') {
     assertValidPrice(input.price);
   }
+  assertValidStation(input.prepStation);
+  assertValidTaxMetadata(input.taxMode, input.taxRate);
 
   if (input.name) {
     const name = assertName(input.name, 'Item');
@@ -155,6 +178,7 @@ export async function adminUpdateItem(id: string, input: Partial<ItemInput>) {
     ...input,
     description: input.description?.trim(),
     price: typeof input.price === 'number' ? Math.round(input.price * 100) / 100 : undefined,
+    taxRate: typeof input.taxRate === 'number' ? Math.round(input.taxRate * 100) / 100 : undefined,
     updatedAt: nowIso(),
   });
 }

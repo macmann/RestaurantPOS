@@ -46,8 +46,52 @@ async function runEndToEndPosFlow(): Promise<void> {
 
   const rice = await createInventoryMasterItem({ branchId, sku: 'RICE-E2E', name: 'Rice portions', unit: 'portion', minimumThreshold: 5, currentStock: 20 });
   const category = await adminCreateCategory({ branchId, name: 'E2E Specials', sortOrder: 1 });
-  const menuItem = await adminCreateItem({ branchId, categoryId: category.id, name: 'Tea Leaf Rice', price: 7.5, isAvailable: true });
+  const menuItem = await adminCreateItem({ branchId, categoryId: category.id, name: 'Tea Leaf Rice', price: 7.5, prepStation: 'kitchen', inventoryItemId: rice.id, taxMode: 'taxable', taxRate: 5, isAvailable: true });
   assert(menuItem.isAvailable, 'Menu item should be available for order entry.');
+
+  const stalePriceOrder = await createOrderDraft(waiter, {
+    branchId,
+    serviceMode: 'takeout',
+    takeoutName: 'Stale Price Guest',
+    items: [{ menuItemId: menuItem.id, quantity: 1, name: 'Client Forgery', unitPrice: 0.01, station: 'bar' } as any],
+  });
+  assertEqual(stalePriceOrder.items[0].name, menuItem.name, 'E2E order creation should derive item name from menu data');
+  assertEqual(stalePriceOrder.items[0].unitPrice, menuItem.price, 'E2E order creation should reject stale client prices');
+  assertEqual(stalePriceOrder.items[0].station, 'kitchen', 'E2E order creation should derive prep station from menu data');
+  assertEqual(stalePriceOrder.items[0].taxRate, 5, 'E2E order creation should derive tax metadata from menu data');
+
+  const unavailableItem = await adminCreateItem({ branchId, categoryId: category.id, name: 'Sold Out Salad E2E', price: 4, isAvailable: false });
+  await assertRejects(
+    () => createOrderDraft(waiter, { branchId, serviceMode: 'takeout', takeoutName: 'Unavailable Guest', items: [{ menuItemId: unavailableItem.id, quantity: 1 }] }),
+    'is unavailable',
+  );
+  const overrideOrder = await createOrderDraft(manager, {
+    branchId,
+    serviceMode: 'takeout',
+    takeoutName: 'Override Guest',
+    items: [{ menuItemId: unavailableItem.id, quantity: 1, allowUnavailableOverride: true, overrideReason: 'Manager approved last portion' }],
+  });
+  assertEqual(overrideOrder.items[0].unitPrice, unavailableItem.price, 'E2E manager override should still use authoritative unavailable item price');
+
+  const inactiveMenuItem = await adminCreateItem({ branchId, categoryId: category.id, name: 'Inactive Item E2E', price: 5.5, isActive: false, isAvailable: true });
+  await assertRejects(
+    () => createOrderDraft(waiter, { branchId, serviceMode: 'takeout', takeoutName: 'Inactive Item Guest', items: [{ menuItemId: inactiveMenuItem.id, quantity: 1 }] }),
+    'is inactive',
+  );
+
+  const inactiveCategory = await adminCreateCategory({ branchId, name: 'Inactive E2E Specials', sortOrder: 99, isActive: false });
+  const inactiveItem = await adminCreateItem({ branchId, categoryId: inactiveCategory.id, name: 'Inactive Soup E2E', price: 6, isAvailable: true });
+  await assertRejects(
+    () => createOrderDraft(waiter, { branchId, serviceMode: 'takeout', takeoutName: 'Inactive Guest', items: [{ menuItemId: inactiveItem.id, quantity: 1 }] }),
+    'is inactive',
+  );
+
+  const otherBranchCategory = await adminCreateCategory({ branchId: 'branch-e2e-other', name: 'Other Branch E2E', sortOrder: 1 });
+  const otherBranchItem = await adminCreateItem({ branchId: 'branch-e2e-other', categoryId: otherBranchCategory.id, name: 'Other Branch Curry E2E', price: 8, isAvailable: true });
+  await assertRejects(
+    () => createOrderDraft(waiter, { branchId, serviceMode: 'takeout', takeoutName: 'Branch Guest', items: [{ menuItemId: otherBranchItem.id, quantity: 1 }] }),
+    'Branch mismatch',
+  );
 
   const table = await createTable({ id: 'T-E2E-01', branchId, name: 'Table E2E 01', capacity: 4 });
   const tableSession = await openTableSession(cashier, { tableId: table.id, guestCount: 4, branchId });
@@ -57,7 +101,7 @@ async function runEndToEndPosFlow(): Promise<void> {
     branchId,
     serviceMode: 'dine_in',
     tableSessionId: tableSession.id,
-    items: [{ menuItemId: rice.id, name: menuItem.name, station: 'kitchen', quantity: 2, unitPrice: menuItem.price, note: 'Less oil' }],
+    items: [{ menuItemId: menuItem.id, quantity: 2, note: 'Less oil', modifiers: ['less oil'] }],
   });
   assertEqual(order.subtotal, 15, 'Order subtotal should reflect seeded cart items');
   await assertRejects(() => closeTableSession(cashier, tableSession.id), 'Cannot close table session while order');

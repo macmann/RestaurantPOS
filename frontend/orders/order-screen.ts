@@ -1,14 +1,16 @@
 import type { AuthenticatedUser } from '../../backend/auth/policies';
 import { buildLocaleSwitchState, getLocaleResource } from '../i18n/locale-switcher';
-import type { CreateOrderInput, EditOrderInput } from '../../backend/orders/service';
+import type { EditOrderInput, OrderMenuItemInput } from '../../backend/orders/service';
 import { apiClient } from '../api/client';
 import type { OrderStatus } from '../../backend/orders/repository';
 
-export async function startDineInOrder(user: AuthenticatedUser, tableSessionId: string, seed?: CreateOrderInput['items']) {
+export type OrderScreenItemSelection = Pick<OrderMenuItemInput, 'menuItemId' | 'quantity' | 'note' | 'modifiers' | 'allowUnavailableOverride' | 'overrideReason'>;
+
+export async function startDineInOrder(user: AuthenticatedUser, tableSessionId: string, seed?: OrderScreenItemSelection[]) {
   return apiClient.createOrder(user.id, { serviceMode: 'dine_in', tableSessionId, items: seed });
 }
 
-export async function startTakeoutOrder(user: AuthenticatedUser, customerName: string, seed?: CreateOrderInput['items']) {
+export async function startTakeoutOrder(user: AuthenticatedUser, customerName: string, seed?: OrderScreenItemSelection[]) {
   return apiClient.createOrder(user.id, { serviceMode: 'takeout', takeoutName: customerName, items: seed });
 }
 

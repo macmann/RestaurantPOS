@@ -12,6 +12,10 @@ export interface OrderItem {
   quantity: number;
   unitPrice: number;
   note?: string;
+  modifiers?: string[];
+  taxMode?: 'taxable' | 'tax_exempt';
+  taxRate?: number;
+  inventoryItemId?: string;
   lineTotal: number;
 }
 

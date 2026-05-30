@@ -57,7 +57,7 @@ async function runSqlRepositoryIntegration(): Promise<void> {
 
   const rice = await createInventoryMasterItem({ branchId, sku: 'RICE-SQL', name: 'SQL Rice', unit: 'portion', minimumThreshold: 1, currentStock: 6 });
   const category = await adminCreateCategory({ branchId, name: 'SQL Specials', sortOrder: 1 });
-  const menuItem = await adminCreateItem({ branchId, categoryId: category.id, name: 'SQL Tea Rice', price: 10, isAvailable: true });
+  const menuItem = await adminCreateItem({ branchId, categoryId: category.id, name: 'SQL Tea Rice', price: 10, prepStation: 'kitchen', inventoryItemId: rice.id, isAvailable: true });
 
   const table = await createTable({ id: 'SQL-T1', branchId, name: 'SQL Table 1', capacity: 2 });
   const tableSession = await openTableSession(cashier, { tableId: table.id, guestCount: 2, branchId });
@@ -66,7 +66,7 @@ async function runSqlRepositoryIntegration(): Promise<void> {
     branchId,
     serviceMode: 'dine_in',
     tableSessionId: tableSession.id,
-    items: [{ menuItemId: rice.id, name: menuItem.name, station: 'kitchen', quantity: 2, unitPrice: menuItem.price }],
+    items: [{ menuItemId: menuItem.id, quantity: 2 }],
   });
 
   await assertVersionConflict(order.id, order.version + 99, waiter);
