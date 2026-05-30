@@ -16,6 +16,28 @@ const root = rootElement;
 
 let session: BrowserSession | null = getStoredSession();
 let route = window.location.hash || defaultRoute(session?.permissions ?? []).path;
+let apiStatus = apiClient.getNetworkStatus();
+let apiStatusMessage = 'API connection healthy.';
+let healthTimer: number | undefined;
+
+apiClient.onNetworkStatus((status, detail) => {
+  apiStatus = status;
+  apiStatusMessage = detail?.message ?? (status === 'online' ? 'API connection healthy.' : status === 'degraded' ? 'Retrying API connection…' : 'API unavailable.');
+  const banner = document.querySelector<HTMLElement>('.network-banner');
+  if (banner) updateNetworkBanner(banner);
+});
+
+window.addEventListener('online', () => {
+  apiStatus = 'degraded';
+  apiStatusMessage = 'Browser is back online; checking the POS API…';
+  void apiClient.health();
+});
+window.addEventListener('offline', () => {
+  apiStatus = 'offline';
+  apiStatusMessage = 'Browser is offline. Orders and KDS updates are blocked until LAN connectivity returns.';
+  const banner = document.querySelector<HTMLElement>('.network-banner');
+  if (banner) updateNetworkBanner(banner);
+});
 
 window.addEventListener('hashchange', () => {
   route = window.location.hash || defaultRoute(session?.permissions ?? []).path;
@@ -70,6 +92,23 @@ function renderLogin(): void {
   root.replaceChildren(shell);
 }
 
+function updateNetworkBanner(banner: HTMLElement): void {
+  banner.className = `network-banner ${apiStatus}`;
+  banner.textContent = apiStatus === 'online'
+    ? 'Online — POS API reachable.'
+    : apiStatus === 'degraded'
+      ? `Degraded — ${apiStatusMessage}`
+      : `Offline — ${apiStatusMessage}`;
+}
+
+function startHealthChecks(): void {
+  if (healthTimer !== undefined) return;
+  healthTimer = window.setInterval(() => {
+    if (!session || apiStatus === 'online') return;
+    void apiClient.health();
+  }, 5_000);
+}
+
 function renderShell(content: HTMLElement): void {
   if (!session) return renderLogin();
 
@@ -107,7 +146,12 @@ function renderShell(content: HTMLElement): void {
   sidebar.append(signOut);
 
   const main = el('main', 'content');
-  main.append(content);
+  const banner = el('div', 'network-banner');
+  banner.setAttribute('role', 'status');
+  banner.setAttribute('aria-live', 'polite');
+  updateNetworkBanner(banner);
+  main.append(banner, content);
+  startHealthChecks();
   layout.append(sidebar, main);
   root.replaceChildren(layout);
 }
