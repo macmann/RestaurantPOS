@@ -1,7 +1,9 @@
-declare const process: { env: Record<string, string | undefined> };
+declare const process: { env: Record<string, string | undefined>; cwd(): string };
 declare const require: { main?: unknown };
 declare const module: unknown;
 import express, { type NextFunction, type Request, type Response, type Router } from 'express';
+import { createReadStream, existsSync, statSync } from 'node:fs';
+import { extname, join, normalize } from 'node:path';
 import { loadUser, requireActiveUser, requireAuth, authorize } from './auth/middleware';
 import { Actions, RolePermissions } from './auth/permissions';
 import { getCurrentBranchId, getRuntimeSettings } from './config/branch';
@@ -339,6 +341,39 @@ function mapErrorToHttp(error: unknown): { statusCode: number; message: string; 
   return { statusCode: 500, message };
 }
 
+
+const frontendContentTypes = new Map([
+  ['.html', 'text/html; charset=utf-8'],
+  ['.js', 'text/javascript; charset=utf-8'],
+  ['.css', 'text/css; charset=utf-8'],
+  ['.json', 'application/json; charset=utf-8'],
+  ['.svg', 'image/svg+xml'],
+  ['.png', 'image/png'],
+  ['.jpg', 'image/jpeg'],
+  ['.jpeg', 'image/jpeg'],
+  ['.webp', 'image/webp'],
+]);
+
+function mountFrontendApp(app: ReturnType<typeof express>): void {
+  const frontendRoot = join(process.cwd(), 'dist', 'frontend');
+  const indexPath = join(frontendRoot, 'index.html');
+  if (!existsSync(indexPath)) return;
+
+  app.get('*', (req: Request, res: Response, next: NextFunction) => {
+    const pathname = decodeURIComponent(new URL((req as any).url ?? '/', 'http://localhost').pathname);
+    if (pathname === '/healthz' || pathname.startsWith('/api') || pathname.startsWith('/auth')) {
+      next();
+      return;
+    }
+
+    const safePath = normalize(pathname).replace(/^(\.\.(\/|\\|$))+/, '');
+    const candidate = join(frontendRoot, safePath);
+    const file = existsSync(candidate) && statSync(candidate).isFile() ? candidate : indexPath;
+    res.setHeader('content-type', frontendContentTypes.get(extname(file)) ?? 'application/octet-stream');
+    createReadStream(file).pipe(res as any);
+  });
+}
+
 function errorHandler(error: unknown, _req: Request, res: Response, _next: NextFunction): void {
   const httpError = mapErrorToHttp(error);
   res.status(httpError.statusCode).json({ error: httpError.message, details: httpError.details });
@@ -367,6 +402,7 @@ export function createApp() {
   api.use('/settings', buildSettingsRouter());
 
   app.use('/api', api);
+  mountFrontendApp(app);
   app.use((_req: Request, _res: Response, next: NextFunction) => next(new HttpError(404, 'Route not found.')));
   app.use(errorHandler);
   return app;
