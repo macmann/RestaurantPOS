@@ -36,6 +36,26 @@ const DEFAULT_HOST = '0.0.0.0';
 type AsyncHandler = (req: Request, res: Response, next: NextFunction) => Promise<void>;
 type ServiceResultHandler<T> = (req: Request) => Promise<T> | T;
 
+const idempotencyLocks = new Map<string, Promise<void>>();
+
+async function withIdempotencyLock<T>(key: string | undefined, callback: () => Promise<T>): Promise<T> {
+  if (!key) return callback();
+
+  const previous = idempotencyLocks.get(key) ?? Promise.resolve();
+  let release: () => void = () => undefined;
+  const current = new Promise<void>((resolve) => { release = resolve; });
+  const queued = previous.then(() => current);
+  idempotencyLocks.set(key, queued);
+
+  await previous;
+  try {
+    return await callback();
+  } finally {
+    if (idempotencyLocks.get(key) === queued) idempotencyLocks.delete(key);
+    release();
+  }
+}
+
 class HttpError extends Error {
   constructor(
     public readonly statusCode: number,
@@ -58,38 +78,40 @@ function asyncRoute(handler: AsyncHandler): AsyncHandler {
 
 function send<T>(handler: ServiceResultHandler<T>, status = 200): AsyncHandler {
   return asyncRoute(async (req, res) => {
-    const rawReq = req as any;
-    const headerValue = rawReq.headers?.['idempotency-key'];
-    const idempotencyKey = typeof headerValue === 'string' ? headerValue.trim() : Array.isArray(headerValue) ? String(headerValue[0] ?? '').trim() : '';
-    const method = String(rawReq.method ?? 'GET').toUpperCase();
-    const path = String(rawReq.originalUrl ?? rawReq.url ?? '');
-    const canReplay = idempotencyKey && !['GET', 'HEAD', 'OPTIONS'].includes(method);
-    const fingerprint = canReplay ? idempotencyFingerprint({ userId: req.user?.id, method, path, body: req.body }) : null;
+    await withIdempotencyLock(String((req as any).headers?.['idempotency-key'] ?? '').trim() || undefined, async () => {
+      const rawReq = req as any;
+      const headerValue = rawReq.headers?.['idempotency-key'];
+      const idempotencyKey = typeof headerValue === 'string' ? headerValue.trim() : Array.isArray(headerValue) ? String(headerValue[0] ?? '').trim() : '';
+      const method = String(rawReq.method ?? 'GET').toUpperCase();
+      const path = String(rawReq.originalUrl ?? rawReq.url ?? '');
+      const canReplay = idempotencyKey && !['GET', 'HEAD', 'OPTIONS'].includes(method);
+      const fingerprint = canReplay ? idempotencyFingerprint({ userId: req.user?.id, method, path, body: req.body }) : null;
 
-    if (canReplay && fingerprint) {
-      const existing = await getIdempotencyRecord(idempotencyKey);
-      if (existing) {
-        if (!idempotencyMatches(existing, fingerprint)) {
-          throw new HttpError(409, 'Idempotency key was already used for a different request.');
+      if (canReplay && fingerprint) {
+        const existing = await getIdempotencyRecord(idempotencyKey);
+        if (existing) {
+          if (!idempotencyMatches(existing, fingerprint)) {
+            throw new HttpError(409, 'Idempotency key was already used for a different request.');
+          }
+          res.setHeader('X-Idempotency-Replayed', 'true');
+          res.status(existing.statusCode).json(existing.responseBody);
+          return;
         }
-        res.setHeader('X-Idempotency-Replayed', 'true');
-        res.status(existing.statusCode).json(existing.responseBody);
-        return;
       }
-    }
 
-    const data = await handler(req);
-    const responseBody = { data };
-    if (canReplay && fingerprint) {
-      await saveIdempotencyRecord({
-        key: idempotencyKey,
-        ...fingerprint,
-        statusCode: status,
-        responseBody,
-        createdAt: new Date().toISOString(),
-      });
-    }
-    res.status(status).json(responseBody);
+      const data = await handler(req);
+      const responseBody = { data };
+      if (canReplay && fingerprint) {
+        await saveIdempotencyRecord({
+          key: idempotencyKey,
+          ...fingerprint,
+          statusCode: status,
+          responseBody,
+          createdAt: new Date().toISOString(),
+        });
+      }
+      res.status(status).json(responseBody);
+    });
   });
 }
 
