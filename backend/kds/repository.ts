@@ -1,3 +1,6 @@
+import { isSqlRepositoryEnabled } from '../db/client';
+import { getRecord, listRecords, putRecord } from '../db/repositoryStore';
+
 export type Station = 'kitchen' | 'bar';
 export type KdsProgress = 'queued' | 'preparing' | 'ready' | 'served';
 
@@ -21,15 +24,18 @@ function key(orderId: string, orderItemId: string): string {
 }
 
 export async function upsertKdsItemState(next: KdsItemState): Promise<KdsItemState> {
+  if (isSqlRepositoryEnabled()) return putRecord('kds:items', key(next.orderId, next.orderItemId), next);
   itemStates.set(key(next.orderId, next.orderItemId), structuredClone(next));
   return structuredClone(next);
 }
 
 export async function listKdsItemStates(): Promise<KdsItemState[]> {
-  return Array.from(itemStates.values()).map((item) => structuredClone(item));
+  const rows = isSqlRepositoryEnabled() ? await listRecords<KdsItemState>('kds:items') : Array.from(itemStates.values());
+  return rows.map((item) => structuredClone(item));
 }
 
 export async function getKdsItemState(orderId: string, orderItemId: string): Promise<KdsItemState | null> {
+  if (isSqlRepositoryEnabled()) return getRecord<KdsItemState>('kds:items', key(orderId, orderItemId));
   const row = itemStates.get(key(orderId, orderItemId));
   return row ? structuredClone(row) : null;
 }

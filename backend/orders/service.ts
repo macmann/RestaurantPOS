@@ -2,6 +2,7 @@ import { recordAuditEvent } from '../audit/service';
 import { can, type AuthenticatedUser } from '../auth/policies';
 import { Actions } from '../auth/permissions';
 import { getCurrentBranchId } from '../config/branch';
+import { withTransaction } from '../db/client';
 import { appendStockMovement, getDeductionTriggerPolicy } from '../inventory/service';
 import { syncOrderIntoKds } from '../kds/service';
 import {
@@ -205,37 +206,39 @@ export async function cancelOrder(user: AuthenticatedUser, orderId: string, inpu
 export async function transitionOrderStatus(user: AuthenticatedUser, orderId: string, expectedVersion: number, nextStatus: OrderStatus): Promise<OrderRecord> {
   if (!can(user, Actions.TransitionOrderStatus)) throw new Error('Forbidden: cannot transition order status.');
 
-  const order = await updateOrderWithVersionCheck(orderId, expectedVersion, (draft) => {
-    const roles = Array.isArray(user.role) ? user.role : [user.role];
-    const allowed = roles.some((role) => (ROLE_STATUS_FLOW[role] ?? []).some((path) => path.from === draft.status && path.to === nextStatus));
-    if (!allowed) throw new Error(`Forbidden transition ${draft.status} -> ${nextStatus} for role(s): ${roles.join(', ')}.`);
+  return withTransaction(async () => {
+    const order = await updateOrderWithVersionCheck(orderId, expectedVersion, (draft) => {
+      const roles = Array.isArray(user.role) ? user.role : [user.role];
+      const allowed = roles.some((role) => (ROLE_STATUS_FLOW[role] ?? []).some((path) => path.from === draft.status && path.to === nextStatus));
+      if (!allowed) throw new Error(`Forbidden transition ${draft.status} -> ${nextStatus} for role(s): ${roles.join(', ')}.`);
 
-    draft.changeLog.push({ at: new Date().toISOString(), actorUserId: user.id, actorRole: roles.join(','), action: 'status_transition', details: { from: draft.status, to: nextStatus } });
-    draft.status = nextStatus;
-    return draft;
-  });
+      draft.changeLog.push({ at: new Date().toISOString(), actorUserId: user.id, actorRole: roles.join(','), action: 'status_transition', details: { from: draft.status, to: nextStatus } });
+      draft.status = nextStatus;
+      return draft;
+    });
 
-  if (nextStatus === 'in_preparation' && getDeductionTriggerPolicy() === 'on_in_preparation') {
-    for (const item of order.items) {
-      try {
-        await appendStockMovement(
-          {
-            itemId: item.menuItemId,
-            movementType: 'sale_deduction',
-            quantityDelta: -Math.abs(item.quantity),
-            reason: `Auto deduction for order ${order.id}`,
-            referenceId: order.id,
-          },
-          user.id,
-        );
-      } catch {
-        // Skip deduction if no inventory mapping exists for the order item.
+    if (nextStatus === 'in_preparation' && getDeductionTriggerPolicy() === 'on_in_preparation') {
+      for (const item of order.items) {
+        try {
+          await appendStockMovement(
+            {
+              itemId: item.menuItemId,
+              movementType: 'sale_deduction',
+              quantityDelta: -Math.abs(item.quantity),
+              reason: `Auto deduction for order ${order.id}`,
+              referenceId: order.id,
+            },
+            user.id,
+          );
+        } catch {
+          // Skip deduction if no inventory mapping exists for the order item.
+        }
       }
     }
-  }
 
-  await syncOrderIntoKds(order);
-  return order;
+    await syncOrderIntoKds(order);
+    return order;
+  });
 }
 
 export async function getOrder(orderId: string) {

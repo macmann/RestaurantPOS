@@ -106,15 +106,31 @@ npm run test:e2e
 
 This command compiles the TypeScript project and runs `dist/tests/e2e-pos-flow.test.js`. The test creates users, inventory, menu data, an order, KDS progress, billing/payment records, reports, and frontend view models using the in-memory repositories.
 
-## Database schema setup
+### Run database migrations
 
-For a PostgreSQL-backed deployment, create the database/user matching `.env`, then apply the migration manually until a migration runner is added:
+Persistent PostgreSQL deployments can apply the checked-in schema migration with the documented `DB_*` environment variables:
 
 ```bash
-psql "$DATABASE_URL" -f schema/migrations/20260505140000_initial_restaurantpos_schema.sql
+npm run db:migrate
 ```
 
-If you prefer individual connection variables, construct `DATABASE_URL` from `DB_USER`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT`, and `DB_NAME` before running `psql`.
+### Run SQL repository integration checks
+
+When `DB_HOST`/`PGHOST` and the other PostgreSQL settings are exported, this check applies the migration to that disposable database and runs the repository-backed POS flow. If no database is configured, the test exits with a skip message so local in-memory checks remain lightweight.
+
+```bash
+npm run test:integration
+```
+
+## Database schema setup
+
+For a PostgreSQL-backed deployment, create the database/user matching `.env`, then apply the migration runner:
+
+```bash
+npm run db:migrate
+```
+
+The runner reads `DB_CLIENT`, `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, and `DB_SSL` from the environment.
 
 ## LAN deployment notes
 

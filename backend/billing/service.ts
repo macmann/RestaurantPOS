@@ -1,5 +1,6 @@
 import { recordAuditEvent } from '../audit/service';
 import { getCurrentBranchId } from '../config/branch';
+import { withTransaction } from '../db/client';
 import { getLocaleResource, getTypographyForLocale, normalizeLocale } from '../i18n/service';
 import {
   appendBillingAuditEntry,
@@ -540,64 +541,67 @@ export async function recordSplitPayment(input: {
   paidAt?: string;
   createDebtForUnpaidBalance?: boolean;
 }): Promise<BillRecord> {
-  const bill = await getBillByTableSessionId(input.tableSessionId);
-  if (!bill) throw new Error('Bill not found for table session.');
-  if (!SPLIT_LABELS.includes(input.splitLabel)) throw new Error('Invalid split label. Use A, B, or C.');
-  if (input.amount <= 0) throw new Error('Payment amount must be greater than zero.');
+  return withTransaction(async () => {
+    const bill = await getBillByTableSessionId(input.tableSessionId);
+    if (!bill) throw new Error('Bill not found for table session.');
+    if (!SPLIT_LABELS.includes(input.splitLabel)) throw new Error('Invalid split label. Use A, B, or C.');
+    if (input.amount <= 0) throw new Error('Payment amount must be greater than zero.');
 
-  const split = bill.splits[input.splitLabel];
-  const beforeSplit = structuredClone(split);
-  const payment: BillPayment = {
-    id: createId('pay'),
-    branchId: bill.branchId,
-    splitLabel: input.splitLabel,
-    amount: round2(input.amount),
-    method: input.method,
-    paidAt: input.paidAt ?? new Date().toISOString(),
-    receivedByUserId: input.actorUserId,
-  };
+    const split = bill.splits[input.splitLabel];
+    const beforeSplit = structuredClone(split);
+    const payment: BillPayment = {
+      id: createId('pay'),
+      branchId: bill.branchId,
+      splitLabel: input.splitLabel,
+      amount: round2(input.amount),
+      method: input.method,
+      paidAt: input.paidAt ?? new Date().toISOString(),
+      receivedByUserId: input.actorUserId,
+    };
 
-  split.payments.push(payment);
-  bill.splits[input.splitLabel] = split;
-  updateBillStateAndBreakdown(bill);
+    split.payments.push(payment);
+    bill.splits[input.splitLabel] = split;
+    updateBillStateAndBreakdown(bill);
 
-  if (input.createDebtForUnpaidBalance !== false && bill.splits[input.splitLabel].unpaidBalance > 0) {
-    const debtEntry = await appendDebtLedgerEntry({
-      id: createId('debt'),
+    if (input.createDebtForUnpaidBalance !== false && bill.splits[input.splitLabel].unpaidBalance > 0) {
+      const debtEntry = await appendDebtLedgerEntry({
+        id: createId('debt'),
+        branchId: bill.branchId,
+        tableSessionId: bill.tableSessionId,
+        splitLabel: input.splitLabel,
+        amount: bill.splits[input.splitLabel].unpaidBalance,
+        reason: 'unpaid_balance',
+        action: 'debt_created',
+        actorUserId: input.actorUserId,
+        at: payment.paidAt,
+        metadata: { paymentId: payment.id, amountPaid: payment.amount },
+      });
+      await recordAuditEvent({
+        action: 'debt_created',
+        actor: { userId: input.actorUserId },
+        timestamp: debtEntry.at,
+        entity: { type: 'debt_ledger', id: debtEntry.id, label: `${bill.tableSessionId}:${input.splitLabel}` },
+        before: { split: beforeSplit, unpaidBalanceBeforePayment: beforeSplit.unpaidBalance },
+        after: { debtEntry, split: bill.splits[input.splitLabel] },
+        reason: 'unpaid_balance',
+        metadata: { tableSessionId: bill.tableSessionId, splitLabel: input.splitLabel, paymentId: payment.id },
+      });
+    }
+
+    await appendBillingAuditEntry({
+      id: createId('audit'),
       branchId: bill.branchId,
       tableSessionId: bill.tableSessionId,
       splitLabel: input.splitLabel,
-      amount: bill.splits[input.splitLabel].unpaidBalance,
-      reason: 'unpaid_balance',
-      action: 'debt_created',
+      action: 'split_payment_recorded',
       actorUserId: input.actorUserId,
       at: payment.paidAt,
-      metadata: { paymentId: payment.id, amountPaid: payment.amount },
+      details: { paymentId: payment.id, amount: payment.amount, method: payment.method },
     });
-    await recordAuditEvent({
-      action: 'debt_created',
-      actor: { userId: input.actorUserId },
-      timestamp: debtEntry.at,
-      entity: { type: 'debt_ledger', id: debtEntry.id, label: `${bill.tableSessionId}:${input.splitLabel}` },
-      before: { split: beforeSplit, unpaidBalanceBeforePayment: beforeSplit.unpaidBalance },
-      after: { debtEntry, split: bill.splits[input.splitLabel] },
-      reason: 'unpaid_balance',
-      metadata: { tableSessionId: bill.tableSessionId, splitLabel: input.splitLabel, paymentId: payment.id },
-    });
-  }
 
-  await appendBillingAuditEntry({
-    id: createId('audit'),
-    branchId: bill.branchId,
-    tableSessionId: bill.tableSessionId,
-    splitLabel: input.splitLabel,
-    action: 'split_payment_recorded',
-    actorUserId: input.actorUserId,
-    at: payment.paidAt,
-    details: { paymentId: payment.id, amount: payment.amount, method: payment.method },
+    return saveBill(bill);
+
   });
-
-  return saveBill(bill);
 }
 
 export async function settleDebt(input: {
@@ -608,45 +612,47 @@ export async function settleDebt(input: {
   method: PaymentMethod;
   paidAt?: string;
 }): Promise<BillRecord> {
-  const beforeBill = await getBillByTableSessionId(input.tableSessionId);
-  if (!beforeBill) throw new Error('Bill not found for table session.');
-  const bill = await recordSplitPayment({ ...input, createDebtForUnpaidBalance: false });
-  const split = bill.splits[input.splitLabel];
-  const now = input.paidAt ?? new Date().toISOString();
+  return withTransaction(async () => {
+    const beforeBill = await getBillByTableSessionId(input.tableSessionId);
+    if (!beforeBill) throw new Error('Bill not found for table session.');
+    const bill = await recordSplitPayment({ ...input, createDebtForUnpaidBalance: false });
+    const split = bill.splits[input.splitLabel];
+    const now = input.paidAt ?? new Date().toISOString();
 
-  const debtEntry = await appendDebtLedgerEntry({
-    id: createId('debt'),
-    branchId: bill.branchId,
-    tableSessionId: input.tableSessionId,
-    splitLabel: input.splitLabel,
-    amount: round2(input.amount),
-    reason: 'settlement_payment',
-    action: split.unpaidBalance > 0 ? 'debt_settled_partial' : 'debt_settled_full',
-    actorUserId: input.actorUserId,
-    at: now,
-    metadata: { resultingUnpaidBalance: split.unpaidBalance },
-  });
-  await recordAuditEvent({
-    action: 'debt_settled',
-    actor: { userId: input.actorUserId },
-    timestamp: debtEntry.at,
-    entity: { type: 'debt_ledger', id: debtEntry.id, label: `${input.tableSessionId}:${input.splitLabel}` },
-    before: { bill: beforeBill, split: beforeBill.splits[input.splitLabel] },
-    after: { debtEntry, split, paymentAmount: round2(input.amount) },
-    reason: 'settlement_payment',
-    metadata: { tableSessionId: input.tableSessionId, splitLabel: input.splitLabel, method: input.method },
-  });
+    const debtEntry = await appendDebtLedgerEntry({
+      id: createId('debt'),
+      branchId: bill.branchId,
+      tableSessionId: input.tableSessionId,
+      splitLabel: input.splitLabel,
+      amount: round2(input.amount),
+      reason: 'settlement_payment',
+      action: split.unpaidBalance > 0 ? 'debt_settled_partial' : 'debt_settled_full',
+      actorUserId: input.actorUserId,
+      at: now,
+      metadata: { resultingUnpaidBalance: split.unpaidBalance },
+    });
+    await recordAuditEvent({
+      action: 'debt_settled',
+      actor: { userId: input.actorUserId },
+      timestamp: debtEntry.at,
+      entity: { type: 'debt_ledger', id: debtEntry.id, label: `${input.tableSessionId}:${input.splitLabel}` },
+      before: { bill: beforeBill, split: beforeBill.splits[input.splitLabel] },
+      after: { debtEntry, split, paymentAmount: round2(input.amount) },
+      reason: 'settlement_payment',
+      metadata: { tableSessionId: input.tableSessionId, splitLabel: input.splitLabel, method: input.method },
+    });
 
-  await appendBillingAuditEntry({
-    id: createId('audit'),
-    branchId: bill.branchId,
-    tableSessionId: input.tableSessionId,
-    splitLabel: input.splitLabel,
-    action: 'debt_settlement_recorded',
-    actorUserId: input.actorUserId,
-    at: now,
-    details: { amount: input.amount, method: input.method, resultingUnpaidBalance: split.unpaidBalance },
-  });
+    await appendBillingAuditEntry({
+      id: createId('audit'),
+      branchId: bill.branchId,
+      tableSessionId: input.tableSessionId,
+      splitLabel: input.splitLabel,
+      action: 'debt_settlement_recorded',
+      actorUserId: input.actorUserId,
+      at: now,
+      details: { amount: input.amount, method: input.method, resultingUnpaidBalance: split.unpaidBalance },
+    });
 
-  return bill;
+    return bill;
+  });
 }
