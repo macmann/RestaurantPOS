@@ -29,6 +29,9 @@ export const localeResources: Record<SupportedLocale, LocaleResource> = {
     printFontStack: "Inter, Arial, sans-serif",
     paymentLabels: {
       cash: 'Cash',
+      card: 'Card',
+      wallet: 'Wallet',
+      bank_transfer: 'Bank transfer',
       wave_money: 'Wave Money',
       kbzpay: 'KBZPay',
     },
@@ -96,6 +99,9 @@ export const localeResources: Record<SupportedLocale, LocaleResource> = {
     printFontStack: burmeseFontStack,
     paymentLabels: {
       cash: 'ငွေသား',
+      card: 'ကတ်',
+      wallet: 'မိုဘိုင်းပိုက်ဆံအိတ်',
+      bank_transfer: 'ဘဏ်လွှဲငွေ',
       wave_money: 'Wave Money',
       kbzpay: 'KBZPay',
     },

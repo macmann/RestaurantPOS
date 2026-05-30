@@ -16,7 +16,7 @@
     "start:frontend": "npm run preview:frontend",
     "build:api": "tsc -p tsconfig.json --outDir dist",
     "db:migrate": "tsx scripts/migrate-database.ts",
-    "test:integration": "npm run build:api -- --noEmit false && node dist/tests/sql-repositories.integration.test.js",
+    "test:integration": "npm run build:api -- --noEmit false && node dist/tests/sql-repositories.integration.test.js && node dist/tests/hardware-billing.integration.test.js",
     "test:unit": "npm run build:api -- --noEmit false && node dist/tests/order-authoritative-menu.unit.test.js"
   },
   "dependencies": {

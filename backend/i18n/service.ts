@@ -16,7 +16,8 @@ export interface UnicodeCompatibilityReport {
 }
 
 export function normalizeLocale(locale?: string): SupportedLocale {
-  return locale === REQUIRED_LOCALE ? REQUIRED_LOCALE : DEFAULT_LOCALE;
+  const normalized = locale?.toLowerCase().replace('_', '-');
+  return normalized === REQUIRED_LOCALE || normalized?.startsWith(`${REQUIRED_LOCALE}-`) ? REQUIRED_LOCALE : DEFAULT_LOCALE;
 }
 
 export function getLocaleResource(locale?: string): LocaleResource {

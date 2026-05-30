@@ -18,11 +18,14 @@ export const AUDIT_ACTIONS = [
   'discount_applied',
   'debt_created',
   'debt_settled',
+  'cash_drawer_opened',
+  'payment_refunded',
+  'payment_voided',
 ] as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
-export const AUDIT_ENTITY_TYPES = ['auth_session', 'order', 'bill', 'bill_split', 'inventory_item', 'debt_ledger', 'user'] as const;
+export const AUDIT_ENTITY_TYPES = ['auth_session', 'order', 'bill', 'bill_split', 'inventory_item', 'debt_ledger', 'user', 'hardware_device'] as const;
 
 export type AuditEntityType = (typeof AUDIT_ENTITY_TYPES)[number];
 
