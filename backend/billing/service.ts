@@ -1,5 +1,6 @@
 import { recordAuditEvent } from '../audit/service';
 import { getCurrentBranchId } from '../config/branch';
+import { requireOpenTableSession } from '../tables/service';
 import { withTransaction } from '../db/client';
 import { getLocaleResource, getTypographyForLocale, normalizeLocale } from '../i18n/service';
 import {
@@ -239,9 +240,11 @@ function applyBillLevelPricing(splits: BillRecord['splits'], pricing: BillPricin
       };
       const amountPaid = round2(splits[label].payments.reduce((sum, p) => sum + p.amount, 0));
       const unpaidBalance = round2(Math.max(calculationBreakdown.totalDue - amountPaid, 0));
+      const previousState = splits[label].state;
       let state: BillingState = 'open';
-      if (calculationBreakdown.totalDue === 0) state = 'open';
-      else if (amountPaid === 0) state = unpaidBalance > 0 ? 'debt' : 'open';
+      if (calculationBreakdown.totalDue === 0) state = 'paid';
+      else if (previousState === 'debt' && unpaidBalance > 0) state = 'debt';
+      else if (amountPaid === 0) state = 'open';
       else if (unpaidBalance > 0) state = 'partially_paid';
       else state = 'paid';
 
@@ -294,7 +297,7 @@ function mergeBreakdowns(splits: BillRecord['splits'], pricing: BillPricingOptio
 function updateBillStateAndBreakdown(bill: BillRecord): BillRecord {
   bill.splits = applyBillLevelPricing(bill.splits, bill.pricing);
   const splitStates = SPLIT_LABELS.map((label) => bill.splits[label].state);
-  bill.state = splitStates.every((x) => x === 'paid') ? 'paid' : splitStates.some((x) => x === 'partially_paid' || x === 'debt') ? 'partially_paid' : 'open';
+  bill.state = splitStates.every((x) => x === 'paid') ? 'paid' : splitStates.some((x) => x === 'debt') && splitStates.every((x) => x === 'paid' || x === 'debt') ? 'debt' : splitStates.some((x) => x === 'partially_paid' || x === 'debt') ? 'partially_paid' : 'open';
   bill.calculationBreakdown = mergeBreakdowns(bill.splits, bill.pricing);
   bill.receiptPayload = buildReceiptPayload(bill);
   bill.updatedAt = new Date().toISOString();
@@ -342,10 +345,14 @@ export async function generateBillFromSessionItems(
   pricingInput?: Partial<BillPricingOptions>,
   branchId = getCurrentBranchId(),
 ): Promise<BillRecord> {
+  const session = await requireOpenTableSession(tableSessionId);
   const now = new Date().toISOString();
   const existing = await getBillByTableSessionId(tableSessionId);
   if (existing) throw new Error(`Bill already exists for table session ${tableSessionId}.`);
   const pricing = normalizePricing(pricingInput);
+  for (const item of Object.values(itemsBySplit).flat()) {
+    if (item.tableSessionId !== tableSessionId) throw new Error('Bill items must belong to the requested table session.');
+  }
 
   const splits = Object.fromEntries(
     SPLIT_LABELS.map((label) => {
@@ -373,7 +380,7 @@ export async function generateBillFromSessionItems(
 
   const next: BillRecord = updateBillStateAndBreakdown({
     id: createId('bill'),
-    branchId,
+    branchId: session.branchId ?? branchId,
     tableSessionId,
     splits,
     state: 'open',
@@ -385,7 +392,7 @@ export async function generateBillFromSessionItems(
 
   await appendBillingAuditEntry({
     id: createId('audit'),
-    branchId,
+    branchId: session.branchId ?? branchId,
     tableSessionId,
     splitLabel: 'A',
     action: 'bill_generated',
@@ -586,6 +593,8 @@ export async function recordSplitPayment(input: {
         reason: 'unpaid_balance',
         metadata: { tableSessionId: bill.tableSessionId, splitLabel: input.splitLabel, paymentId: payment.id },
       });
+      bill.splits[input.splitLabel].state = 'debt';
+      updateBillStateAndBreakdown(bill);
     }
 
     await appendBillingAuditEntry({

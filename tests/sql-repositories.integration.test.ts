@@ -4,6 +4,7 @@ declare const require: (name: string) => unknown;
 import { runInitialRestaurantPosMigration } from '../backend/db/migrations';
 import { clearRepositoryStore } from '../backend/db/repositoryStore';
 import { closeDatabasePool, query, withTransaction } from '../backend/db/client';
+import { createTable, closeTableSession, openTableSession } from '../backend/tables/service';
 import { saveUser } from '../backend/users/repository';
 import type { AuthenticatedUser } from '../backend/auth/policies';
 import { createInventoryMasterItem, listInventoryWithBalances } from '../backend/inventory/service';
@@ -58,10 +59,13 @@ async function runSqlRepositoryIntegration(): Promise<void> {
   const category = await adminCreateCategory({ branchId, name: 'SQL Specials', sortOrder: 1 });
   const menuItem = await adminCreateItem({ branchId, categoryId: category.id, name: 'SQL Tea Rice', price: 10, isAvailable: true });
 
+  const table = await createTable({ id: 'SQL-T1', branchId, name: 'SQL Table 1', capacity: 2 });
+  const tableSession = await openTableSession(cashier, { tableId: table.id, guestCount: 2, branchId });
+
   let order = await createOrderDraft(waiter, {
     branchId,
     serviceMode: 'dine_in',
-    tableId: 'SQL-T1',
+    tableSessionId: tableSession.id,
     items: [{ menuItemId: rice.id, name: menuItem.name, station: 'kitchen', quantity: 2, unitPrice: menuItem.price }],
   });
 
@@ -74,13 +78,17 @@ async function runSqlRepositoryIntegration(): Promise<void> {
     id: item.id,
     branchId,
     orderId: order.id,
-    tableSessionId: order.tableId!,
+    tableSessionId: order.tableSessionId!,
     name: item.name,
     quantity: item.quantity,
     unitPrice: item.unitPrice,
   }));
-  const bill = await generateBillFromSessionItems(order.tableId!, { A: billLines }, cashier.id, { taxMode: 'taxable', taxRate: 0 }, branchId);
-  await recordSplitPayment({ tableSessionId: order.tableId!, splitLabel: 'A', amount: bill.calculationBreakdown.totalDue, method: 'cash', actorUserId: cashier.id });
+  order = await transitionOrderStatus(kitchen, order.id, order.version, 'completed');
+  order = await transitionOrderStatus(waiter, order.id, order.version, 'delivered');
+  const bill = await generateBillFromSessionItems(tableSession.id, { A: billLines }, cashier.id, { taxMode: 'taxable', taxRate: 0 }, branchId);
+  await recordSplitPayment({ tableSessionId: tableSession.id, splitLabel: 'A', amount: bill.calculationBreakdown.totalDue, method: 'cash', actorUserId: cashier.id });
+
+  await closeTableSession(cashier, tableSession.id);
 
   const auditRows = await listAuditEvents({ query: order.id, limit: 20 });
   assert(auditRows.some((row) => row.action === 'stock_adjusted'), 'SQL audit store should include the stock adjustment audit event.');

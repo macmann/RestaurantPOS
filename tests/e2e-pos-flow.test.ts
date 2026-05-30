@@ -8,6 +8,7 @@ import { getKdsSnapshot, updateKdsItemProgress } from '../backend/kds/service';
 import { adminCreateCategory, adminCreateItem } from '../backend/menu/service';
 import { createOrderDraft, editOrderBeforePayment, transitionOrderStatus } from '../backend/orders/service';
 import { getFinancialSummaryReport, getInventoryUsageReport, getSalesReport } from '../backend/reports/service';
+import { createTable, closeTableSession, openTableSession } from '../backend/tables/service';
 import { saveUser } from '../backend/users/repository';
 import { loadAdminAuditViewer } from '../frontend/admin/audit-viewer';
 import { loadAdminInventoryAlerts } from '../frontend/admin/inventory-alerts';
@@ -25,6 +26,16 @@ function assertEqual<T>(actual: T, expected: T, message: string): void {
   if (actual !== expected) throw new Error(`${message}. Expected ${String(expected)}, received ${String(actual)}.`);
 }
 
+async function assertRejects(action: () => Promise<unknown>, expectedMessage: string): Promise<void> {
+  try {
+    await action();
+  } catch (error) {
+    assert(String(error).includes(expectedMessage), `Expected rejection containing "${expectedMessage}".`);
+    return;
+  }
+  throw new Error(`Expected rejection containing "${expectedMessage}".`);
+}
+
 async function runEndToEndPosFlow(): Promise<void> {
   const branchId = 'main';
   const manager: AuthenticatedUser = { id: 'mgr-e2e', branchId, role: 'manager', status: 'active' };
@@ -38,13 +49,18 @@ async function runEndToEndPosFlow(): Promise<void> {
   const menuItem = await adminCreateItem({ branchId, categoryId: category.id, name: 'Tea Leaf Rice', price: 7.5, isAvailable: true });
   assert(menuItem.isAvailable, 'Menu item should be available for order entry.');
 
+  const table = await createTable({ id: 'T-E2E-01', branchId, name: 'Table E2E 01', capacity: 4 });
+  const tableSession = await openTableSession(cashier, { tableId: table.id, guestCount: 4, branchId });
+  await assertRejects(() => openTableSession(cashier, { tableId: table.id, guestCount: 2, branchId }), 'active session already exists');
+
   let order = await createOrderDraft(waiter, {
     branchId,
     serviceMode: 'dine_in',
-    tableId: 'T-E2E-01',
+    tableSessionId: tableSession.id,
     items: [{ menuItemId: rice.id, name: menuItem.name, station: 'kitchen', quantity: 2, unitPrice: menuItem.price, note: 'Less oil' }],
   });
   assertEqual(order.subtotal, 15, 'Order subtotal should reflect seeded cart items');
+  await assertRejects(() => closeTableSession(cashier, tableSession.id), 'Cannot close table session while order');
 
   order = await editOrderBeforePayment(waiter, order.id, {
     expectedVersion: order.version,
@@ -70,7 +86,7 @@ async function runEndToEndPosFlow(): Promise<void> {
     id: item.id,
     branchId,
     orderId: order.id,
-    tableSessionId: order.tableId!,
+    tableSessionId: order.tableSessionId!,
     name: item.name,
     quantity: item.quantity,
     unitPrice: item.unitPrice,
@@ -78,15 +94,17 @@ async function runEndToEndPosFlow(): Promise<void> {
     comboDiscount: 0.5,
   }));
   const billingVm = await startBillForBillingScreen({
-    tableSessionId: order.tableId!,
+    tableSessionId: order.tableSessionId!,
     itemsBySplit: { A: billLines },
     actorUserId: cashier.id,
     pricing: { taxMode: 'taxable', taxRate: 5, billPromotions: [{ id: 'promo-e2e', name: 'Manager comp', type: 'fixed_amount', value: 2 }] },
     locale: 'my-MM',
   });
   assertEqual(billingVm.calculationBreakdown.totalDue, 19.95, 'Bill should apply item, combo, bill discount, and tax in order');
-  await recordSplitPayment({ tableSessionId: order.tableId!, splitLabel: 'A', amount: billingVm.calculationBreakdown.totalDue, method: 'cash', actorUserId: cashier.id });
-  const paidBillingVm = await openBillingScreen(order.tableId!, 'my-MM');
+  await recordSplitPayment({ tableSessionId: tableSession.id, splitLabel: 'A', amount: billingVm.calculationBreakdown.totalDue, method: 'cash', actorUserId: cashier.id });
+  const paidBillingVm = await openBillingScreen(tableSession.id, 'my-MM');
+  const closedSession = await closeTableSession(cashier, tableSession.id);
+  assertEqual(closedSession.status, 'closed', 'Table session should close after orders and bills are complete');
   assertEqual(paidBillingVm.receiptPreview.balanceDue, 0, 'Receipt preview should show no balance after full payment');
 
   const [salesReport, inventoryReport, financialReport] = await Promise.all([

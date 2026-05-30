@@ -7,6 +7,7 @@ import { loadAdminMenuDashboard } from '../admin/menu-management';
 import { loadAdminInventoryAlerts } from '../admin/inventory-alerts';
 import { loadAdminAuditViewer } from '../admin/audit-viewer';
 import { apiClient } from '../api/client';
+import { loadCashierTableFloor } from '../cashier/table-floor';
 
 const rootElement = document.querySelector<HTMLDivElement>('#app');
 if (!rootElement) throw new Error('App root not found.');
@@ -136,6 +137,10 @@ async function renderRoute(): Promise<void> {
   let content: HTMLElement;
 
   switch (current.path) {
+    case '#/tables':
+      content = page('Table floor', 'Open table sessions and monitor available, occupied, and inactive tables.', ['Open session', 'Guest count', 'Occupied status', 'Close session']);
+      await attachJsonPreview(content, () => loadCashierTableFloor(session!.user.branchId));
+      break;
     case '#/orders':
       content = page('Cashier order entry', 'Create dine-in and takeout drafts, edit carts, and advance order status.', ['Dine-in order', 'Takeout order', 'Cart editor', 'Status transition']);
       await attachJsonPreview(content, () => apiClient.listOrders());
