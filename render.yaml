@@ -15,9 +15,4 @@ services:
       - key: DB_SSL
         value: true
       - key: DATABASE_URL
-        fromDatabase:
-          name: restaurant-pos-db
-          property: connectionString
-
-databases:
-  - name: restaurant-pos-db
+        sync: false

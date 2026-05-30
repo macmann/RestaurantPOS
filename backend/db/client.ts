@@ -24,6 +24,7 @@ export interface DatabaseConfig {
   user: string;
   password: string;
   ssl: boolean;
+  connectionString?: string;
 }
 
 type PgPoolConstructor = new (config: Record<string, unknown>) => PoolLike;
@@ -57,6 +58,7 @@ export function readDatabaseConfig(env: ProcessEnv = process.env): DatabaseConfi
       user: decodeURIComponent(url.username),
       password: decodeURIComponent(url.password),
       ssl: readBoolean(env.DB_SSL, url.searchParams.get('sslmode') === 'require'),
+      connectionString: env.DATABASE_URL,
     };
   }
 
@@ -86,11 +88,13 @@ export function getDatabasePool(): PoolLike {
   const config = readDatabaseConfig();
   const Pool = requirePgPool();
   pool = new Pool({
-    host: config.host,
-    port: config.port,
-    database: config.database,
-    user: config.user,
-    password: config.password,
+    ...(config.connectionString ? { connectionString: config.connectionString } : {
+      host: config.host,
+      port: config.port,
+      database: config.database,
+      user: config.user,
+      password: config.password,
+    }),
     ssl: config.ssl ? { rejectUnauthorized: false } : false,
   });
   return pool;

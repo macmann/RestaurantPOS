@@ -111,14 +111,14 @@ The server binds to `HOST` and `PORT` (`0.0.0.0:8080` by default). API routes st
 
 ### Render deployment
 
-This repo includes a Render Blueprint at `render.yaml` that provisions one Node web service and one Render PostgreSQL database. The web service:
+This repo includes a Render Blueprint at `render.yaml` for one Node web service. It expects you to provide a PostgreSQL `DATABASE_URL`, so it works with Neon or another managed PostgreSQL provider instead of requiring a Render-managed database. The web service:
 
 1. installs dependencies and builds both backend and frontend with `npm ci && npm run build`,
-2. injects the database connection as `DATABASE_URL`,
+2. prompts for `DATABASE_URL` as a secret value in Render,
 3. runs `npm run render:start`, which applies migrations and starts the combined Express app, and
 4. uses `/healthz` as the Render HTTP health check.
 
-To deploy on Render, create a new Blueprint from this repository. If you configure the service manually instead of using the Blueprint, use these settings:
+To deploy on Render with Neon, create a Neon PostgreSQL database, copy its pooled or direct PostgreSQL connection string, then create a new Blueprint from this repository and paste that value for `DATABASE_URL`. If you configure the service manually instead of using the Blueprint, use these settings:
 
 | Setting | Value |
 | --- | --- |
@@ -126,9 +126,9 @@ To deploy on Render, create a new Blueprint from this repository. If you configu
 | Build command | `npm ci && npm run build` |
 | Start command | `npm run render:start` |
 | Health check path | `/healthz` |
-| Required env vars | `APP_ENV=production`, `POS_REPOSITORY_BACKEND=postgres`, `DB_SSL=true`, `DATABASE_URL=<your Render Postgres connection string>` |
+| Required env vars | `APP_ENV=production`, `POS_REPOSITORY_BACKEND=postgres`, `DB_SSL=true`, `DATABASE_URL=<your Neon or PostgreSQL connection string>` |
 
-Render provides `PORT`; do not hard-code it in the dashboard.
+Render provides `PORT`; do not hard-code it in the dashboard. Neon connection strings normally include `sslmode=require`; the app preserves the full `DATABASE_URL` when connecting with `pg`, so Neon-specific query parameters such as pooler options remain available.
 
 ### Run the end-to-end POS workflow
 
