@@ -40,6 +40,24 @@ function createId(prefix: string): string {
   return `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
+const tableSessionOpenLocks = new Map<string, Promise<void>>();
+
+async function withTableSessionOpenLock<T>(tableId: string, callback: () => Promise<T>): Promise<T> {
+  const previous = tableSessionOpenLocks.get(tableId) ?? Promise.resolve();
+  let release: () => void = () => undefined;
+  const current = new Promise<void>((resolve) => { release = resolve; });
+  const queued = previous.then(() => current);
+  tableSessionOpenLocks.set(tableId, queued);
+
+  await previous;
+  try {
+    return await callback();
+  } finally {
+    if (tableSessionOpenLocks.get(tableId) === queued) tableSessionOpenLocks.delete(tableId);
+    release();
+  }
+}
+
 function assertCanManageTables(user: AuthenticatedUser): void {
   if (!can(user, Actions.CreateOrder)) throw new Error('Forbidden: cannot manage table sessions.');
 }
@@ -103,22 +121,24 @@ export async function listTableFloor(branchId = getCurrentBranchId()): Promise<T
 
 export async function openTableSession(user: AuthenticatedUser, input: { tableId: string; guestCount: number; branchId?: string }): Promise<TableSessionRecord> {
   assertCanManageTables(user);
-  const table = await getTableById(input.tableId);
-  if (!table) throw new Error('Table not found.');
-  if (table.status !== 'active') throw new Error('Cannot open a session for an inactive table.');
-  const branchId = input.branchId ?? table.branchId ?? user.branchId ?? getCurrentBranchId();
-  const existing = await listTableSessions({ branchId, tableId: input.tableId, status: 'open' });
-  if (existing.length) throw new Error(`An active session already exists for table ${input.tableId}.`);
-  const now = new Date().toISOString();
-  return saveTableSession({
-    id: createId('sess'),
-    branchId,
-    tableId: table.id,
-    guestCount: normalizeGuestCount(input.guestCount),
-    status: 'open',
-    openedByUserId: user.id,
-    openedAt: now,
-    updatedAt: now,
+  return withTableSessionOpenLock(input.tableId, async () => {
+    const table = await getTableById(input.tableId);
+    if (!table) throw new Error('Table not found.');
+    if (table.status !== 'active') throw new Error('Cannot open a session for an inactive table.');
+    const branchId = input.branchId ?? table.branchId ?? user.branchId ?? getCurrentBranchId();
+    const existing = await listTableSessions({ branchId, tableId: input.tableId, status: 'open' });
+    if (existing.length) throw new Error(`An active session already exists for table ${input.tableId}.`);
+    const now = new Date().toISOString();
+    return saveTableSession({
+      id: createId('sess'),
+      branchId,
+      tableId: table.id,
+      guestCount: normalizeGuestCount(input.guestCount),
+      status: 'open',
+      openedByUserId: user.id,
+      openedAt: now,
+      updatedAt: now,
+    });
   });
 }
 

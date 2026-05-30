@@ -6,7 +6,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "build": "npm run build:api && npm run build:frontend",
-    "test:e2e": "npm run build:api -- --noEmit false && node dist/tests/e2e-pos-flow.test.js && node dist/tests/reconnect-browser.test.js",
+    "test:e2e": "npm run build:api -- --noEmit false && node dist/tests/e2e-pos-flow.test.js && node dist/tests/api-server.integration.test.js && node dist/tests/concurrency.e2e.test.js && node dist/tests/browser-screens.e2e.test.js && node dist/tests/reconnect-browser.test.js && node dist/tests/database-persistence.e2e.test.js",
     "dev:api": "tsx backend/server.ts",
     "start:api": "node dist/backend/server.js",
     "start": "npm run start:api",
@@ -16,8 +16,12 @@
     "start:frontend": "npm run preview:frontend",
     "build:api": "tsc -p tsconfig.json --outDir dist",
     "db:migrate": "tsx scripts/migrate-database.ts",
-    "test:integration": "npm run build:api -- --noEmit false && node dist/tests/sql-repositories.integration.test.js && node dist/tests/hardware-billing.integration.test.js",
-    "test:unit": "npm run build:api -- --noEmit false && node dist/tests/order-authoritative-menu.unit.test.js"
+    "test:integration": "npm run build:api -- --noEmit false && node dist/tests/sql-repositories.integration.test.js && node dist/tests/hardware-billing.integration.test.js && node dist/tests/api-server.integration.test.js",
+    "test:unit": "npm run build:api -- --noEmit false && node dist/tests/order-authoritative-menu.unit.test.js",
+    "test:api": "npm run build:api -- --noEmit false && node dist/tests/api-server.integration.test.js",
+    "test:db:e2e": "npm run build:api -- --noEmit false && node dist/tests/database-persistence.e2e.test.js",
+    "test:concurrency": "npm run build:api -- --noEmit false && node dist/tests/concurrency.e2e.test.js",
+    "test:browser:e2e": "npm run build:api -- --noEmit false && node dist/tests/browser-screens.e2e.test.js && node dist/tests/reconnect-browser.test.js"
   },
   "dependencies": {
     "express": "^4.18.3",
