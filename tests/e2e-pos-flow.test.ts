@@ -3,7 +3,7 @@ declare const process: { exitCode?: number };
 import { AdminAuditApi } from '../backend/audit/controller';
 import type { AuthenticatedUser } from '../backend/auth/policies';
 import { recordSplitPayment } from '../backend/billing/service';
-import { createInventoryMasterItem, listInventoryWithBalances } from '../backend/inventory/service';
+import { createInventoryMasterItem, listInventoryWithBalances, saveMenuInventoryRecipe } from '../backend/inventory/service';
 import { getKdsSnapshot, updateKdsItemProgress } from '../backend/kds/service';
 import { adminCreateCategory, adminCreateItem } from '../backend/menu/service';
 import { createOrderDraft, editOrderBeforePayment, transitionOrderStatus } from '../backend/orders/service';
@@ -47,7 +47,37 @@ async function runEndToEndPosFlow(): Promise<void> {
   const rice = await createInventoryMasterItem({ branchId, sku: 'RICE-E2E', name: 'Rice portions', unit: 'portion', minimumThreshold: 5, currentStock: 20 });
   const category = await adminCreateCategory({ branchId, name: 'E2E Specials', sortOrder: 1 });
   const menuItem = await adminCreateItem({ branchId, categoryId: category.id, name: 'Tea Leaf Rice', price: 7.5, prepStation: 'kitchen', inventoryItemId: rice.id, taxMode: 'taxable', taxRate: 5, isAvailable: true });
+  await saveMenuInventoryRecipe({ branchId, menuItemId: menuItem.id, inventoryItemId: rice.id, quantityPerUnit: 1 });
   assert(menuItem.isAvailable, 'Menu item should be available for order entry.');
+
+
+  const broth = await createInventoryMasterItem({ branchId, sku: 'BROTH-E2E', name: 'Broth liters', unit: 'liter', minimumThreshold: 1, currentStock: 10 });
+  const mappedCombo = await adminCreateItem({ branchId, categoryId: category.id, name: 'Mapped Combo E2E', price: 9, prepStation: 'kitchen', isAvailable: true });
+  await saveMenuInventoryRecipe({ branchId, menuItemId: mappedCombo.id, inventoryItemId: rice.id, quantityPerUnit: 0.5 });
+  await saveMenuInventoryRecipe({ branchId, menuItemId: mappedCombo.id, inventoryItemId: broth.id, quantityPerUnit: 0.25 });
+  const mappedOrder = await createOrderDraft(waiter, { branchId, serviceMode: 'takeout', takeoutName: 'Mapped Guest', items: [{ menuItemId: mappedCombo.id, quantity: 2 }] });
+  await transitionOrderStatus(waiter, mappedOrder.id, mappedOrder.version, 'in_preparation');
+  let inventoryAfterMappedOrder = await listInventoryWithBalances();
+  assertEqual(inventoryAfterMappedOrder.find((item) => item.id === rice.id)?.currentBalance, 19, 'Recipe mapping should deduct mapped rice quantity instead of menu item id');
+  assertEqual(inventoryAfterMappedOrder.find((item) => item.id === broth.id)?.currentBalance, 9.5, 'Recipe mapping should deduct each mapped ingredient');
+
+  const unmappedItem = await adminCreateItem({ branchId, categoryId: category.id, name: 'Unmapped E2E', price: 5, prepStation: 'kitchen', isAvailable: true });
+  const unmappedOrder = await createOrderDraft(waiter, { branchId, serviceMode: 'takeout', takeoutName: 'Unmapped Guest', items: [{ menuItemId: unmappedItem.id, quantity: 1 }] });
+  await assertRejects(() => transitionOrderStatus(waiter, unmappedOrder.id, unmappedOrder.version, 'in_preparation'), 'Missing inventory recipe mapping');
+
+  const scarce = await createInventoryMasterItem({ branchId, sku: 'SCARCE-E2E', name: 'Scarce ingredient', unit: 'portion', minimumThreshold: 1, currentStock: 1 });
+  const scarceItem = await adminCreateItem({ branchId, categoryId: category.id, name: 'Scarce E2E', price: 5, prepStation: 'kitchen', isAvailable: true });
+  await saveMenuInventoryRecipe({ branchId, menuItemId: scarceItem.id, inventoryItemId: scarce.id, quantityPerUnit: 2 });
+  const scarceOrder = await createOrderDraft(waiter, { branchId, serviceMode: 'takeout', takeoutName: 'Scarce Guest', items: [{ menuItemId: scarceItem.id, quantity: 1 }] });
+  await assertRejects(() => transitionOrderStatus(waiter, scarceOrder.id, scarceOrder.version, 'in_preparation'), 'Insufficient stock');
+
+  const idempotentOrder = await createOrderDraft(waiter, { branchId, serviceMode: 'takeout', takeoutName: 'Retry Guest', items: [{ menuItemId: mappedCombo.id, quantity: 1 }] });
+  const idempotentTransition = await transitionOrderStatus(waiter, idempotentOrder.id, idempotentOrder.version, 'in_preparation');
+  await assertRejects(() => transitionOrderStatus(waiter, idempotentOrder.id, idempotentOrder.version, 'in_preparation'), 'Version conflict detected');
+  inventoryAfterMappedOrder = await listInventoryWithBalances();
+  assertEqual(inventoryAfterMappedOrder.find((item) => item.id === rice.id)?.currentBalance, 18.5, 'Retry after successful deduction should not double-deduct rice');
+  assertEqual(inventoryAfterMappedOrder.find((item) => item.id === broth.id)?.currentBalance, 9.25, 'Retry after successful deduction should not double-deduct broth');
+  assertEqual(idempotentTransition.status, 'in_preparation', 'Initial idempotency scenario transition should succeed');
 
   const stalePriceOrder = await createOrderDraft(waiter, {
     branchId,
@@ -116,7 +146,7 @@ async function runEndToEndPosFlow(): Promise<void> {
   order = await transitionOrderStatus(waiter, order.id, order.version, 'in_preparation');
   const inventoryAfterPrep = await listInventoryWithBalances();
   const riceBalance = inventoryAfterPrep.find((item) => item.id === rice.id)?.currentBalance;
-  assertEqual(riceBalance, 17, 'Inventory should auto-deduct when the order enters preparation');
+  assertEqual(riceBalance, 15.5, 'Inventory should auto-deduct when the order enters preparation');
 
   const kitchenQueue = await getKdsSnapshot('kitchen');
   const kitchenTicket = kitchenQueue.groups.flatMap((group) => group.items).find((item) => item.orderId === order.id);
@@ -157,7 +187,7 @@ async function runEndToEndPosFlow(): Promise<void> {
     getFinancialSummaryReport(manager, { branchId }),
   ]);
   assert(salesReport.summary.orderCount >= 1, 'Sales report should include the completed order.');
-  assert(inventoryReport.summary.totalUsed >= 3, 'Inventory report should include sale deduction usage.');
+  assert(inventoryReport.summary.totalUsed >= 4.5, 'Inventory report should include sale deduction usage.');
   assert(financialReport.summary.revenue >= paidBillingVm.calculationBreakdown.totalDue, 'Financial summary should include bill revenue.');
 
   const [orderScreen, menuDashboard, kitchenScreen, inventoryAlerts, auditViewer] = await Promise.all([

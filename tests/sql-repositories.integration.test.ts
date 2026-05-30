@@ -7,7 +7,7 @@ import { closeDatabasePool, query, withTransaction } from '../backend/db/client'
 import { createTable, closeTableSession, openTableSession } from '../backend/tables/service';
 import { saveUser } from '../backend/users/repository';
 import type { AuthenticatedUser } from '../backend/auth/policies';
-import { createInventoryMasterItem, listInventoryWithBalances } from '../backend/inventory/service';
+import { createInventoryMasterItem, listInventoryWithBalances, saveMenuInventoryRecipe } from '../backend/inventory/service';
 import { adminCreateCategory, adminCreateItem } from '../backend/menu/service';
 import { createOrderDraft, transitionOrderStatus } from '../backend/orders/service';
 import { generateBillFromSessionItems, recordSplitPayment } from '../backend/billing/service';
@@ -58,6 +58,7 @@ async function runSqlRepositoryIntegration(): Promise<void> {
   const rice = await createInventoryMasterItem({ branchId, sku: 'RICE-SQL', name: 'SQL Rice', unit: 'portion', minimumThreshold: 1, currentStock: 6 });
   const category = await adminCreateCategory({ branchId, name: 'SQL Specials', sortOrder: 1 });
   const menuItem = await adminCreateItem({ branchId, categoryId: category.id, name: 'SQL Tea Rice', price: 10, prepStation: 'kitchen', inventoryItemId: rice.id, isAvailable: true });
+  await saveMenuInventoryRecipe({ branchId, menuItemId: menuItem.id, inventoryItemId: rice.id, quantityPerUnit: 1 });
 
   const table = await createTable({ id: 'SQL-T1', branchId, name: 'SQL Table 1', capacity: 2 });
   const tableSession = await openTableSession(cashier, { tableId: table.id, guestCount: 2, branchId });
