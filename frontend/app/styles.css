@@ -283,3 +283,39 @@ button { min-height: var(--tap); touch-action: manipulation; }
 .sales-summary-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr)); }
 .sales-history-wide { grid-column: 1 / -1; }
 .sales-history-wide ol { margin: 0; padding-left: 1.25rem; display: grid; gap: 0.55rem; }
+
+.superadmin-page .page-header { background: radial-gradient(circle at 85% 15%, rgb(255 255 255 / 22%), transparent 16rem), linear-gradient(135deg, #115e59 0%, #0f766e 42%, #1d4ed8 100%); }
+.superadmin-panel { grid-template-columns: minmax(min(100%, 32rem), 1fr) minmax(min(100%, 28rem), 0.95fr); align-items: stretch; }
+.staff-create-card, .superadmin-overview-card { min-height: 100%; }
+.staff-create-card { background: linear-gradient(180deg, #fff, #f8fafc); }
+.staff-create-card > div:first-child p:last-child { margin-bottom: 0; }
+.superadmin-overview-card { overflow: hidden; background: linear-gradient(145deg, #0f172a 0%, #134e4a 58%, #0f766e 100%); color: #fff; border-color: rgb(255 255 255 / 14%); }
+.superadmin-overview-card .eyebrow, .superadmin-overview-card p, .superadmin-overview-card span, .superadmin-overview-card small { color: rgb(255 255 255 / 76%); }
+.superadmin-overview-card h3 { margin-bottom: 0.35rem; font-size: clamp(1.45rem, 3vw, 2.1rem); }
+.superadmin-overview-card p { margin: 0.2rem 0; }
+.superadmin-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.65rem; }
+.superadmin-metrics div, .superadmin-printer-card { border: 1px solid rgb(255 255 255 / 14%); border-radius: 1rem; background: rgb(255 255 255 / 10%); padding: 0.85rem; backdrop-filter: blur(12px); }
+.superadmin-metrics strong { display: block; font-size: clamp(1.45rem, 4vw, 2.1rem); letter-spacing: -0.06em; }
+.superadmin-metrics span { display: block; margin-top: 0.1rem; font-size: 0.78rem; font-weight: 850; }
+.superadmin-printers { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.65rem; }
+.superadmin-printer-card { display: grid; gap: 0.35rem; }
+.superadmin-printer-card strong { font-size: 1rem; }
+.superadmin-printer-card .badge { width: fit-content; }
+.superadmin-printer-card small { overflow-wrap: anywhere; }
+.superadmin-page .admin-launchpad { margin-top: 0; }
+.superadmin-page .admin-launchpad button { display: grid; gap: 0.35rem; min-height: 7.5rem; text-align: left; background: linear-gradient(135deg, #0f766e, #2563eb); transition: transform 140ms ease, box-shadow 140ms ease; }
+.superadmin-page .admin-launchpad button:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); }
+.superadmin-page .admin-launchpad button span { font-size: 1rem; }
+.superadmin-page .admin-launchpad button small { color: rgb(255 255 255 / 78%); font-weight: 750; line-height: 1.35; }
+
+@media (max-width: 1200px) {
+  .superadmin-panel { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 760px) {
+  .superadmin-metrics, .superadmin-printers { grid-template-columns: 1fr 1fr; }
+}
+
+@media (max-width: 520px) {
+  .superadmin-metrics, .superadmin-printers { grid-template-columns: 1fr; }
+}
