@@ -680,6 +680,33 @@ function tableSubtotal(orders: OrderRecord[], tableSessionId: string): number {
   return linkedOrdersForSession(orders, tableSessionId).reduce((sum, order) => sum + order.subtotal, 0);
 }
 
+function renderOrderedItemsReview(orders: OrderRecord[]): HTMLElement {
+  const totalItems = orders.reduce((sum, order) => sum + order.items.reduce((itemSum, item) => itemSum + item.quantity, 0), 0);
+  const review = el('section', 'ordered-items-review');
+  const heading = el('div', 'ordered-items-review__heading');
+  const headingText = el('div');
+  headingText.append(el('span', 'eyebrow', 'Customer ordered'));
+  headingText.append(el('h4', '', 'Items to double-check'));
+  heading.append(headingText, el('strong', '', `${totalItems} items · ${money(orders.reduce((sum, order) => sum + order.subtotal, 0))}`));
+  review.append(heading);
+
+  const list = el('div', 'ordered-items-review__list');
+  for (const order of orders) {
+    for (const item of order.items) {
+      const row = el('div', 'ordered-item-row');
+      const detail = el('div');
+      detail.append(el('strong', '', `${item.quantity}× ${item.name}`));
+      const itemMeta = [`${money(item.unitPrice)} each`, `Order ${order.id.slice(-8)}`, order.status.replace(/_/g, ' ')];
+      if (item.note) itemMeta.push(item.note);
+      detail.append(el('small', '', itemMeta.join(' · ')));
+      row.append(detail, el('strong', '', money(item.lineTotal)));
+      list.append(row);
+    }
+  }
+  review.append(list);
+  return review;
+}
+
 async function advanceSessionOrdersForClose(tableSessionId: string): Promise<void> {
   const orders = await apiClient.listOrders();
   for (const order of linkedOrdersForSession(orders, tableSessionId).filter((row) => row.status !== 'delivered')) {
@@ -846,7 +873,11 @@ async function renderBillingDesk(): Promise<HTMLElement> {
     }
   }
 
-  billPanel.innerHTML = `<div class="pos-panel-heading"><h3>${selected.table.name} bill</h3><span>${selected.activeSession!.guestCount} guests · ${itemCount} items</span></div>`;
+  billPanel.replaceChildren();
+  if (linkedOrders.length && itemCount) billPanel.append(renderOrderedItemsReview(linkedOrders));
+  const billHeading = el('div', 'pos-panel-heading');
+  billHeading.innerHTML = `<h3>${selected.table.name} bill</h3><span>${selected.activeSession!.guestCount} guests · ${itemCount} items</span>`;
+  billPanel.append(billHeading);
 
   if (!linkedOrders.length || !itemCount) {
     billPanel.append(emptyState('No order items are ready for billing. Add items from Waiter order entry first.'));

@@ -131,7 +131,14 @@ button { min-height: var(--tap); touch-action: manipulation; }
 .order-entry-workspace .order-summary-box p { margin: 0; }
 .billing-table-grid .table-tile:disabled { cursor: not-allowed; opacity: 0.55; transform: none; }
 .billing-detail-panel { display: grid; gap: 1rem; }
-.billing-draft, .billing-summary, .bill-lines, .bill-splits, .billing-actions { display: grid; gap: 0.85rem; }
+.billing-draft, .billing-summary, .bill-lines, .bill-splits, .billing-actions, .ordered-items-review { display: grid; gap: 0.85rem; }
+.ordered-items-review { border: 1px solid rgb(15 118 110 / 18%); border-radius: var(--radius-md); background: linear-gradient(180deg, #f0fdfa, #f8fbff); padding: 1rem; box-shadow: 0 10px 24px rgb(15 118 110 / 8%); }
+.ordered-items-review__heading { display: flex; justify-content: space-between; gap: 1rem; align-items: flex-start; }
+.ordered-items-review__heading h4 { margin: 0.2rem 0 0; letter-spacing: -0.035em; }
+.ordered-items-review__heading strong { color: var(--primary); white-space: nowrap; }
+.ordered-items-review__list { display: grid; gap: 0.55rem; }
+.ordered-item-row { display: flex; justify-content: space-between; gap: 1rem; align-items: center; border-radius: var(--radius-sm); background: #fff; padding: 0.75rem 0.85rem; border: 1px solid rgb(15 118 110 / 12%); }
+.ordered-item-row small { display: block; color: var(--muted); margin-top: 0.18rem; }
 .billing-draft { border-radius: var(--radius-md); background: linear-gradient(180deg, #eff6ff, #f8fbff); padding: 1rem; }
 .bill-total-card { display: grid; gap: 0.25rem; border-radius: var(--radius-md); padding: 1rem; background: linear-gradient(135deg, #0f766e, #2563eb); color: #fff; box-shadow: var(--shadow-sm); }
 .bill-total-card span, .bill-total-card small { color: rgb(255 255 255 / 82%); font-weight: 800; }
@@ -211,7 +218,7 @@ button { min-height: var(--tap); touch-action: manipulation; }
   .mobile-route-bar { grid-template-columns: 1fr; }
   .page-header h2 { font-size: clamp(2rem, 12vw, 2.8rem); }
   .card-grid, .table-grid, .menu-grid, .kds-board, .progress-lanes, .menu-admin-list, .report-grid { grid-template-columns: 1fr; }
-  .pos-panel-heading, .cart-row, .checkout-box div, .bill-line-row, .bill-split-card > div { align-items: stretch; }
+  .pos-panel-heading, .cart-row, .checkout-box div, .bill-line-row, .bill-split-card > div, .ordered-item-row, .ordered-items-review__heading { align-items: stretch; }
   .cart-row { grid-template-columns: 1fr; }
   .bill-metrics { grid-template-columns: 1fr; }
   .quantity-controls { justify-content: space-between; width: 100%; }
