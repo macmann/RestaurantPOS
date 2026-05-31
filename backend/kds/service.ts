@@ -3,6 +3,8 @@ import { Actions } from '../auth/permissions';
 import type { OrderRecord, OrderStatus } from '../orders/repository';
 import { getKdsItemState, listKdsItemStates, type KdsItemState, type KdsProgress, type Station, upsertKdsItemState } from './repository';
 
+export type KdsView = 'active' | 'history' | 'all';
+
 export interface KdsTicketItem extends KdsItemState {
   elapsedSeconds: number;
 }
@@ -62,10 +64,16 @@ export async function syncOrderIntoKds(order: OrderRecord): Promise<void> {
   emit({ type: 'snapshot', at: new Date().toISOString(), payload: await getKdsSnapshot() });
 }
 
-export async function getKdsSnapshot(station?: Station): Promise<KdsSnapshot> {
+function matchesKdsView(row: KdsItemState, view: KdsView): boolean {
+  if (view === 'all') return true;
+  if (view === 'history') return row.progress === 'ready' || row.progress === 'served';
+  return row.progress === 'queued' || row.progress === 'preparing';
+}
+
+export async function getKdsSnapshot(station?: Station, view: KdsView = 'all'): Promise<KdsSnapshot> {
   const nowMs = Date.now();
   const rows = await listKdsItemStates();
-  const filtered = station ? rows.filter((row) => row.station === station) : rows;
+  const filtered = rows.filter((row) => (!station || row.station === station) && matchesKdsView(row, view));
 
   const grouped: KdsTicketGroup[] = ['kitchen', 'bar'].map((groupStation) => ({
     station: groupStation as Station,

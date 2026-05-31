@@ -9,7 +9,7 @@ import { createTable, openTableSession } from '../backend/tables/service';
 import { appRoutes, canAccessRoute, visibleRoutes } from '../frontend/auth/navigation';
 import { loadCashierTableFloor } from '../frontend/cashier/table-floor';
 import { startDineInOrder, advanceOrderStatus, loadOrderForScreen } from '../frontend/orders/order-screen';
-import { loadKitchenQueue } from '../frontend/kds/kitchen-screen';
+import { loadKitchenQueue, setKitchenItemProgress } from '../frontend/kds/kitchen-screen';
 import { loadBarQueue } from '../frontend/kds/bar-screen';
 import { startBillForBillingScreen, openBillingScreen } from '../frontend/billing/billing-screen';
 import { loadAdminMenuDashboard } from '../frontend/admin/menu-management';
@@ -60,7 +60,12 @@ async function runBrowserScreenE2e(): Promise<void> {
   assert(orderScreen.order?.id === order.id, 'Cashier/order browser screen should load the order.');
 
   const kitchenQueue = await loadKitchenQueue('en');
-  assert(kitchenQueue.queue.groups.some((group) => group.station === 'kitchen' && group.items.some((item) => item.orderId === order.id)), 'Kitchen browser screen should render kitchen KDS items.');
+  const kitchenTicket = kitchenQueue.queue.groups.flatMap((group) => group.items).find((item) => item.orderId === order.id);
+  assert(kitchenTicket, 'Kitchen browser screen should render kitchen KDS items.');
+  await setKitchenItemProgress(kitchen, order.id, kitchenTicket.orderItemId, 'ready');
+  const refreshedKitchenQueue = await loadKitchenQueue('en');
+  assert(!refreshedKitchenQueue.queue.groups.flatMap((group) => group.items).some((item) => item.orderId === order.id), 'Ready kitchen KDS item should leave the active tab.');
+  assert(refreshedKitchenQueue.history.groups.flatMap((group) => group.items).some((item) => item.orderId === order.id), 'Ready kitchen KDS item should appear in the history tab.');
 
   const barQueue = await loadBarQueue('en');
   assert(barQueue.queue.groups.some((group) => group.station === 'bar' && group.items.some((item) => item.orderId === order.id)), 'Bar browser screen should render bar KDS items.');
