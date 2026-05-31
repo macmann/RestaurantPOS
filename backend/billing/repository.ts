@@ -144,8 +144,17 @@ export interface BillSplit {
   calculationBreakdown: BillCalculationBreakdown;
 }
 
+export interface ReceiptRestaurantInfo {
+  restaurantName: string;
+  address: string;
+  contact: string;
+  taxId?: string;
+  receiptFooter?: string;
+}
+
 export interface ReceiptPayload {
   receiptId: string;
+  restaurant: ReceiptRestaurantInfo;
   locale: string;
   direction: 'ltr';
   fontFamily: string;

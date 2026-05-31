@@ -1,7 +1,7 @@
 import { getStoredSession, login, logout, type BrowserSession } from '../auth/session';
 import { appRoutes, canAccessRoute, defaultRoute, visibleRoutes, type AppRoute } from '../auth/navigation';
 import type { AuthenticatedUser } from '../../backend/auth/policies';
-import { RolePermissions } from '../../backend/auth/permissions';
+import { Actions, RolePermissions } from '../../backend/auth/permissions';
 import { loadKitchenQueue, setKitchenItemProgress } from '../kds/kitchen-screen';
 import { loadBarQueue, setBarItemProgress } from '../kds/bar-screen';
 import { loadOrderProgressForWaiter } from '../waiter/order-progress';
@@ -220,13 +220,17 @@ function rolesFor(user: AuthenticatedUser): string {
   return Array.isArray(user.role) ? user.role.join(',') : user.role;
 }
 
+function canCloseBills(): boolean {
+  return !!session?.permissions.includes(Actions.CloseBill);
+}
+
 async function renderStaffSettings(isSuperadminPanel = false): Promise<HTMLElement> {
   const section = page(
-    isSuperadminPanel ? 'Super admin account panel' : 'Staff & settings administration',
+    isSuperadminPanel ? 'Superadmin command center' : 'Staff & settings administration',
     isSuperadminPanel
-      ? 'Use the seeded superadmin account to create staff users and assign each account to the correct role.'
+      ? 'Role-based launchpad for users, bill identity, printer routing, menus, tables, reports, and audit controls.'
       : 'Create staff profiles, rotate passwords, assign roles, and deactivate access immediately.',
-    ['Staff users', 'Role assignment', 'Activation', 'Branch settings'],
+    isSuperadminPanel ? ['Role-specific POS views', 'Bill identity', 'Printer routing', 'Operations configuration'] : ['Staff users', 'Role assignment', 'Activation', 'Branch settings'],
   );
   const panel = el('section', 'admin-panel');
   const [users, settings] = await Promise.all([apiClient.listUsers(), apiClient.getSettings()]);
@@ -249,6 +253,18 @@ async function renderStaffSettings(isSuperadminPanel = false): Promise<HTMLEleme
       <pre class="json-preview compact">${JSON.stringify(settings, null, 2)}</pre>
     </article>
   `;
+
+  if (isSuperadminPanel) {
+    const launchpad = el('section', 'admin-launchpad');
+    launchpad.innerHTML = `
+      <button type="button" data-target="#/bill-settings">Bill & printer setup</button>
+      <button type="button" data-target="#/menu-admin">Menu setup</button>
+      <button type="button" data-target="#/table-admin">Table layout</button>
+      <button type="button" data-target="#/reports">Reports</button>
+    `;
+    launchpad.querySelectorAll<HTMLButtonElement>('button').forEach((button) => button.addEventListener('click', () => navigate(button.dataset.target!)));
+    section.append(launchpad);
+  }
 
   const table = el('table', 'staff-table');
   table.innerHTML = '<thead><tr><th>Staff</th><th>Role</th><th>Branch</th><th>Status</th><th>Update role/password</th><th>Access</th></tr></thead>';
@@ -489,6 +505,72 @@ async function renderInventoryAlerts(): Promise<HTMLElement> {
     event.preventDefault(); const data = new FormData(form); const type = String(data.get('movementType') ?? 'restock') as any; let qty = Number(data.get('quantityDelta') ?? 0); if (type === 'wastage' && qty > 0) qty *= -1;
     await apiClient.addInventoryMovement({ itemId: form.dataset.itemId!, movementType: type, quantityDelta: qty, reason: String(data.get('reason') ?? '') || undefined }); render();
   }));
+  section.append(panel);
+  return section;
+}
+
+
+async function renderBillSettings(): Promise<HTMLElement> {
+  const section = page('Bill & printer settings', 'Configure restaurant details printed on receipts and route order/receipt tickets to the correct devices.', ['Receipt header', 'Receipt printer', 'Kitchen printer', 'Bar printer']);
+  const settings = await apiClient.getSettings() as any;
+  const pos = settings.pos ?? {};
+  const info = pos.restaurantBillInfo ?? {};
+  const printers = pos.printers ?? {};
+  const panel = el('section', 'admin-panel bill-settings-panel');
+  const form = el('form', 'staff-form bill-settings-form');
+  form.innerHTML = `
+    <article class="card admin-card settings-card">
+      <h3>Restaurant bill information</h3>
+      <label>Restaurant name<input name="restaurantName" value="${info.restaurantName ?? ''}" required /></label>
+      <label>Address<textarea name="address" rows="3" required>${info.address ?? ''}</textarea></label>
+      <label>Contact<input name="contact" value="${info.contact ?? ''}" required /></label>
+      <label>Tax / registration ID<input name="taxId" value="${info.taxId ?? ''}" /></label>
+      <label>Receipt footer<input name="receiptFooter" value="${info.receiptFooter ?? ''}" /></label>
+    </article>
+    ${(['receipt', 'kitchen', 'bar'] as const).map((key) => `
+      <article class="card admin-card settings-card">
+        <h3>${key === 'receipt' ? 'Receipt printer' : key === 'kitchen' ? 'Kitchen order printer' : 'Bar order printer'}</h3>
+        <label class="checkbox-row"><input type="checkbox" name="${key}Enabled" ${(printers[key]?.enabled ?? true) ? 'checked' : ''} /> Enabled</label>
+        <label>Printer ID<input name="${key}PrinterId" value="${printers[key]?.printerId ?? ''}" required /></label>
+        <label>Display name<input name="${key}DisplayName" value="${printers[key]?.displayName ?? ''}" required /></label>
+      </article>
+    `).join('')}
+    <button type="submit">Save bill & printer settings</button>
+    <p class="form-error" hidden></p>
+  `;
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const data = new FormData(form);
+    const printerInput = (key: 'receipt' | 'kitchen' | 'bar') => ({
+      enabled: data.get(`${key}Enabled`) === 'on',
+      printerId: String(data.get(`${key}PrinterId`) ?? ''),
+      displayName: String(data.get(`${key}DisplayName`) ?? ''),
+    });
+    try {
+      await apiClient.updateSettings({
+        pos: {
+          restaurantBillInfo: {
+            restaurantName: String(data.get('restaurantName') ?? ''),
+            address: String(data.get('address') ?? ''),
+            contact: String(data.get('contact') ?? ''),
+            taxId: String(data.get('taxId') ?? ''),
+            receiptFooter: String(data.get('receiptFooter') ?? ''),
+          },
+          printers: { receipt: printerInput('receipt'), kitchen: printerInput('kitchen'), bar: printerInput('bar') },
+        },
+      });
+      render();
+    } catch (caught) {
+      const error = form.querySelector<HTMLParagraphElement>('.form-error');
+      if (error) {
+        error.hidden = false;
+        error.textContent = caught instanceof Error ? caught.message : 'Unable to save settings.';
+      }
+    }
+  });
+  const preview = el('article', 'card admin-card receipt-preview-card');
+  preview.innerHTML = `<h3>Receipt preview header</h3><p><strong>${info.restaurantName ?? 'Restaurant name'}</strong><br>${info.address ?? 'Address'}<br>${info.contact ?? 'Contact'}</p><small>${info.receiptFooter ?? ''}</small>`;
+  panel.append(form, preview);
   section.append(panel);
   return section;
 }
@@ -1010,8 +1092,19 @@ async function renderOrderEntry(): Promise<HTMLElement> {
     const orderSummary = el('div', 'checkout-box order-summary-box');
     orderSummary.innerHTML = `
       <div><span>Order subtotal</span><strong>${money(activeOrder?.subtotal ?? 0)}</strong></div>
-      <p class="muted">Billing, split payments, and table closing are handled from the Billing page.</p>
+      <button type="button" class="save-order" ${activeOrder?.items.length ? '' : 'disabled'}>Save order & print tickets</button>
+      <p class="muted">Save sends kitchen/bar tickets to configured station printers. Billing and table closing stay with the cashier.</p>
     `;
+    orderSummary.querySelector<HTMLButtonElement>('.save-order')?.addEventListener('click', async () => {
+      try {
+        await apiClient.printOrderTickets(session!.user.id, activeOrder!.id);
+        status.hidden = false;
+        status.textContent = 'Order saved and sent to station printers.';
+      } catch (caught) {
+        status.hidden = false;
+        status.textContent = caught instanceof Error ? caught.message : 'Unable to print order tickets.';
+      }
+    });
     orderPanel.append(cart, orderSummary);
   }
 
@@ -1038,13 +1131,15 @@ async function renderOrderEntry(): Promise<HTMLElement> {
 }
 
 async function renderBillingDesk(): Promise<HTMLElement> {
-  const section = page('Billing desk', 'Review the full bill, split checks, collect payment, and close a paid table.');
+  const section = page(canCloseBills() ? 'Cashier billing desk' : 'Bill viewer', canCloseBills() ? 'Cashier-first workspace for preparing checks, payments, receipts, and paid-table closeout.' : 'Waiters can review guest bills, but only the cashier can collect payment or close checks.');
   section.classList.add('pos-page', 'billing-page');
 
   const status = el('p', 'pos-status');
   status.hidden = true;
   const workspace = el('div', 'pos-workspace billing-workspace');
   section.append(status, workspace);
+
+  const cashierMode = canCloseBills();
 
   const [floor, orders] = await Promise.all([
     loadCashierTableFloor(session!.user.branchId),
@@ -1108,7 +1203,7 @@ async function renderBillingDesk(): Promise<HTMLElement> {
           <option value="3" ${selectedSplitCount === 3 ? 'selected' : ''}>Split A / B / C</option>
         </select>
       </label>
-      <button type="button" class="billing-action">Prepare bill for payment</button>
+      <button type="button" class="billing-action" ${cashierMode ? '' : 'disabled'}>${cashierMode ? 'Prepare bill for payment' : 'Cashier prepares bill'}</button>
     `;
     draft.querySelector<HTMLSelectElement>('select')?.addEventListener('change', (event) => {
       selectedSplitCount = Number((event.currentTarget as HTMLSelectElement).value);
@@ -1154,7 +1249,7 @@ async function renderBillingDesk(): Promise<HTMLElement> {
       card.innerHTML = `
         <div><strong>Split ${split.label}</strong>${badge(balance <= 0 ? 'paid' : 'open', balance <= 0 ? 'ready' : 'warning').outerHTML}</div>
         <p>${split.lines.length} lines · Total ${money(split.calculationBreakdown.totalDue)} · Paid ${money(paid)} · Balance ${money(Math.max(balance, 0))}</p>
-        <button type="button" ${balance <= 0 ? 'disabled' : ''}>Take cash payment</button>
+        <button type="button" ${balance <= 0 || !cashierMode ? 'disabled' : ''}>${cashierMode ? 'Take cash payment' : 'Cashier payment only'}</button>
       `;
       card.querySelector<HTMLButtonElement>('button')?.addEventListener('click', async () => {
         try {
@@ -1177,8 +1272,9 @@ async function renderBillingDesk(): Promise<HTMLElement> {
 
     const billActions = el('div', 'billing-actions');
     billActions.innerHTML = `
-      <button type="button" class="secondary tax-toggle">${receipt.calculationBreakdown.taxMode === 'taxable' ? 'Mark tax exempt' : 'Enable tax'}</button>
-      <button type="button" class="billing-action close-table" ${receipt.balanceDue > 0 ? 'disabled' : ''}>Close paid table</button>
+      <button type="button" class="secondary tax-toggle" ${cashierMode ? '' : 'disabled'}>${receipt.calculationBreakdown.taxMode === 'taxable' ? 'Mark tax exempt' : 'Enable tax'}</button>
+      <button type="button" class="secondary print-receipt" ${cashierMode ? '' : 'disabled'}>Print receipt</button>
+      <button type="button" class="billing-action close-table" ${receipt.balanceDue > 0 || !cashierMode ? 'disabled' : ''}>${cashierMode ? 'Close paid table' : 'Cashier closes table'}</button>
     `;
     billActions.querySelector<HTMLButtonElement>('.tax-toggle')?.addEventListener('click', async () => {
       try {
@@ -1187,6 +1283,16 @@ async function renderBillingDesk(): Promise<HTMLElement> {
       } catch (caught) {
         status.hidden = false;
         status.textContent = caught instanceof Error ? caught.message : 'Unable to update tax mode.';
+      }
+    });
+    billActions.querySelector<HTMLButtonElement>('.print-receipt')?.addEventListener('click', async () => {
+      try {
+        await apiClient.printReceipt(selectedSessionId, { copies: 1 }, session!.user.id);
+        status.hidden = false;
+        status.textContent = 'Receipt sent to configured receipt printer.';
+      } catch (caught) {
+        status.hidden = false;
+        status.textContent = caught instanceof Error ? caught.message : 'Unable to print receipt.';
       }
     });
     billActions.querySelector<HTMLButtonElement>('.close-table')?.addEventListener('click', async () => {
@@ -1547,6 +1653,9 @@ async function renderRoute(): Promise<void> {
       break;
     case '#/superadmin':
       content = await renderStaffSettings(true);
+      break;
+    case '#/bill-settings':
+      content = await renderBillSettings();
       break;
     case '#/staff-settings':
       content = await renderStaffSettings();

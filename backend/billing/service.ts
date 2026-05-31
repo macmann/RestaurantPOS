@@ -1,5 +1,6 @@
 import { recordAuditEvent } from '../audit/service';
 import { getCurrentBranchId } from '../config/branch';
+import { getPosOperationalSettings } from '../config/posSettings';
 import { requireOpenTableSession } from '../tables/service';
 import { withTransaction } from '../db/client';
 import { getLocaleResource, getTypographyForLocale, normalizeLocale } from '../i18n/service';
@@ -327,8 +328,11 @@ function buildReceiptPayload(bill: BillRecord, localeInput?: string): ReceiptPay
   const typography = getTypographyForLocale(locale);
   const receiptCss = `font-family: ${typography.printFontFamily}; direction: ${typography.direction}; unicode-bidi: plaintext;`;
 
+  const settings = getPosOperationalSettings();
+
   return {
     receiptId: createId('receipt'),
+    restaurant: settings.restaurantBillInfo,
     locale,
     direction: typography.direction,
     fontFamily: typography.fontFamily,
@@ -564,7 +568,8 @@ export async function printBillReceipt(input: {
   const bill = await getBillByTableSessionId(input.tableSessionId);
   if (!bill) throw new Error('Bill not found for table session.');
   const payload = buildReceiptPayload(bill, input.locale);
-  const result = await getReceiptPrinterAdapter().printReceipt({ payload, copies: input.copies, printerId: input.printerId });
+  const printerId = input.printerId ?? getPosOperationalSettings().printers.receipt.printerId;
+  const result = await getReceiptPrinterAdapter().printReceipt({ payload, copies: input.copies, printerId });
   bill.receiptPayload = payload;
   await saveBill(bill);
   await appendBillingAuditEntry({
