@@ -738,11 +738,20 @@ interface TableLayoutFlowCallbacks {
   onNodeSave: (tableId: string, position: { layoutX: number; layoutY: number }) => Promise<void>;
 }
 
-function createTableLayoutFlow(tables: TableFloorState[]): HTMLElement {
-  const flow = el('div', 'react-flow table-layout-flow floor-plan--editable');
+interface TableLayoutFlowOptions {
+  editable?: boolean;
+  orders?: OrderRecord[];
+  kdsSnapshot?: KdsSnapshot;
+  ariaLabel?: string;
+  emptyMessage?: string;
+}
+
+function createTableLayoutFlow(tables: TableFloorState[], options: TableLayoutFlowOptions = {}): HTMLElement {
+  const editable = options.editable ?? true;
+  const flow = el('div', `react-flow table-layout-flow ${editable ? 'floor-plan--editable' : 'table-layout-flow--readonly'}`);
   flow.dataset.reactFlow = 'table-layout';
   flow.setAttribute('role', 'application');
-  flow.setAttribute('aria-label', 'React Flow table layout editor');
+  flow.setAttribute('aria-label', options.ariaLabel ?? (editable ? 'React Flow table layout editor' : 'React Flow table floor layout'));
 
   const viewport = el('div', 'react-flow__viewport table-layout-flow__viewport');
   const nodesLayer = el('div', 'react-flow__nodes table-layout-flow__nodes');
@@ -752,16 +761,18 @@ function createTableLayoutFlow(tables: TableFloorState[]): HTMLElement {
   const grid = el('div', 'react-flow__background table-layout-flow__background');
   flow.prepend(grid);
 
-  const toolbar = el('div', 'react-flow__controls table-layout-flow__controls');
-  toolbar.innerHTML = `
-    <button type="button" data-flow-action="zoom-out" aria-label="Zoom out">−</button>
-    <button type="button" data-flow-action="fit" aria-label="Fit view">Fit</button>
-    <button type="button" data-flow-action="zoom-in" aria-label="Zoom in">+</button>
-  `;
-  flow.append(toolbar);
+  if (editable) {
+    const toolbar = el('div', 'react-flow__controls table-layout-flow__controls');
+    toolbar.innerHTML = `
+      <button type="button" data-flow-action="zoom-out" aria-label="Zoom out">−</button>
+      <button type="button" data-flow-action="fit" aria-label="Fit view">Fit</button>
+      <button type="button" data-flow-action="zoom-in" aria-label="Zoom in">+</button>
+    `;
+    flow.append(toolbar);
+  }
 
   if (!tables.length) {
-    const empty = emptyState('No tables yet. Create one to start the layout.');
+    const empty = emptyState(options.emptyMessage ?? 'No tables yet. Create one to start the layout.');
     empty.classList.add('table-layout-flow__empty');
     flow.append(empty);
     return flow;
@@ -769,14 +780,14 @@ function createTableLayoutFlow(tables: TableFloorState[]): HTMLElement {
 
   tables.forEach((row, index) => {
     const position = tableLayoutPosition(row, index);
-    const node = el('button', `react-flow__node table-layout-node table-tile ${row.status}`);
+    const node = el('button', `react-flow__node table-layout-node ${editable ? '' : 'table-layout-node--readonly'} table-tile ${row.status}`);
     node.type = 'button';
     node.dataset.tableId = row.table.id;
     node.dataset.layoutX = String(position.left);
     node.dataset.layoutY = String(position.top);
     node.style.left = `${position.left}%`;
     node.style.top = `${position.top}%`;
-    node.innerHTML = tableTileMarkup(row, [], undefined);
+    node.innerHTML = tableTileMarkup(row, options.orders ?? [], options.kdsSnapshot);
     nodesLayer.append(node);
   });
 
@@ -950,20 +961,19 @@ async function renderOrderEntry(): Promise<HTMLElement> {
 
   const floorPanel = el('section', 'pos-panel table-panel');
   floorPanel.innerHTML = `<div class="pos-panel-heading"><h3>Tables for ordering</h3><span>${floor.counts.available} available · ${floor.counts.occupied} occupied</span></div>`;
-  const tablePlan = el('div', 'floor-plan floor-plan--service');
-  floor.tables.forEach((row, index) => {
-    const button = el('button', `table-tile floor-table ${row.status} ${row.table.id === selected?.table.id ? 'selected' : ''}`);
+  const tableList = el('div', 'table-grid order-table-list');
+  floor.tables.forEach((row) => {
+    const button = el('button', `table-tile ${row.status} ${row.table.id === selected?.table.id ? 'selected' : ''}`);
     button.type = 'button';
     button.innerHTML = tableTileMarkup(row, orders, typeof kdsSnapshot !== 'undefined' ? kdsSnapshot : undefined);
-    positionFloorTable(button, row, index);
     button.addEventListener('click', () => {
       selectedTableId = row.table.id;
       render();
     });
-    tablePlan.append(button);
+    tableList.append(button);
   });
-  if (!floor.tables.length) tablePlan.append(emptyState('No tables configured.'));
-  floorPanel.append(tablePlan);
+  if (!floor.tables.length) tableList.append(emptyState('No tables configured.'));
+  floorPanel.append(tableList);
 
   const orderPanel = el('section', 'pos-panel order-panel');
   if (!selected) {
@@ -1210,12 +1220,16 @@ async function renderTableFloor(): Promise<HTMLElement> {
   ]);
   const summary = el('section', 'pos-panel table-floor-summary');
   summary.innerHTML = `<div class="pos-panel-heading"><h3>Floor layout</h3><span>${floor.counts.available} available · ${floor.counts.occupied} occupied · ${floor.counts.inactive} inactive</span></div>`;
-  const plan = el('div', 'floor-plan');
-  floor.tables.forEach((row, index) => {
-    const button = el('button', `table-tile floor-table ${row.status}`);
-    button.type = 'button';
-    button.innerHTML = tableTileMarkup(row, orders, kdsSnapshot);
-    positionFloorTable(button, row, index);
+  const plan = createTableLayoutFlow(floor.tables, {
+    editable: false,
+    orders,
+    kdsSnapshot,
+    ariaLabel: 'React Flow table floor layout',
+    emptyMessage: 'No tables configured. Create tables from Table layout admin.',
+  });
+  plan.querySelectorAll<HTMLButtonElement>('.table-layout-node').forEach((button) => {
+    const row = floor.tables.find((tableRow) => tableRow.table.id === button.dataset.tableId);
+    if (!row) return;
     button.addEventListener('click', async () => {
       if (row.status === 'inactive') {
         status.hidden = false;
@@ -1234,9 +1248,7 @@ async function renderTableFloor(): Promise<HTMLElement> {
         status.textContent = caught instanceof Error ? caught.message : 'Unable to open table.';
       }
     });
-    plan.append(button);
   });
-  if (!floor.tables.length) plan.append(emptyState('No tables configured. Create tables from Table layout admin.'));
   summary.append(plan);
   section.append(status, summary);
   return section;
