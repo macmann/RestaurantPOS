@@ -33,6 +33,7 @@ async function runApiIntegration(): Promise<void> {
     assert(superadmin.permissions.includes('system:manage'), 'Default superadmin login should return system management permissions.');
     assert(superadmin.user.role === 'superadmin', 'Default superadmin should have the superadmin role.');
     assert(manager.permissions.includes('menu:manage'), 'Manager login should return real RBAC permissions.');
+    assert(cashier.permissions.includes('orders:transition_status'), 'Cashier login should include order transition permission for checkout table close flows.');
 
     const floor = await apiRequest<{ data: Array<{ table: { id: string }; status: string }> }>(server.baseUrl, `/api/tables?branchId=${branchId}`, { token: cashier.token });
     assert(floor.status === 200, `Cashier table floor should load over HTTP, got ${floor.status}.`);
@@ -54,12 +55,12 @@ async function runApiIntegration(): Promise<void> {
     assert(orderResponse.status === 201, `Creating an order should return 201, got ${orderResponse.status}.`);
     const order = orderResponse.body.data;
 
-    const statusResponse = await apiRequest<{ data: { version: number } }>(server.baseUrl, `/api/orders/${order.id}/status`, {
+    let statusResponse = await apiRequest<{ data: { version: number; status: string } }>(server.baseUrl, `/api/orders/${order.id}/status`, {
       method: 'POST',
-      token: waiter.token,
+      token: cashier.token,
       body: { expectedVersion: order.version, nextStatus: 'in_preparation' },
     });
-    assert(statusResponse.status === 200, `Transitioning an order should return 200, got ${statusResponse.status}.`);
+    assert(statusResponse.status === 200, `Cashier transition to preparation should return 200, got ${statusResponse.status}.`);
 
     const kds = await apiRequest<{ data: { groups: Array<{ station: string; items: Array<{ orderId: string }> }> } }>(server.baseUrl, '/api/kds?station=kitchen', { token: kitchen.token });
     assert(kds.status === 200, `Kitchen KDS should load over HTTP, got ${kds.status}.`);
@@ -80,6 +81,24 @@ async function runApiIntegration(): Promise<void> {
       body: { splitLabel: 'A', amount: bill.body.data.calculationBreakdown.totalDue, method: 'cash' },
     });
     assert(payment.status === 200, `Recording a real-auth payment should return 200, got ${payment.status}.`);
+
+    statusResponse = await apiRequest<{ data: { version: number; status: string } }>(server.baseUrl, `/api/orders/${order.id}/status`, {
+      method: 'POST',
+      token: cashier.token,
+      body: { expectedVersion: statusResponse.body.data.version, nextStatus: 'completed' },
+    });
+    assert(statusResponse.status === 200, `Cashier transition to completed should return 200, got ${statusResponse.status}.`);
+
+    statusResponse = await apiRequest<{ data: { version: number; status: string } }>(server.baseUrl, `/api/orders/${order.id}/status`, {
+      method: 'POST',
+      token: cashier.token,
+      body: { expectedVersion: statusResponse.body.data.version, nextStatus: 'delivered' },
+    });
+    assert(statusResponse.status === 200, `Cashier transition to delivered should return 200, got ${statusResponse.status}.`);
+
+    const close = await apiRequest<{ data: { status: string } }>(server.baseUrl, `/api/tables/sessions/${tableSessionId}/close`, { method: 'POST', token: cashier.token });
+    assert(close.status === 200, `Cashier close paid table should return 200, got ${close.status}.`);
+    assert(close.body.data.status === 'closed', 'Cashier close paid table should mark the table session closed.');
 
     const audit = await apiRequest<{ data: { events: Array<{ action: string }> } }>(server.baseUrl, '/api/audit/events?query=cash_drawer_opened&limit=20', { token: manager.token });
     assert(audit.status === 200, `Admin audit search should return 200, got ${audit.status}.`);

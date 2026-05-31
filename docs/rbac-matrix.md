@@ -20,6 +20,7 @@ This matrix defines route-level authorization for core POS actions. Permissions 
 | Adjust stock (`stock:adjust`) | ❌ | ❌ | ✅ (limited) | ✅ | ✅ | ✅ |
 | Mark debt (`billing:mark_debt`) | ❌ | ✅ | ✅ | ❌ | ✅ | ✅ |
 | Close bill (`billing:close`) | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ |
+| Transition order status (`orders:transition_status`) | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ |
 | View reports (`reports:view`) | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ |
 | View audit log (`audit:view`) | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ |
 
