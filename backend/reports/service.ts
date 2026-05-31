@@ -45,12 +45,26 @@ export interface ExportReadyReport<TSummary, TRow> {
   rows: TRow[];
 }
 
+export interface SalesInvoiceRow {
+  invoiceId: string;
+  tableSessionId: string;
+  issuedAt: string;
+  amount: number;
+  amountPaid: number;
+  balanceDue: number;
+  state: BillRecord['state'];
+  paymentMethods: string[];
+}
+
 export interface SalesReportRow {
   periodStart: string;
   periodLabel: string;
   orderCount: number;
   quantitySold: number;
   revenue: number;
+  invoiceCount: number;
+  invoiceTotal: number;
+  invoices: SalesInvoiceRow[];
   items: Array<{
     menuItemId: string;
     itemName: string;
@@ -180,6 +194,33 @@ function lineRevenue(item: Pick<OrderItem, 'lineTotal'> | Pick<BillLineItem, 'li
   return roundMoney(item.lineTotal);
 }
 
+function billTotalDue(bill: BillRecord): number {
+  return roundMoney(flattenBillSplits(bill).reduce((sum, split) => sum + split.totalDue, 0));
+}
+
+function billAmountPaid(bill: BillRecord): number {
+  return roundMoney(flattenBillSplits(bill).reduce((sum, split) => sum + split.amountPaid, 0));
+}
+
+function billPaymentMethods(bill: BillRecord): string[] {
+  return [...new Set(flattenBillSplits(bill).flatMap((split) => split.payments.map((payment) => payment.method)))];
+}
+
+function salesInvoiceRow(bill: BillRecord): SalesInvoiceRow {
+  const amount = billTotalDue(bill);
+  const amountPaid = billAmountPaid(bill);
+  return {
+    invoiceId: bill.id,
+    tableSessionId: bill.tableSessionId,
+    issuedAt: bill.updatedAt,
+    amount,
+    amountPaid,
+    balanceDue: roundMoney(amount - amountPaid),
+    state: bill.state,
+    paymentMethods: billPaymentMethods(bill),
+  };
+}
+
 function makeReport<TSummary, TRow>(reportId: string, titleKey: string, filters: NormalizedFilters, columns: ExportColumn[], rows: TRow[], summary: TSummary): ExportReadyReport<TSummary, TRow> {
   const locale = normalizeLocale(filters.locale);
   const typography = getTypographyForLocale(locale);
@@ -219,6 +260,9 @@ export async function getSalesReport(user: AuthenticatedUser, period: SalesPerio
       orderCount: 0,
       quantitySold: 0,
       revenue: 0,
+      invoiceCount: 0,
+      invoiceTotal: 0,
+      invoices: [],
       items: [],
     };
     bucket.orderCount += 1;
@@ -242,7 +286,29 @@ export async function getSalesReport(user: AuthenticatedUser, period: SalesPerio
     buckets.set(key, bucket);
   }
 
-  const rows = [...buckets.values()].sort((a, b) => a.periodStart.localeCompare(b.periodStart));
+  for (const bill of bills.filter((row) => billMatchesFilters(row, normalized, orders))) {
+    const key = periodKey(bill.updatedAt, period);
+    const bucket = buckets.get(key) ?? {
+      periodStart: key,
+      periodLabel: key,
+      orderCount: 0,
+      quantitySold: 0,
+      revenue: 0,
+      invoiceCount: 0,
+      invoiceTotal: 0,
+      invoices: [],
+      items: [],
+    };
+    const invoice = salesInvoiceRow(bill);
+    bucket.invoiceCount += 1;
+    bucket.invoiceTotal = roundMoney(bucket.invoiceTotal + invoice.amount);
+    bucket.invoices.push(invoice);
+    buckets.set(key, bucket);
+  }
+
+  const rows = [...buckets.values()]
+    .map((row) => ({ ...row, invoices: row.invoices.sort((a, b) => b.issuedAt.localeCompare(a.issuedAt)) }))
+    .sort((a, b) => a.periodStart.localeCompare(b.periodStart));
   return makeReport(
     `sales_by_${period}`,
     `sales_by_${period}`,
@@ -258,6 +324,8 @@ export async function getSalesReport(user: AuthenticatedUser, period: SalesPerio
       orderCount: rows.reduce((sum, row) => sum + row.orderCount, 0),
       quantitySold: roundQuantity(rows.reduce((sum, row) => sum + row.quantitySold, 0)),
       revenue: roundMoney(rows.reduce((sum, row) => sum + row.revenue, 0)),
+      invoiceCount: rows.reduce((sum, row) => sum + row.invoiceCount, 0),
+      invoiceTotal: roundMoney(rows.reduce((sum, row) => sum + row.invoiceTotal, 0)),
     },
   );
 }
