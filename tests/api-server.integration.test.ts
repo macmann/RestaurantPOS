@@ -31,6 +31,7 @@ async function runApiIntegration(): Promise<void> {
     const kitchen = await login(server.baseUrl, 'kitchen-api', password);
     const cashier = await login(server.baseUrl, 'cashier-api', password);
     assert(superadmin.permissions.includes('system:manage'), 'Default superadmin login should return system management permissions.');
+    assert(superadmin.permissions.includes('sales_history:view'), 'Default superadmin login should include sales history permissions.');
     assert(superadmin.user.role === 'superadmin', 'Default superadmin should have the superadmin role.');
     assert(manager.permissions.includes('menu:manage'), 'Manager login should return real RBAC permissions.');
     assert(cashier.permissions.includes('orders:transition_status'), 'Cashier login should include order transition permission for checkout table close flows.');
@@ -100,9 +101,15 @@ async function runApiIntegration(): Promise<void> {
     assert(close.status === 200, `Cashier close paid table should return 200, got ${close.status}.`);
     assert(close.body.data.status === 'closed', 'Cashier close paid table should mark the table session closed.');
 
-    const cashierSales = await apiRequest<{ data: { summary: { orderCount: number; revenue: number } } }>(server.baseUrl, `/api/reports/sales/day?branchId=${branchId}`, { token: cashier.token });
+    const cashierSales = await apiRequest<{ data: { summary: { orderCount: number; revenue: number; invoiceCount: number; invoiceTotal: number }; rows: Array<{ invoices: Array<{ invoiceId: string; amount: number }> }> } }>(server.baseUrl, `/api/reports/sales/day?branchId=${branchId}`, { token: cashier.token });
     assert(cashierSales.status === 200, `Cashier sales history should return 200, got ${cashierSales.status}.`);
     assert(cashierSales.body.data.summary.orderCount >= 1, 'Cashier sales history should include completed sales.');
+    assert(cashierSales.body.data.summary.invoiceCount >= 1, 'Cashier sales history should include invoice count.');
+    assert(cashierSales.body.data.rows.some((row) => row.invoices.some((invoice) => invoice.amount === bill.body.data.calculationBreakdown.totalDue)), 'Sales history should include invoice rows with their bill amount.');
+
+    const superadminSales = await apiRequest<{ data: { summary: { invoiceCount: number } } }>(server.baseUrl, `/api/reports/sales/day?branchId=${branchId}`, { token: superadmin.token });
+    assert(superadminSales.status === 200, `Superadmin sales history should return 200, got ${superadminSales.status}.`);
+    assert(superadminSales.body.data.summary.invoiceCount >= 1, 'Superadmin sales history should include invoices.');
 
     const cashierFinancial = await apiRequest(server.baseUrl, '/api/reports/financial-summary', { token: cashier.token });
     assert(cashierFinancial.status === 403, `Cashier financial report should remain restricted, got ${cashierFinancial.status}.`);
