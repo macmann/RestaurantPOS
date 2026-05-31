@@ -1,6 +1,6 @@
 # End-to-End POS Readiness Checklist
 
-This checklist maps the current RestaurantPOS backend services, frontend view models, and verification coverage to the minimum end-to-end restaurant POS needs.
+This checklist maps the current SYM POS backend services, frontend view models, and verification coverage to the minimum end-to-end restaurant POS needs.
 
 ## Covered operational flows
 

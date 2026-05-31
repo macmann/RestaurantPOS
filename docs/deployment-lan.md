@@ -1,6 +1,6 @@
 # LAN Deployment Guide: One Server Host, Multiple POS Client Devices
 
-This guide describes a restaurant-local deployment where one back-office/server machine runs the RestaurantPOS backend and database, while cashier terminals, waiter tablets, kitchen displays, and bar displays connect over the restaurant LAN.
+This guide describes a restaurant-local deployment where one back-office/server machine runs the SYM POS backend and database, while cashier terminals, waiter tablets, kitchen displays, and bar displays connect over the restaurant LAN.
 
 ## Target topology
 
@@ -11,7 +11,7 @@ This guide describes a restaurant-local deployment where one back-office/server 
               |
    [Static IP or local DNS name]
               |
- [RestaurantPOS server host + database]
+ [SYM POS server host + database]
 ```
 
 - **Server host**: a wired machine on the restaurant LAN, preferably attached to UPS power, running the API, web assets, and database.

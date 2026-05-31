@@ -9,6 +9,21 @@ body { margin: 0; min-height: 100vh; }
 a { color: inherit; text-decoration: none; }
 button, input { font: inherit; }
 
+.brand-heading, .sidebar-brand { display: flex; align-items: center; gap: 0.8rem; }
+.brand-heading { margin-bottom: 1.25rem; }
+.brand-heading .eyebrow { opacity: 1; color: #0f766e; }
+.brand-logo { position: relative; display: inline-grid; place-items: center; flex: 0 0 auto; width: 3rem; height: 3rem; border-radius: 1rem; background: linear-gradient(135deg, #0f766e, #1d4ed8); box-shadow: 0 12px 28px rgb(15 118 110 / 28%); overflow: hidden; }
+.brand-logo--large { width: 3.75rem; height: 3.75rem; border-radius: 1.25rem; }
+.brand-logo__plate { position: absolute; left: 0.55rem; bottom: 0.55rem; width: 1.7rem; height: 1.7rem; border: 0.22rem solid #f8fafc; border-radius: 50%; background: rgb(248 250 252 / 18%); }
+.brand-logo--large .brand-logo__plate { left: 0.7rem; bottom: 0.7rem; width: 2.05rem; height: 2.05rem; }
+.brand-logo__fork, .brand-logo__knife { position: absolute; top: -0.55rem; width: 0.18rem; height: 1.9rem; border-radius: 999px; background: #f8fafc; }
+.brand-logo__fork { left: 0.4rem; box-shadow: 0.25rem 0 0 #f8fafc, 0.5rem 0 0 #f8fafc; }
+.brand-logo__knife { right: -0.28rem; transform: rotate(10deg); }
+.brand-logo__receipt { position: absolute; right: 0.45rem; top: 0.5rem; width: 1.15rem; height: 1.65rem; border-radius: 0.3rem; background: #fff; transform: rotate(8deg); box-shadow: inset 0 -0.25rem 0 rgb(15 118 110 / 18%); }
+.brand-logo--large .brand-logo__receipt { right: 0.6rem; top: 0.65rem; width: 1.4rem; height: 1.9rem; }
+.brand-logo__receipt span { display: block; height: 0.13rem; margin: 0.32rem 0.25rem 0; border-radius: 999px; background: #0f766e; }
+
+
 .login-shell { display: grid; min-height: 100vh; place-items: center; padding: 2rem; }
 .login-card { width: min(100%, 28rem); padding: 2rem; border-radius: 1.5rem; background: #fff; box-shadow: 0 24px 80px rgb(21 32 43 / 12%); }
 .login-card h1 { margin: 0 0 0.75rem; font-size: 2rem; }

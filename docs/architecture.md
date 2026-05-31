@@ -1,8 +1,8 @@
-# RestaurantPOS Architecture Decisions
+# SYM POS Architecture Decisions
 
 ## 1) LAN-first operation
 
-RestaurantPOS is designed for on-premise, local-network-first environments where internet connectivity may be unreliable.
+SYM POS is designed for on-premise, local-network-first environments where internet connectivity may be unreliable.
 
 - Core POS workflows (login, menu access, order entry, kitchen updates, payment capture, and receipt generation) must function over a private LAN.
 - Services bind to private interfaces and are reachable via static/local DNS records within the restaurant network.

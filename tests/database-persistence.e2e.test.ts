@@ -45,7 +45,7 @@ async function runDatabasePersistenceE2e(): Promise<void> {
 
   await runInitialRestaurantPosMigration();
   const migration = await query<{ exists: boolean }>('SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE id = $1) AS exists', [INITIAL_MIGRATION_ID]);
-  assert(migration.rows[0]?.exists === true, 'Initial RestaurantPOS SQL migration should be recorded as applied.');
+  assert(migration.rows[0]?.exists === true, 'Initial SYM POS SQL migration should be recorded as applied.');
   await clearRepositoryStore();
 
   const branchId = 'db-e2e-main';

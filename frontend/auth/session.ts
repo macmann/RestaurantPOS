@@ -2,7 +2,7 @@ import type { AuthenticatedUser } from '../../backend/auth/policies';
 import type { Action } from '../../backend/auth/permissions';
 import { apiClient } from '../api/client';
 
-const SESSION_KEY = 'restaurant-pos-session';
+const SESSION_KEY = 'sym-pos-session';
 
 export interface BrowserSession {
   user: AuthenticatedUser;

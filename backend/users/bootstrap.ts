@@ -14,7 +14,7 @@ export async function ensureDefaultSuperadmin(): Promise<PublicUserProfile> {
   return saveUser({
     id: DEFAULT_SUPERADMIN_ID,
     username: DEFAULT_SUPERADMIN_USERNAME,
-    email: 'superadmin@restaurantpos.local',
+    email: 'superadmin@sympos.local',
     passwordHash: hashPassword(DEFAULT_SUPERADMIN_PASSWORD),
     branchId: getCurrentBranchId(),
     role: DEFAULT_SUPERADMIN_ROLE,

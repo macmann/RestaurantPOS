@@ -4,7 +4,7 @@ import { runInitialRestaurantPosMigration } from '../backend/db/migrations';
 runInitialRestaurantPosMigration()
   .then(async () => {
     await closeDatabasePool();
-    console.log('RestaurantPOS database migrations completed.');
+    console.log('SYM POS database migrations completed.');
   })
   .catch(async (error) => {
     console.error(error);

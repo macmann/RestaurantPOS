@@ -12,6 +12,8 @@ import { loadCashierTableFloor } from '../cashier/table-floor';
 import type { OrderRecord, OrderStatus } from '../../backend/orders/repository';
 import type { SplitLabel, TableOrderItem } from '../../backend/billing/repository';
 
+const APP_NAME = 'SYM POS';
+
 const rootElement = document.querySelector<HTMLDivElement>('#app');
 if (!rootElement) throw new Error('App root not found.');
 const root = rootElement;
@@ -65,12 +67,22 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, t
   return node;
 }
 
+function brandLogo(extraClass = ''): string {
+  const className = `brand-logo${extraClass ? ` ${extraClass}` : ''}`;
+  return `
+    <span class="${className}" aria-hidden="true">
+      <span class="brand-logo__plate"><span class="brand-logo__fork"></span><span class="brand-logo__knife"></span></span>
+      <span class="brand-logo__receipt"><span></span><span></span><span></span></span>
+    </span>
+  `;
+}
+
 function renderLogin(message = loginNotice): void {
   const shell = el('main', 'login-shell');
   const card = el('form', 'login-card');
   card.innerHTML = `
-    <p class="eyebrow">RestaurantPOS</p>
-    <h1>Sign in</h1>
+    <div class="brand-heading">${brandLogo('brand-logo--large')}<p class="eyebrow">${APP_NAME}</p></div>
+    <h1>Sign in to ${APP_NAME}</h1>
     <p>Enter your staff username or email and password. The browser stores only a revocable session token.</p>
     <label>Username or email<input name="identifier" autocomplete="username" placeholder="manager-1" required /></label>
     <label>Password<input name="password" type="password" autocomplete="current-password" required /></label>
@@ -127,7 +139,7 @@ function renderShell(content: HTMLElement): void {
 
   const layout = el('div', 'app-shell');
   const sidebar = el('aside', 'sidebar');
-  sidebar.innerHTML = `<h1>RestaurantPOS</h1><p>${session.user.id} · ${Array.isArray(session.user.role) ? session.user.role.join(', ') : session.user.role}</p>`;
+  sidebar.innerHTML = `<div class="sidebar-brand">${brandLogo()}<h1>${APP_NAME}</h1></div><p>${session.user.id} · ${Array.isArray(session.user.role) ? session.user.role.join(', ') : session.user.role}</p>`;
 
   for (const section of ['operations', 'admin'] as const) {
     const groupRoutes = available.filter((item) => item.section === section);
@@ -165,7 +177,7 @@ function renderShell(content: HTMLElement): void {
 function page(title: string, subtitle: string, actions: string[] = []): HTMLElement {
   const section = el('section', 'page');
   const header = el('header', 'page-header');
-  header.innerHTML = `<p class="eyebrow">Deployable frontend client</p><h2>${title}</h2><p>${subtitle}</p>`;
+  header.innerHTML = `<p class="eyebrow">${APP_NAME} client</p><h2>${title}</h2><p>${subtitle}</p>`;
   const grid = el('div', 'card-grid');
   for (const action of actions) {
     const card = el('article', 'card');
@@ -642,7 +654,7 @@ async function payAndCleanTable(tableSessionId: string): Promise<void> {
 }
 
 async function renderRestaurantPos(): Promise<HTMLElement> {
-  const section = page('Restaurant POS', 'Select a table, enter menu items, split a bill, mark paid, and clean the table for the next guest.');
+  const section = page(APP_NAME, 'Select a table, enter menu items, split a bill, mark paid, and clean the table for the next guest.');
   section.classList.add('pos-page');
 
   const status = el('p', 'pos-status');

@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: restaurant-pos
+    name: sym-pos
     runtime: node
     buildCommand: npm ci && npm run build
     startCommand: npm run render:start
