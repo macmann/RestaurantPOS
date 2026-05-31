@@ -384,8 +384,16 @@ export class RestaurantApiClient {
     return this.request<TableFloorState[]>(`/api/tables${queryString({ branchId })}`);
   }
 
-  createTable(input: { id?: string; branchId?: string; name: string; capacity: number; status?: 'active' | 'inactive' }) {
+  createTable(input: { id?: string; branchId?: string; name: string; capacity: number; status?: 'active' | 'inactive'; layoutX?: number; layoutY?: number }) {
     return this.request('/api/tables', { method: 'POST', body: input });
+  }
+
+  updateTable(tableId: string, input: { name?: string; capacity?: number; status?: 'active' | 'inactive'; layoutX?: number; layoutY?: number }) {
+    return this.request(`/api/tables/${encodeURIComponent(tableId)}`, { method: 'PATCH', body: input });
+  }
+
+  removeTable(tableId: string): Promise<{ deleted: boolean }> {
+    return this.request<{ deleted: boolean }>(`/api/tables/${encodeURIComponent(tableId)}`, { method: 'DELETE' });
   }
 
   openTableSession(userId: string, tableId: string, guestCount: number, branchId?: string): Promise<TableSessionRecord> {

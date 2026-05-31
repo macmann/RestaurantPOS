@@ -10,6 +10,8 @@ import { loadAdminAuditViewer } from '../admin/audit-viewer';
 import { ApiClientError, apiClient } from '../api/client';
 import { loadCashierTableFloor } from '../cashier/table-floor';
 import type { OrderRecord, OrderStatus } from '../../backend/orders/repository';
+import type { KdsSnapshot } from '../../backend/kds/service';
+import type { TableFloorState } from '../../backend/tables/service';
 import type { ReceiptPayload, SplitLabel, TableOrderItem } from '../../backend/billing/repository';
 
 const APP_NAME = 'SYM POS';
@@ -680,6 +682,35 @@ function tableSubtotal(orders: OrderRecord[], tableSessionId: string): number {
   return linkedOrdersForSession(orders, tableSessionId).reduce((sum, order) => sum + order.subtotal, 0);
 }
 
+
+type PreparationSummary = {
+  label: string;
+  tone: string;
+};
+
+function preparationSummaryForSession(orders: OrderRecord[], tableSessionId?: string, snapshot?: KdsSnapshot): PreparationSummary {
+  if (!tableSessionId) return { label: 'Available', tone: 'ready' };
+  const linkedOrders = linkedOrdersForSession(orders, tableSessionId);
+  if (!linkedOrders.length || !linkedOrders.some((order) => order.items.length)) return { label: 'Open table', tone: 'queued' };
+  if (linkedOrders.every((order) => order.status === 'delivered')) return { label: 'Delivered', tone: 'served' };
+  const orderIds = new Set(linkedOrders.map((order) => order.id));
+  const kdsItems = snapshot?.groups.flatMap((group) => group.items).filter((item) => orderIds.has(item.orderId)) ?? [];
+  if (kdsItems.length) {
+    if (kdsItems.every((item) => item.progress === 'ready' || item.progress === 'served')) return { label: 'Ready', tone: 'ready' };
+    if (kdsItems.some((item) => item.progress === 'preparing')) return { label: 'Preparing', tone: 'preparing' };
+    return { label: 'Queued', tone: 'queued' };
+  }
+  if (linkedOrders.some((order) => order.status === 'in_preparation')) return { label: 'Preparing', tone: 'preparing' };
+  if (linkedOrders.some((order) => order.status === 'completed')) return { label: 'Ready', tone: 'ready' };
+  return { label: 'Queued', tone: 'queued' };
+}
+
+function tableTileMarkup(row: TableFloorState, orders: OrderRecord[], snapshot?: KdsSnapshot): string {
+  const prep = preparationSummaryForSession(orders, row.activeSession?.id, snapshot);
+  const detail = row.activeSession ? `${row.activeSession.guestCount} guests` : `${row.table.capacity} seats`;
+  return `<strong>${row.table.name}</strong><span>${row.status}</span><span class="prep-label ${prep.tone}">${prep.label}</span><small>${detail}</small>`;
+}
+
 function renderOrderedItemsReview(orders: OrderRecord[]): HTMLElement {
   const totalItems = orders.reduce((sum, order) => sum + order.items.reduce((itemSum, item) => itemSum + item.quantity, 0), 0);
   const review = el('section', 'ordered-items-review');
@@ -727,7 +758,7 @@ async function createBillForSession(tableSessionId: string): Promise<void> {
 }
 
 async function renderOrderEntry(): Promise<HTMLElement> {
-  const section = page('Waiter order entry', 'Open tables, add guest items, and keep the active order moving without billing controls.');
+  const section = page('Order', 'Open tables, add guest items, and track preparation status without billing controls.');
   section.classList.add('pos-page');
 
   const status = el('p', 'pos-status');
@@ -735,10 +766,11 @@ async function renderOrderEntry(): Promise<HTMLElement> {
   const workspace = el('div', 'pos-workspace order-entry-workspace');
   section.append(status, workspace);
 
-  const [floor, menu, orders] = await Promise.all([
+  const [floor, menu, orders, kdsSnapshot] = await Promise.all([
     loadCashierTableFloor(session!.user.branchId),
     apiClient.listMenu() as Promise<MenuCategoryForPos[]>,
     apiClient.listOrders(),
+    apiClient.getKdsSnapshot(),
   ]);
   if (!selectedTableId) selectedTableId = floor.tables.find((row) => row.status !== 'inactive')?.table.id;
   const selected = floor.tables.find((row) => row.table.id === selectedTableId) ?? floor.tables[0];
@@ -750,7 +782,7 @@ async function renderOrderEntry(): Promise<HTMLElement> {
   for (const row of floor.tables) {
     const button = el('button', `table-tile ${row.status} ${row.table.id === selected?.table.id ? 'selected' : ''}`);
     button.type = 'button';
-    button.innerHTML = `<strong>${row.table.name}</strong><span>${row.status}</span><small>${row.activeSession ? `${row.activeSession.guestCount} guests` : `${row.table.capacity} seats`}</small>`;
+    button.innerHTML = tableTileMarkup(row, orders, typeof kdsSnapshot !== 'undefined' ? kdsSnapshot : undefined);
     button.addEventListener('click', () => {
       selectedTableId = row.table.id;
       render();
@@ -880,7 +912,7 @@ async function renderBillingDesk(): Promise<HTMLElement> {
   billPanel.append(billHeading);
 
   if (!linkedOrders.length || !itemCount) {
-    billPanel.append(emptyState('No order items are ready for billing. Add items from Waiter order entry first.'));
+    billPanel.append(emptyState('No order items are ready for billing. Add items from Order first.'));
   } else if (!receipt) {
     const draft = el('div', 'billing-draft');
     draft.innerHTML = `
@@ -991,6 +1023,151 @@ async function renderBillingDesk(): Promise<HTMLElement> {
   return section;
 }
 
+
+async function renderTableFloor(): Promise<HTMLElement> {
+  const section = page('Table floor', 'Tap an available table to open it, or tap an occupied table to continue ordering with that table selected.');
+  section.classList.add('pos-page', 'table-floor-page');
+  const status = el('p', 'pos-status');
+  status.hidden = true;
+  const [floor, orders, kdsSnapshot] = await Promise.all([
+    loadCashierTableFloor(session!.user.branchId),
+    apiClient.listOrders(),
+    apiClient.getKdsSnapshot(),
+  ]);
+  const summary = el('section', 'pos-panel table-floor-summary');
+  summary.innerHTML = `<div class="pos-panel-heading"><h3>Floor layout</h3><span>${floor.counts.available} available · ${floor.counts.occupied} occupied · ${floor.counts.inactive} inactive</span></div>`;
+  const plan = el('div', 'floor-plan');
+  floor.tables.forEach((row, index) => {
+    const button = el('button', `table-tile floor-table ${row.status}`);
+    button.type = 'button';
+    button.innerHTML = tableTileMarkup(row, orders, kdsSnapshot);
+    const left = row.table.layoutX ?? 8 + (index % 4) * 23;
+    const top = row.table.layoutY ?? 10 + Math.floor(index / 4) * 28;
+    button.style.left = `${Math.min(left, 88)}%`;
+    button.style.top = `${Math.min(top, 82)}%`;
+    button.addEventListener('click', async () => {
+      if (row.status === 'inactive') {
+        status.hidden = false;
+        status.textContent = `${row.table.name} is inactive. Reactivate it from Table layout admin before opening orders.`;
+        return;
+      }
+      try {
+        if (!row.activeSession) {
+          const guestCount = Math.max(1, Math.min(row.table.capacity, 2));
+          await apiClient.openTableSession(session!.user.id, row.table.id, guestCount, session!.user.branchId);
+        }
+        selectedTableId = row.table.id;
+        navigate('#/orders');
+      } catch (caught) {
+        status.hidden = false;
+        status.textContent = caught instanceof Error ? caught.message : 'Unable to open table.';
+      }
+    });
+    plan.append(button);
+  });
+  if (!floor.tables.length) plan.append(emptyState('No tables configured. Create tables from Table layout admin.'));
+  summary.append(plan);
+  section.append(status, summary);
+  return section;
+}
+
+async function renderTableLayoutAdmin(): Promise<HTMLElement> {
+  const section = page('Table layout admin', 'Configure the floor plan, create tables, rename them, move them, deactivate them, or remove unused tables.');
+  const status = el('p', 'pos-status');
+  status.hidden = true;
+  const floor = await loadCashierTableFloor(session!.user.branchId);
+  const panel = el('section', 'admin-panel table-admin-panel');
+  const createCard = el('article', 'card admin-card');
+  createCard.innerHTML = `
+    <h3>Create table</h3>
+    <form class="staff-form table-create-form">
+      <label>Name<input name="name" required placeholder="Patio 1" /></label>
+      <label>Capacity<input name="capacity" type="number" min="1" value="4" required /></label>
+      <label>Layout X %<input name="layoutX" type="number" min="0" max="100" value="10" /></label>
+      <label>Layout Y %<input name="layoutY" type="number" min="0" max="100" value="10" /></label>
+      <label>Status<select name="status"><option value="active">Active</option><option value="inactive">Inactive</option></select></label>
+      <button type="submit">Add to floor</button>
+      <p class="form-error" hidden></p>
+    </form>
+  `;
+  panel.append(createCard);
+
+  const layoutCard = el('article', 'card admin-card table-layout-editor');
+  layoutCard.innerHTML = '<h3>Floor plan entries</h3><p class="muted">Use X/Y percentages to place each table on the floor plan.</p>';
+  if (!floor.tables.length) layoutCard.append(emptyState('No tables yet. Create one to start the layout.'));
+  for (const row of floor.tables) {
+    const form = el('form', 'table-admin-row');
+    form.dataset.tableId = row.table.id;
+    form.innerHTML = `
+      <div><strong>${row.table.name}</strong><small>${row.status}${row.activeSession ? ` · open session ${row.activeSession.id.slice(-8)}` : ''}</small></div>
+      <label>Name<input name="name" value="${row.table.name}" required /></label>
+      <label>Seats<input name="capacity" type="number" min="1" value="${row.table.capacity}" required /></label>
+      <label>X %<input name="layoutX" type="number" min="0" max="100" value="${row.table.layoutX ?? ''}" /></label>
+      <label>Y %<input name="layoutY" type="number" min="0" max="100" value="${row.table.layoutY ?? ''}" /></label>
+      <label>Status<select name="status"><option value="active" ${row.table.status === 'active' ? 'selected' : ''}>Active</option><option value="inactive" ${row.table.status === 'inactive' ? 'selected' : ''}>Inactive</option></select></label>
+      <button type="submit">Save</button>
+      <button type="button" class="secondary remove-table">Remove</button>
+    `;
+    layoutCard.append(form);
+  }
+  panel.append(layoutCard);
+  section.append(status, panel);
+
+  createCard.querySelector<HTMLFormElement>('.table-create-form')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget as HTMLFormElement;
+    const data = new FormData(form);
+    try {
+      await apiClient.createTable({
+        branchId: session!.user.branchId,
+        name: String(data.get('name') ?? ''),
+        capacity: Number(data.get('capacity') ?? 1),
+        status: String(data.get('status') ?? 'active') as 'active' | 'inactive',
+        layoutX: data.get('layoutX') === '' ? undefined : Number(data.get('layoutX')),
+        layoutY: data.get('layoutY') === '' ? undefined : Number(data.get('layoutY')),
+      });
+      render();
+    } catch (caught) {
+      const error = form.querySelector<HTMLParagraphElement>('.form-error');
+      if (error) {
+        error.hidden = false;
+        error.textContent = caught instanceof Error ? caught.message : 'Unable to create table.';
+      }
+    }
+  });
+
+  layoutCard.querySelectorAll<HTMLFormElement>('.table-admin-row').forEach((form) => {
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const data = new FormData(form);
+      try {
+        await apiClient.updateTable(form.dataset.tableId!, {
+          name: String(data.get('name') ?? ''),
+          capacity: Number(data.get('capacity') ?? 1),
+          status: String(data.get('status') ?? 'active') as 'active' | 'inactive',
+          layoutX: data.get('layoutX') === '' ? undefined : Number(data.get('layoutX')),
+          layoutY: data.get('layoutY') === '' ? undefined : Number(data.get('layoutY')),
+        });
+        render();
+      } catch (caught) {
+        status.hidden = false;
+        status.textContent = caught instanceof Error ? caught.message : 'Unable to update table.';
+      }
+    });
+    form.querySelector<HTMLButtonElement>('.remove-table')?.addEventListener('click', async () => {
+      try {
+        await apiClient.removeTable(form.dataset.tableId!);
+        if (selectedTableId === form.dataset.tableId) selectedTableId = undefined;
+        render();
+      } catch (caught) {
+        status.hidden = false;
+        status.textContent = caught instanceof Error ? caught.message : 'Unable to remove table.';
+      }
+    });
+  });
+  return section;
+}
+
 async function renderRestaurantPos(): Promise<HTMLElement> {
   const section = page(APP_NAME, 'Select a table, enter menu items, split a bill, mark paid, and clean the table for the next guest.');
   section.classList.add('pos-page');
@@ -1000,10 +1177,11 @@ async function renderRestaurantPos(): Promise<HTMLElement> {
   const workspace = el('div', 'pos-workspace');
   section.append(status, workspace);
 
-  const [floor, menu, orders] = await Promise.all([
+  const [floor, menu, orders, kdsSnapshot] = await Promise.all([
     loadCashierTableFloor(session!.user.branchId),
     apiClient.listMenu() as Promise<MenuCategoryForPos[]>,
     apiClient.listOrders(),
+    apiClient.getKdsSnapshot(),
   ]);
   if (!selectedTableId) selectedTableId = floor.tables.find((row) => row.status !== 'inactive')?.table.id;
   const selected = floor.tables.find((row) => row.table.id === selectedTableId) ?? floor.tables[0];
@@ -1015,7 +1193,7 @@ async function renderRestaurantPos(): Promise<HTMLElement> {
   for (const row of floor.tables) {
     const button = el('button', `table-tile ${row.status} ${row.table.id === selected?.table.id ? 'selected' : ''}`);
     button.type = 'button';
-    button.innerHTML = `<strong>${row.table.name}</strong><span>${row.status}</span><small>${row.activeSession ? `${row.activeSession.guestCount} guests` : `${row.table.capacity} seats`}</small>`;
+    button.innerHTML = tableTileMarkup(row, orders, typeof kdsSnapshot !== 'undefined' ? kdsSnapshot : undefined);
     button.addEventListener('click', () => {
       selectedTableId = row.table.id;
       render();
@@ -1112,7 +1290,7 @@ async function renderRoute(): Promise<void> {
 
   switch (current.path) {
     case '#/tables':
-      content = await renderRestaurantPos();
+      content = await renderTableFloor();
       break;
     case '#/orders':
       content = await renderOrderEntry();
@@ -1131,6 +1309,9 @@ async function renderRoute(): Promise<void> {
       break;
     case '#/menu-admin':
       content = await renderMenuAdmin();
+      break;
+    case '#/table-admin':
+      content = await renderTableLayoutAdmin();
       break;
     case '#/inventory-alerts':
       content = await renderInventoryAlerts();

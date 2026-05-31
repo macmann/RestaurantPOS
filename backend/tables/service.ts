@@ -22,12 +22,16 @@ export interface UpsertTableInput {
   name: string;
   capacity: number;
   status?: DiningTableStatus;
+  layoutX?: number;
+  layoutY?: number;
 }
 
 export interface UpdateTableInput {
   name?: string;
   capacity?: number;
   status?: DiningTableStatus;
+  layoutX?: number;
+  layoutY?: number;
 }
 
 export interface TableFloorState {
@@ -72,6 +76,12 @@ function normalizeCapacity(value: number): number {
   return value;
 }
 
+function normalizeLayoutCoordinate(value: number | undefined, field: 'layoutX' | 'layoutY'): number | undefined {
+  if (value === undefined) return undefined;
+  if (!Number.isFinite(value) || value < 0 || value > 100) throw new Error(`${field} must be a number between 0 and 100.`);
+  return Math.round(value);
+}
+
 export async function createTable(input: UpsertTableInput): Promise<DiningTableRecord> {
   const now = new Date().toISOString();
   const name = input.name?.trim();
@@ -82,6 +92,8 @@ export async function createTable(input: UpsertTableInput): Promise<DiningTableR
     name,
     capacity: normalizeCapacity(input.capacity),
     status: input.status ?? 'active',
+    layoutX: normalizeLayoutCoordinate(input.layoutX, 'layoutX'),
+    layoutY: normalizeLayoutCoordinate(input.layoutY, 'layoutY'),
     createdAt: now,
     updatedAt: now,
   });
@@ -97,6 +109,8 @@ export async function updateTable(tableId: string, input: UpdateTableInput): Pro
   }
   if (input.capacity !== undefined) table.capacity = normalizeCapacity(input.capacity);
   if (input.status !== undefined) table.status = input.status;
+  if (input.layoutX !== undefined) table.layoutX = normalizeLayoutCoordinate(input.layoutX, 'layoutX');
+  if (input.layoutY !== undefined) table.layoutY = normalizeLayoutCoordinate(input.layoutY, 'layoutY');
   table.updatedAt = new Date().toISOString();
   return saveTable(table);
 }
