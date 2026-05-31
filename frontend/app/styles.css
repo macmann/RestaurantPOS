@@ -133,6 +133,8 @@ button { min-height: var(--tap); touch-action: manipulation; }
 .checkout-box .pay-clean { background: var(--success); }
 
 .billing-workspace { grid-template-columns: minmax(18rem, 0.8fr) minmax(28rem, 1.6fr); }
+.order-table-list { grid-template-columns: 1fr; }
+.order-table-list .table-tile { min-height: 5.8rem; }
 .order-entry-workspace .order-summary-box p { margin: 0; }
 .billing-table-grid .table-tile:disabled { cursor: not-allowed; opacity: 0.55; transform: none; }
 .billing-detail-panel { display: grid; gap: 1rem; }
@@ -181,6 +183,8 @@ button { min-height: var(--tap); touch-action: manipulation; }
 .table-layout-flow__controls button { min-width: 2.35rem; min-height: 2.35rem; border: 0; border-radius: 999px; background: #fff; color: var(--ink); font-weight: 950; cursor: pointer; }
 .table-layout-flow__controls button:hover { background: var(--surface-soft); color: var(--primary); }
 .table-layout-flow__empty { position: absolute; inset: 1rem; z-index: 1; display: grid; place-items: center; text-align: center; }
+.table-layout-flow--readonly { min-height: clamp(28rem, 58vh, 44rem); touch-action: auto; }
+.table-layout-node--readonly { cursor: pointer; }
 .table-admin-row.selected { border-color: rgb(37 99 235 / 45%); border-top-color: rgb(37 99 235 / 45%); border-radius: var(--radius-sm); background: rgb(219 234 254 / 45%); padding: 0.85rem; }
 .table-admin-panel { grid-template-columns: minmax(min(100%, 19rem), 0.7fr) minmax(min(100%, 32rem), 1.3fr); align-items: start; }
 .table-layout-editor { display: grid; gap: 0.85rem; }
