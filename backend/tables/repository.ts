@@ -10,6 +10,8 @@ export interface DiningTableRecord {
   name: string;
   capacity: number;
   status: DiningTableStatus;
+  layoutX?: number;
+  layoutY?: number;
   createdAt: string;
   updatedAt: string;
 }

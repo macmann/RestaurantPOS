@@ -54,9 +54,9 @@ button { min-height: var(--tap); touch-action: manipulation; }
 .login-card h1 { margin: 0 0 0.75rem; font-size: clamp(1.9rem, 8vw, 2.75rem); line-height: 1; letter-spacing: -0.06em; }
 .login-card p { color: var(--muted); line-height: 1.55; }
 .login-card label { display: grid; gap: 0.55rem; margin: 1.35rem 0; font-weight: 800; }
-.login-card input, .staff-form input, .staff-form select, .inline-staff-form input, .inline-staff-form select, .open-table-form input, .checkout-box select, .billing-draft select, .mobile-route-bar select { min-height: var(--tap); border: 1px solid var(--line); border-radius: 0.9rem; padding: 0.78rem 0.9rem; background: #fff; color: var(--ink); box-shadow: 0 1px 0 rgb(15 23 42 / 3%); }
-.login-card button, .secondary, .staff-form button, .inline-staff-form button, .open-table-form button, .checkout-box button, .billing-action, .bill-split-card button, .ticket-actions button, .menu-admin-row button { border: 0; border-radius: 0.9rem; padding: 0.8rem 1rem; background: linear-gradient(135deg, var(--primary), var(--accent)); color: #fff; font-weight: 900; cursor: pointer; box-shadow: 0 12px 22px rgb(15 118 110 / 18%); transition: transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease; }
-.login-card button:hover, .secondary:hover, .staff-form button:hover, .inline-staff-form button:hover, .open-table-form button:hover, .checkout-box button:hover, .billing-action:hover:not(:disabled), .bill-split-card button:hover:not(:disabled), .ticket-actions button:hover, .menu-admin-row button:hover { transform: translateY(-1px); box-shadow: 0 16px 26px rgb(37 99 235 / 20%); }
+.login-card input, .staff-form input, .staff-form select, .inline-staff-form input, .inline-staff-form select, .table-admin-row input, .table-admin-row select, .open-table-form input, .checkout-box select, .billing-draft select, .mobile-route-bar select { min-height: var(--tap); border: 1px solid var(--line); border-radius: 0.9rem; padding: 0.78rem 0.9rem; background: #fff; color: var(--ink); box-shadow: 0 1px 0 rgb(15 23 42 / 3%); }
+.login-card button, .secondary, .staff-form button, .inline-staff-form button, .table-admin-row button, .open-table-form button, .checkout-box button, .billing-action, .bill-split-card button, .ticket-actions button, .menu-admin-row button { border: 0; border-radius: 0.9rem; padding: 0.8rem 1rem; background: linear-gradient(135deg, var(--primary), var(--accent)); color: #fff; font-weight: 900; cursor: pointer; box-shadow: 0 12px 22px rgb(15 118 110 / 18%); transition: transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease; }
+.login-card button:hover, .secondary:hover, .staff-form button:hover, .inline-staff-form button:hover, .table-admin-row button:hover, .open-table-form button:hover, .checkout-box button:hover, .billing-action:hover:not(:disabled), .bill-split-card button:hover:not(:disabled), .ticket-actions button:hover, .menu-admin-row button:hover { transform: translateY(-1px); box-shadow: 0 16px 26px rgb(37 99 235 / 20%); }
 .form-error { color: #b42318; font-weight: 800; }
 
 .app-shell { display: grid; grid-template-columns: minmax(15rem, 18.5rem) 1fr; min-height: 100vh; }
@@ -113,9 +113,13 @@ button { min-height: var(--tap); touch-action: manipulation; }
 .table-tile { display: grid; gap: 0.4rem; }
 .table-tile strong { font-size: 1.1rem; }
 .table-tile span { width: fit-content; border-radius: 999px; padding: 0.2rem 0.58rem; font-size: 0.72rem; font-weight: 950; text-transform: uppercase; }
-.table-tile.available span { background: #dcfce7; color: #166534; }
-.table-tile.occupied span { background: #ffedd5; color: #9a3412; }
-.table-tile.inactive span { background: #e5e7eb; color: #4b5563; }
+.table-tile.available > span:first-of-type { background: #dcfce7; color: #166534; }
+.table-tile.occupied > span:first-of-type { background: #ffedd5; color: #9a3412; }
+.table-tile.inactive > span:first-of-type { background: #e5e7eb; color: #4b5563; }
+.table-tile .prep-label { background: #e0f2fe; color: #075985; }
+.table-tile .prep-label.preparing { background: #fef3c7; color: #92400e; }
+.table-tile .prep-label.ready { background: #dcfce7; color: #166534; }
+.table-tile .prep-label.served { background: #ede9fe; color: #5b21b6; }
 .table-tile.selected { outline: 3px solid rgb(37 99 235 / 45%); background: #eff6ff; }
 .open-table-form { display: grid; gap: 1rem; }
 .cart-list { display: grid; gap: 0.75rem; margin-bottom: 1rem; }
@@ -158,6 +162,16 @@ button { min-height: var(--tap); touch-action: manipulation; }
 .billing-actions { grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); }
 .billing-actions .close-table { background: var(--success); }
 
+
+.table-floor-summary { display: grid; gap: 1rem; }
+.floor-plan { position: relative; min-height: clamp(28rem, 58vh, 44rem); border: 1px dashed #b7c8da; border-radius: var(--radius-lg); background: linear-gradient(90deg, rgb(219 230 243 / 45%) 1px, transparent 1px), linear-gradient(rgb(219 230 243 / 45%) 1px, transparent 1px), linear-gradient(135deg, #f8fbff, #eef7ff); background-size: 25% 25%, 25% 25%, auto; overflow: hidden; }
+.floor-table { position: absolute; width: min(10.5rem, 42%); transform: translate(-50%, -50%); }
+.table-admin-panel { grid-template-columns: minmax(min(100%, 19rem), 0.7fr) minmax(min(100%, 32rem), 1.3fr); align-items: start; }
+.table-layout-editor { display: grid; gap: 0.85rem; }
+.table-admin-row { display: grid; grid-template-columns: minmax(9rem, 1.2fr) repeat(4, minmax(5.5rem, 0.65fr)) minmax(6rem, 0.75fr) auto auto; gap: 0.6rem; align-items: end; border-top: 1px solid var(--line); padding-top: 0.85rem; }
+.table-admin-row label { display: grid; gap: 0.25rem; color: var(--muted); font-size: 0.78rem; font-weight: 850; }
+.table-admin-row small { display: block; color: var(--muted); margin-top: 0.2rem; }
+
 .menu-category { display: grid; gap: 0.75rem; margin-top: 1rem; }
 .menu-category h4 { margin: 0; color: #334155; }
 .menu-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr)); gap: 0.75rem; }
@@ -196,7 +210,8 @@ button { min-height: var(--tap); touch-action: manipulation; }
 .audit-card pre { max-height: 14rem; overflow: auto; border-radius: 0.9rem; background: #102a43; color: #f8fafc; padding: 0.85rem; }
 
 @media (max-width: 1200px) {
-  .pos-workspace, .billing-workspace { grid-template-columns: 1fr; }
+  .pos-workspace, .billing-workspace, .table-admin-panel { grid-template-columns: 1fr; }
+  .table-admin-row { grid-template-columns: 1fr 1fr; }
 }
 
 @media (max-width: 900px) {
@@ -218,6 +233,9 @@ button { min-height: var(--tap); touch-action: manipulation; }
   .mobile-route-bar { grid-template-columns: 1fr; }
   .page-header h2 { font-size: clamp(2rem, 12vw, 2.8rem); }
   .card-grid, .table-grid, .menu-grid, .kds-board, .progress-lanes, .menu-admin-list, .report-grid { grid-template-columns: 1fr; }
+  .floor-plan { min-height: 34rem; }
+  .floor-table { width: min(9.5rem, 46%); }
+  .table-admin-row { grid-template-columns: 1fr; }
   .pos-panel-heading, .cart-row, .checkout-box div, .bill-line-row, .bill-split-card > div, .ordered-item-row, .ordered-items-review__heading { align-items: stretch; }
   .cart-row { grid-template-columns: 1fr; }
   .bill-metrics { grid-template-columns: 1fr; }
