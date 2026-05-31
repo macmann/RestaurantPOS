@@ -25,5 +25,5 @@ createServer((req, res) => {
   res.setHeader('content-type', types.get(extname(file)) ?? 'application/octet-stream');
   createReadStream(file).pipe(res);
 }).listen(port, host, () => {
-  console.log(`RestaurantPOS frontend preview listening on http://${host}:${port}`);
+  console.log(`SYM POS frontend preview listening on http://${host}:${port}`);
 });

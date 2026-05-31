@@ -2,7 +2,7 @@
 
 ## Discount precedence
 
-RestaurantPOS applies discounts in a fixed, enforced order so the same item cannot be over-discounted by competing promotion paths:
+SYM POS applies discounts in a fixed, enforced order so the same item cannot be over-discounted by competing promotion paths:
 
 1. **Item-level discount** — an explicit server/cashier markdown for a line item. Legacy `lineDiscount` values are treated as item-level discounts when `itemDiscount` is not present.
 2. **Combo discount** — an automatic bundle or set-menu adjustment. This is capped against the remaining line value after item-level discounts.

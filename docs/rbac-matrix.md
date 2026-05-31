@@ -1,4 +1,4 @@
-# RestaurantPOS Role & Permission Matrix
+# SYM POS Role & Permission Matrix
 
 This matrix defines route-level authorization for core POS actions. Permissions are additive: a role inherits all actions explicitly marked ✅.
 

@@ -1,4 +1,4 @@
-# RestaurantPOS ERD
+# SYM POS ERD
 
 This ERD documents the initial relational schema in `schema/migrations/20260505140000_initial_restaurantpos_schema.sql`.
 

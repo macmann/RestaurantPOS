@@ -1,6 +1,6 @@
-# RestaurantPOS
+# SYM POS
 
-RestaurantPOS is a TypeScript point-of-sale foundation for restaurants. It models branch-scoped ordering, kitchen/bar display workflows, billing, inventory, reporting, auditing, localization, and LAN-first reconnect behavior.
+SYM POS is a TypeScript point-of-sale foundation for restaurants. It models branch-scoped ordering, kitchen/bar display workflows, billing, inventory, reporting, auditing, localization, and LAN-first reconnect behavior.
 
 > **Current runtime status:** this repository builds a single deployable Node/Express application. The API serves `/api/*` and `/auth/*`, and the same process serves the compiled browser app from `dist/frontend` for all other routes.
 
@@ -51,7 +51,7 @@ npm install
 | Variable | Required? | Default in code/template | Description |
 | --- | --- | --- | --- |
 | `APP_ENV` | No | `development` | Deployment environment label for operators and server startup. |
-| `APP_NAME` | No | `RestaurantPOS` | Human-readable app name. |
+| `APP_NAME` | No | `SYM POS` | Human-readable app name. |
 | `HOST` | No | `0.0.0.0` | Server bind address for the combined HTTP/API process. |
 | `PORT` | No | `8080` | Server port for the combined HTTP/API process. Render provides this automatically. |
 | `LAN_BASE_URL` | Recommended for deployments | Example LAN URL | Base URL client devices should use on the restaurant network. |

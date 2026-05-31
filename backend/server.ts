@@ -423,7 +423,7 @@ export function startServer(): unknown {
   const host = process.env.HOST ?? DEFAULT_HOST;
   const app = createApp();
   const server = app.listen(port, host, () => {
-    console.log(`RestaurantPOS API listening on http://${host}:${port}`);
+    console.log(`SYM POS API listening on http://${host}:${port}`);
   });
   return server;
 }

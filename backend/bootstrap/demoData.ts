@@ -9,11 +9,11 @@ import { getUserRecordById, saveUser } from '../users/repository';
 const STARTER_PASSWORD = 'password123';
 
 const starterUsers = [
-  { id: 'waiter', username: 'waiter', email: 'waiter@restaurantpos.local', role: ['waitstaff', 'cashier'] },
-  { id: 'cashier', username: 'cashier', email: 'cashier@restaurantpos.local', role: 'cashier' },
-  { id: 'manager', username: 'manager', email: 'manager@restaurantpos.local', role: 'manager' },
-  { id: 'kitchen', username: 'kitchen', email: 'kitchen@restaurantpos.local', role: 'kitchen' },
-  { id: 'bar', username: 'bar', email: 'bar@restaurantpos.local', role: 'bar' },
+  { id: 'waiter', username: 'waiter', email: 'waiter@sympos.local', role: ['waitstaff', 'cashier'] },
+  { id: 'cashier', username: 'cashier', email: 'cashier@sympos.local', role: 'cashier' },
+  { id: 'manager', username: 'manager', email: 'manager@sympos.local', role: 'manager' },
+  { id: 'kitchen', username: 'kitchen', email: 'kitchen@sympos.local', role: 'kitchen' },
+  { id: 'bar', username: 'bar', email: 'bar@sympos.local', role: 'bar' },
 ];
 
 const starterTables = [
