@@ -170,6 +170,17 @@ button { min-height: var(--tap); touch-action: manipulation; }
 .floor-table { position: absolute; width: min(10.5rem, 42%); transform: translate(-50%, -50%); }
 .floor-table--draggable { cursor: grab; touch-action: none; user-select: none; }
 .floor-table--draggable.dragging { cursor: grabbing; z-index: 5; border-color: rgb(37 99 235 / 65%); box-shadow: 0 22px 38px rgb(37 99 235 / 22%); }
+.react-flow.table-layout-flow { position: relative; min-height: clamp(30rem, 62vh, 46rem); border: 1px solid rgb(183 200 218 / 90%); border-radius: var(--radius-lg); background: linear-gradient(135deg, #f8fbff, #eef7ff); overflow: hidden; touch-action: none; }
+.table-layout-flow__background { position: absolute; inset: 0; background-image: radial-gradient(circle, rgb(100 116 139 / 32%) 1px, transparent 1px), linear-gradient(90deg, rgb(219 230 243 / 50%) 1px, transparent 1px), linear-gradient(rgb(219 230 243 / 50%) 1px, transparent 1px); background-size: 1.25rem 1.25rem, 25% 25%, 25% 25%; pointer-events: none; }
+.table-layout-flow__viewport, .table-layout-flow__nodes { position: absolute; inset: 0; transform-origin: center; }
+.table-layout-node { position: absolute; width: min(10.5rem, 42%); transform: translate(-50%, -50%); cursor: grab; touch-action: none; user-select: none; z-index: 1; }
+.table-layout-node.selected { outline: 0.2rem solid rgb(37 99 235 / 40%); outline-offset: 0.18rem; }
+.table-layout-node.dragging { cursor: grabbing; z-index: 5; border-color: rgb(37 99 235 / 65%); box-shadow: 0 22px 38px rgb(37 99 235 / 22%); }
+.table-layout-flow__controls { position: absolute; right: 1rem; top: 1rem; z-index: 8; display: flex; gap: 0.35rem; padding: 0.35rem; border: 1px solid var(--line); border-radius: 999px; background: rgb(255 255 255 / 88%); box-shadow: var(--shadow-sm); backdrop-filter: blur(14px); }
+.table-layout-flow__controls button { min-width: 2.35rem; min-height: 2.35rem; border: 0; border-radius: 999px; background: #fff; color: var(--ink); font-weight: 950; cursor: pointer; }
+.table-layout-flow__controls button:hover { background: var(--surface-soft); color: var(--primary); }
+.table-layout-flow__empty { position: absolute; inset: 1rem; z-index: 1; display: grid; place-items: center; text-align: center; }
+.table-admin-row.selected { border-color: rgb(37 99 235 / 45%); border-top-color: rgb(37 99 235 / 45%); border-radius: var(--radius-sm); background: rgb(219 234 254 / 45%); padding: 0.85rem; }
 .table-admin-panel { grid-template-columns: minmax(min(100%, 19rem), 0.7fr) minmax(min(100%, 32rem), 1.3fr); align-items: start; }
 .table-layout-editor { display: grid; gap: 0.85rem; }
 .table-admin-row { display: grid; grid-template-columns: minmax(9rem, 1.2fr) repeat(4, minmax(5.5rem, 0.65fr)) minmax(6rem, 0.75fr) auto auto; gap: 0.6rem; align-items: end; border-top: 1px solid var(--line); padding-top: 0.85rem; }

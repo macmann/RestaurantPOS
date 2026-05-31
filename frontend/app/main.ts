@@ -732,6 +732,157 @@ function positionFloorTable(button: HTMLElement, row: TableFloorState, index: nu
   button.style.top = `${position.top}%`;
 }
 
+interface TableLayoutFlowCallbacks {
+  onNodeSelect: (tableId: string) => void;
+  onNodeMove: (tableId: string, layoutX: number, layoutY: number) => void;
+  onNodeSave: (tableId: string, position: { layoutX: number; layoutY: number }) => Promise<void>;
+}
+
+function createTableLayoutFlow(tables: TableFloorState[]): HTMLElement {
+  const flow = el('div', 'react-flow table-layout-flow floor-plan--editable');
+  flow.dataset.reactFlow = 'table-layout';
+  flow.setAttribute('role', 'application');
+  flow.setAttribute('aria-label', 'React Flow table layout editor');
+
+  const viewport = el('div', 'react-flow__viewport table-layout-flow__viewport');
+  const nodesLayer = el('div', 'react-flow__nodes table-layout-flow__nodes');
+  viewport.append(nodesLayer);
+  flow.append(viewport);
+
+  const grid = el('div', 'react-flow__background table-layout-flow__background');
+  flow.prepend(grid);
+
+  const toolbar = el('div', 'react-flow__controls table-layout-flow__controls');
+  toolbar.innerHTML = `
+    <button type="button" data-flow-action="zoom-out" aria-label="Zoom out">−</button>
+    <button type="button" data-flow-action="fit" aria-label="Fit view">Fit</button>
+    <button type="button" data-flow-action="zoom-in" aria-label="Zoom in">+</button>
+  `;
+  flow.append(toolbar);
+
+  if (!tables.length) {
+    const empty = emptyState('No tables yet. Create one to start the layout.');
+    empty.classList.add('table-layout-flow__empty');
+    flow.append(empty);
+    return flow;
+  }
+
+  tables.forEach((row, index) => {
+    const position = tableLayoutPosition(row, index);
+    const node = el('button', `react-flow__node table-layout-node table-tile ${row.status}`);
+    node.type = 'button';
+    node.dataset.tableId = row.table.id;
+    node.dataset.layoutX = String(position.left);
+    node.dataset.layoutY = String(position.top);
+    node.style.left = `${position.left}%`;
+    node.style.top = `${position.top}%`;
+    node.innerHTML = tableTileMarkup(row, [], undefined);
+    nodesLayer.append(node);
+  });
+
+  return flow;
+}
+
+function bindTableLayoutFlow(flow: HTMLElement, callbacks: TableLayoutFlowCallbacks): void {
+  const viewport = flow.querySelector<HTMLElement>('.table-layout-flow__viewport');
+  const nodesLayer = flow.querySelector<HTMLElement>('.table-layout-flow__nodes');
+  if (!viewport || !nodesLayer) return;
+  const viewportEl = viewport;
+  const nodesLayerEl = nodesLayer;
+
+  let zoom = 1;
+  let activeDrag: { node: HTMLButtonElement; pointerId: number; grabbedOffsetX: number; grabbedOffsetY: number; moved: boolean; startX: number; startY: number } | undefined;
+
+  function setZoom(nextZoom: number): void {
+    zoom = Math.max(0.75, Math.min(1.35, nextZoom));
+    nodesLayerEl.style.transform = `scale(${zoom})`;
+  }
+
+  function positionFromPointer(event: PointerEvent, node: HTMLElement): { layoutX: number; layoutY: number } {
+    const rect = viewportEl.getBoundingClientRect();
+    const offsetX = activeDrag?.grabbedOffsetX ?? node.offsetWidth / 2;
+    const offsetY = activeDrag?.grabbedOffsetY ?? node.offsetHeight / 2;
+    const nodeCenterX = event.clientX - rect.left - offsetX + node.offsetWidth / 2;
+    const nodeCenterY = event.clientY - rect.top - offsetY + node.offsetHeight / 2;
+    return {
+      layoutX: Math.round(Math.max(4, Math.min(96, (nodeCenterX / rect.width) * 100))),
+      layoutY: Math.round(Math.max(4, Math.min(96, (nodeCenterY / rect.height) * 100))),
+    };
+  }
+
+  function updateNodePosition(node: HTMLElement, layoutX: number, layoutY: number): void {
+    node.dataset.layoutX = String(layoutX);
+    node.dataset.layoutY = String(layoutY);
+    node.style.left = `${layoutX}%`;
+    node.style.top = `${layoutY}%`;
+  }
+
+  function selectNode(node: HTMLButtonElement): void {
+    flow.querySelectorAll('.table-layout-node.selected').forEach((selected) => selected.classList.remove('selected'));
+    node.classList.add('selected');
+    callbacks.onNodeSelect(node.dataset.tableId!);
+  }
+
+  flow.querySelectorAll<HTMLButtonElement>('.table-layout-node').forEach((node) => {
+    node.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0) return;
+      const nodeRect = node.getBoundingClientRect();
+      activeDrag = {
+        node,
+        pointerId: event.pointerId,
+        grabbedOffsetX: event.clientX - nodeRect.left,
+        grabbedOffsetY: event.clientY - nodeRect.top,
+        moved: false,
+        startX: event.clientX,
+        startY: event.clientY,
+      };
+      selectNode(node);
+      node.setPointerCapture(event.pointerId);
+      node.classList.add('dragging');
+      event.preventDefault();
+    });
+
+    node.addEventListener('pointermove', (event) => {
+      if (!activeDrag || activeDrag.node !== node || activeDrag.pointerId !== event.pointerId) return;
+      if (Math.abs(event.clientX - activeDrag.startX) > 2 || Math.abs(event.clientY - activeDrag.startY) > 2) activeDrag.moved = true;
+      const position = positionFromPointer(event, node);
+      updateNodePosition(node, position.layoutX, position.layoutY);
+      callbacks.onNodeMove(node.dataset.tableId!, position.layoutX, position.layoutY);
+    });
+
+    node.addEventListener('pointerup', async (event) => {
+      if (!activeDrag || activeDrag.node !== node || activeDrag.pointerId !== event.pointerId) return;
+      const drag = activeDrag;
+      const position = positionFromPointer(event, node);
+      activeDrag = undefined;
+      if (node.hasPointerCapture(event.pointerId)) node.releasePointerCapture(event.pointerId);
+      node.classList.remove('dragging');
+      if (!drag.moved) return;
+      updateNodePosition(node, position.layoutX, position.layoutY);
+      callbacks.onNodeMove(node.dataset.tableId!, position.layoutX, position.layoutY);
+      await callbacks.onNodeSave(node.dataset.tableId!, position);
+    });
+
+    node.addEventListener('pointercancel', (event) => {
+      if (!activeDrag || activeDrag.node !== node || activeDrag.pointerId !== event.pointerId) return;
+      activeDrag = undefined;
+      if (node.hasPointerCapture(event.pointerId)) node.releasePointerCapture(event.pointerId);
+      node.classList.remove('dragging');
+    });
+
+    node.addEventListener('click', () => selectNode(node));
+  });
+
+  flow.querySelectorAll<HTMLButtonElement>('[data-flow-action]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const action = button.dataset.flowAction;
+      if (action === 'zoom-in') setZoom(zoom + 0.1);
+      if (action === 'zoom-out') setZoom(zoom - 0.1);
+      if (action === 'fit') setZoom(1);
+    });
+  });
+}
+
 function renderOrderedItemsReview(orders: OrderRecord[]): HTMLElement {
   const totalItems = orders.reduce((sum, order) => sum + order.items.reduce((itemSum, item) => itemSum + item.quantity, 0), 0);
   const review = el('section', 'ordered-items-review');
@@ -1113,17 +1264,8 @@ async function renderTableLayoutAdmin(): Promise<HTMLElement> {
   panel.append(createCard);
 
   const layoutCard = el('article', 'card admin-card table-layout-editor');
-  layoutCard.innerHTML = '<h3>Floor plan builder</h3><p class="muted">Drag tables on the canvas to place the floor layout. The X/Y fields below stay in sync for precise adjustments.</p>';
-  const layoutPlan = el('div', 'floor-plan floor-plan--editable');
-  if (!floor.tables.length) layoutPlan.append(emptyState('No tables yet. Create one to start the layout.'));
-  floor.tables.forEach((row, index) => {
-    const button = el('button', `table-tile floor-table floor-table--draggable ${row.status}`);
-    button.type = 'button';
-    button.dataset.tableId = row.table.id;
-    button.innerHTML = tableTileMarkup(row, [], undefined);
-    positionFloorTable(button, row, index);
-    layoutPlan.append(button);
-  });
+  layoutCard.innerHTML = '<h3>Floor plan builder</h3><p class="muted">Drag tables on the React Flow canvas to place the floor layout. The X/Y fields below stay in sync for precise adjustments.</p>';
+  const layoutPlan = createTableLayoutFlow(floor.tables);
   layoutCard.append(layoutPlan);
   layoutCard.append(el('h4', '', 'Table configuration'));
   if (!floor.tables.length) layoutCard.append(emptyState('No tables yet. Create one to start the layout.'));
@@ -1147,6 +1289,11 @@ async function renderTableLayoutAdmin(): Promise<HTMLElement> {
 
   const layoutFormsByTableId = new Map([...layoutCard.querySelectorAll<HTMLFormElement>('.table-admin-row')].map((form) => [form.dataset.tableId, form]));
 
+  function setStatusMessage(message: string): void {
+    status.hidden = false;
+    status.textContent = message;
+  }
+
   function syncLayoutInputs(tableId: string, layoutX: number, layoutY: number): void {
     const form = layoutFormsByTableId.get(tableId);
     const xInput = form?.querySelector<HTMLInputElement>('input[name="layoutX"]');
@@ -1155,54 +1302,24 @@ async function renderTableLayoutAdmin(): Promise<HTMLElement> {
     if (yInput) yInput.value = String(layoutY);
   }
 
-  function pointerPositionInPlan(event: PointerEvent): { layoutX: number; layoutY: number } {
-    const rect = layoutPlan.getBoundingClientRect();
-    return {
-      layoutX: Math.round(Math.max(4, Math.min(96, ((event.clientX - rect.left) / rect.width) * 100))),
-      layoutY: Math.round(Math.max(4, Math.min(96, ((event.clientY - rect.top) / rect.height) * 100))),
-    };
+  function focusTableConfiguration(tableId: string): void {
+    layoutCard.querySelectorAll<HTMLFormElement>('.table-admin-row').forEach((form) => {
+      form.classList.toggle('selected', form.dataset.tableId === tableId);
+    });
   }
 
-  layoutPlan.querySelectorAll<HTMLButtonElement>('.floor-table--draggable').forEach((button) => {
-    let startX = 0;
-    let startY = 0;
-    let moved = false;
-    button.addEventListener('pointerdown', (event) => {
-      if (event.button !== 0) return;
-      startX = event.clientX;
-      startY = event.clientY;
-      moved = false;
-      button.setPointerCapture(event.pointerId);
-      button.classList.add('dragging');
-      event.preventDefault();
-    });
-    button.addEventListener('pointermove', (event) => {
-      if (!button.hasPointerCapture(event.pointerId)) return;
-      if (Math.abs(event.clientX - startX) > 2 || Math.abs(event.clientY - startY) > 2) moved = true;
-      const position = pointerPositionInPlan(event);
-      button.style.left = `${position.layoutX}%`;
-      button.style.top = `${position.layoutY}%`;
-      syncLayoutInputs(button.dataset.tableId!, position.layoutX, position.layoutY);
-    });
-    button.addEventListener('pointerup', async (event) => {
-      if (!button.hasPointerCapture(event.pointerId)) return;
-      button.releasePointerCapture(event.pointerId);
-      button.classList.remove('dragging');
-      if (!moved) return;
-      const position = pointerPositionInPlan(event);
+  bindTableLayoutFlow(layoutPlan, {
+    onNodeSelect: focusTableConfiguration,
+    onNodeMove: syncLayoutInputs,
+    onNodeSave: async (tableId, position) => {
       try {
-        await apiClient.updateTable(button.dataset.tableId!, { layoutX: position.layoutX, layoutY: position.layoutY });
-        status.hidden = false;
-        status.textContent = 'Floor layout saved.';
+        await apiClient.updateTable(tableId, { layoutX: position.layoutX, layoutY: position.layoutY });
+        setStatusMessage('Floor layout saved.');
       } catch (caught) {
-        status.hidden = false;
-        status.textContent = caught instanceof Error ? caught.message : 'Unable to save table position.';
+        setStatusMessage(caught instanceof Error ? caught.message : 'Unable to save table position.');
+        throw caught;
       }
-    });
-    button.addEventListener('pointercancel', (event) => {
-      if (button.hasPointerCapture(event.pointerId)) button.releasePointerCapture(event.pointerId);
-      button.classList.remove('dragging');
-    });
+    },
   });
 
   createCard.querySelector<HTMLFormElement>('.table-create-form')?.addEventListener('submit', async (event) => {
