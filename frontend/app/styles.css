@@ -165,7 +165,11 @@ button { min-height: var(--tap); touch-action: manipulation; }
 
 .table-floor-summary { display: grid; gap: 1rem; }
 .floor-plan { position: relative; min-height: clamp(28rem, 58vh, 44rem); border: 1px dashed #b7c8da; border-radius: var(--radius-lg); background: linear-gradient(90deg, rgb(219 230 243 / 45%) 1px, transparent 1px), linear-gradient(rgb(219 230 243 / 45%) 1px, transparent 1px), linear-gradient(135deg, #f8fbff, #eef7ff); background-size: 25% 25%, 25% 25%, auto; overflow: hidden; }
+.floor-plan--service { min-height: clamp(26rem, 52vh, 38rem); }
+.floor-plan--editable { min-height: clamp(30rem, 62vh, 46rem); touch-action: none; }
 .floor-table { position: absolute; width: min(10.5rem, 42%); transform: translate(-50%, -50%); }
+.floor-table--draggable { cursor: grab; touch-action: none; user-select: none; }
+.floor-table--draggable.dragging { cursor: grabbing; z-index: 5; border-color: rgb(37 99 235 / 65%); box-shadow: 0 22px 38px rgb(37 99 235 / 22%); }
 .table-admin-panel { grid-template-columns: minmax(min(100%, 19rem), 0.7fr) minmax(min(100%, 32rem), 1.3fr); align-items: start; }
 .table-layout-editor { display: grid; gap: 0.85rem; }
 .table-admin-row { display: grid; grid-template-columns: minmax(9rem, 1.2fr) repeat(4, minmax(5.5rem, 0.65fr)) minmax(6rem, 0.75fr) auto auto; gap: 0.6rem; align-items: end; border-top: 1px solid var(--line); padding-top: 0.85rem; }

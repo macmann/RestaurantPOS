@@ -711,6 +711,27 @@ function tableTileMarkup(row: TableFloorState, orders: OrderRecord[], snapshot?:
   return `<strong>${row.table.name}</strong><span>${row.status}</span><span class="prep-label ${prep.tone}">${prep.label}</span><small>${detail}</small>`;
 }
 
+function fallbackLayoutPosition(index: number): { left: number; top: number } {
+  return {
+    left: 8 + (index % 4) * 23,
+    top: 10 + Math.floor(index / 4) * 28,
+  };
+}
+
+function tableLayoutPosition(row: TableFloorState, index: number): { left: number; top: number } {
+  const fallback = fallbackLayoutPosition(index);
+  return {
+    left: Math.min(row.table.layoutX ?? fallback.left, 96),
+    top: Math.min(row.table.layoutY ?? fallback.top, 96),
+  };
+}
+
+function positionFloorTable(button: HTMLElement, row: TableFloorState, index: number): void {
+  const position = tableLayoutPosition(row, index);
+  button.style.left = `${position.left}%`;
+  button.style.top = `${position.top}%`;
+}
+
 function renderOrderedItemsReview(orders: OrderRecord[]): HTMLElement {
   const totalItems = orders.reduce((sum, order) => sum + order.items.reduce((itemSum, item) => itemSum + item.quantity, 0), 0);
   const review = el('section', 'ordered-items-review');
@@ -778,18 +799,20 @@ async function renderOrderEntry(): Promise<HTMLElement> {
 
   const floorPanel = el('section', 'pos-panel table-panel');
   floorPanel.innerHTML = `<div class="pos-panel-heading"><h3>Tables for ordering</h3><span>${floor.counts.available} available · ${floor.counts.occupied} occupied</span></div>`;
-  const tableGrid = el('div', 'table-grid');
-  for (const row of floor.tables) {
-    const button = el('button', `table-tile ${row.status} ${row.table.id === selected?.table.id ? 'selected' : ''}`);
+  const tablePlan = el('div', 'floor-plan floor-plan--service');
+  floor.tables.forEach((row, index) => {
+    const button = el('button', `table-tile floor-table ${row.status} ${row.table.id === selected?.table.id ? 'selected' : ''}`);
     button.type = 'button';
     button.innerHTML = tableTileMarkup(row, orders, typeof kdsSnapshot !== 'undefined' ? kdsSnapshot : undefined);
+    positionFloorTable(button, row, index);
     button.addEventListener('click', () => {
       selectedTableId = row.table.id;
       render();
     });
-    tableGrid.append(button);
-  }
-  floorPanel.append(tableGrid);
+    tablePlan.append(button);
+  });
+  if (!floor.tables.length) tablePlan.append(emptyState('No tables configured.'));
+  floorPanel.append(tablePlan);
 
   const orderPanel = el('section', 'pos-panel order-panel');
   if (!selected) {
@@ -1041,10 +1064,7 @@ async function renderTableFloor(): Promise<HTMLElement> {
     const button = el('button', `table-tile floor-table ${row.status}`);
     button.type = 'button';
     button.innerHTML = tableTileMarkup(row, orders, kdsSnapshot);
-    const left = row.table.layoutX ?? 8 + (index % 4) * 23;
-    const top = row.table.layoutY ?? 10 + Math.floor(index / 4) * 28;
-    button.style.left = `${Math.min(left, 88)}%`;
-    button.style.top = `${Math.min(top, 82)}%`;
+    positionFloorTable(button, row, index);
     button.addEventListener('click', async () => {
       if (row.status === 'inactive') {
         status.hidden = false;
@@ -1093,17 +1113,29 @@ async function renderTableLayoutAdmin(): Promise<HTMLElement> {
   panel.append(createCard);
 
   const layoutCard = el('article', 'card admin-card table-layout-editor');
-  layoutCard.innerHTML = '<h3>Floor plan entries</h3><p class="muted">Use X/Y percentages to place each table on the floor plan.</p>';
+  layoutCard.innerHTML = '<h3>Floor plan builder</h3><p class="muted">Drag tables on the canvas to place the floor layout. The X/Y fields below stay in sync for precise adjustments.</p>';
+  const layoutPlan = el('div', 'floor-plan floor-plan--editable');
+  if (!floor.tables.length) layoutPlan.append(emptyState('No tables yet. Create one to start the layout.'));
+  floor.tables.forEach((row, index) => {
+    const button = el('button', `table-tile floor-table floor-table--draggable ${row.status}`);
+    button.type = 'button';
+    button.dataset.tableId = row.table.id;
+    button.innerHTML = tableTileMarkup(row, [], undefined);
+    positionFloorTable(button, row, index);
+    layoutPlan.append(button);
+  });
+  layoutCard.append(layoutPlan);
+  layoutCard.append(el('h4', '', 'Table configuration'));
   if (!floor.tables.length) layoutCard.append(emptyState('No tables yet. Create one to start the layout.'));
-  for (const row of floor.tables) {
+  for (const [index, row] of floor.tables.entries()) {
     const form = el('form', 'table-admin-row');
     form.dataset.tableId = row.table.id;
     form.innerHTML = `
       <div><strong>${row.table.name}</strong><small>${row.status}${row.activeSession ? ` · open session ${row.activeSession.id.slice(-8)}` : ''}</small></div>
       <label>Name<input name="name" value="${row.table.name}" required /></label>
       <label>Seats<input name="capacity" type="number" min="1" value="${row.table.capacity}" required /></label>
-      <label>X %<input name="layoutX" type="number" min="0" max="100" value="${row.table.layoutX ?? ''}" /></label>
-      <label>Y %<input name="layoutY" type="number" min="0" max="100" value="${row.table.layoutY ?? ''}" /></label>
+      <label>X %<input name="layoutX" type="number" min="0" max="100" value="${row.table.layoutX ?? tableLayoutPosition(row, index).left}" /></label>
+      <label>Y %<input name="layoutY" type="number" min="0" max="100" value="${row.table.layoutY ?? tableLayoutPosition(row, index).top}" /></label>
       <label>Status<select name="status"><option value="active" ${row.table.status === 'active' ? 'selected' : ''}>Active</option><option value="inactive" ${row.table.status === 'inactive' ? 'selected' : ''}>Inactive</option></select></label>
       <button type="submit">Save</button>
       <button type="button" class="secondary remove-table">Remove</button>
@@ -1112,6 +1144,66 @@ async function renderTableLayoutAdmin(): Promise<HTMLElement> {
   }
   panel.append(layoutCard);
   section.append(status, panel);
+
+  const layoutFormsByTableId = new Map([...layoutCard.querySelectorAll<HTMLFormElement>('.table-admin-row')].map((form) => [form.dataset.tableId, form]));
+
+  function syncLayoutInputs(tableId: string, layoutX: number, layoutY: number): void {
+    const form = layoutFormsByTableId.get(tableId);
+    const xInput = form?.querySelector<HTMLInputElement>('input[name="layoutX"]');
+    const yInput = form?.querySelector<HTMLInputElement>('input[name="layoutY"]');
+    if (xInput) xInput.value = String(layoutX);
+    if (yInput) yInput.value = String(layoutY);
+  }
+
+  function pointerPositionInPlan(event: PointerEvent): { layoutX: number; layoutY: number } {
+    const rect = layoutPlan.getBoundingClientRect();
+    return {
+      layoutX: Math.round(Math.max(4, Math.min(96, ((event.clientX - rect.left) / rect.width) * 100))),
+      layoutY: Math.round(Math.max(4, Math.min(96, ((event.clientY - rect.top) / rect.height) * 100))),
+    };
+  }
+
+  layoutPlan.querySelectorAll<HTMLButtonElement>('.floor-table--draggable').forEach((button) => {
+    let startX = 0;
+    let startY = 0;
+    let moved = false;
+    button.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0) return;
+      startX = event.clientX;
+      startY = event.clientY;
+      moved = false;
+      button.setPointerCapture(event.pointerId);
+      button.classList.add('dragging');
+      event.preventDefault();
+    });
+    button.addEventListener('pointermove', (event) => {
+      if (!button.hasPointerCapture(event.pointerId)) return;
+      if (Math.abs(event.clientX - startX) > 2 || Math.abs(event.clientY - startY) > 2) moved = true;
+      const position = pointerPositionInPlan(event);
+      button.style.left = `${position.layoutX}%`;
+      button.style.top = `${position.layoutY}%`;
+      syncLayoutInputs(button.dataset.tableId!, position.layoutX, position.layoutY);
+    });
+    button.addEventListener('pointerup', async (event) => {
+      if (!button.hasPointerCapture(event.pointerId)) return;
+      button.releasePointerCapture(event.pointerId);
+      button.classList.remove('dragging');
+      if (!moved) return;
+      const position = pointerPositionInPlan(event);
+      try {
+        await apiClient.updateTable(button.dataset.tableId!, { layoutX: position.layoutX, layoutY: position.layoutY });
+        status.hidden = false;
+        status.textContent = 'Floor layout saved.';
+      } catch (caught) {
+        status.hidden = false;
+        status.textContent = caught instanceof Error ? caught.message : 'Unable to save table position.';
+      }
+    });
+    button.addEventListener('pointercancel', (event) => {
+      if (button.hasPointerCapture(event.pointerId)) button.releasePointerCapture(event.pointerId);
+      button.classList.remove('dragging');
+    });
+  });
 
   createCard.querySelector<HTMLFormElement>('.table-create-form')?.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -1189,18 +1281,20 @@ async function renderRestaurantPos(): Promise<HTMLElement> {
 
   const floorPanel = el('section', 'pos-panel table-panel');
   floorPanel.innerHTML = `<div class="pos-panel-heading"><h3>Table floor</h3><span>${floor.counts.available} available · ${floor.counts.occupied} occupied</span></div>`;
-  const tableGrid = el('div', 'table-grid');
-  for (const row of floor.tables) {
-    const button = el('button', `table-tile ${row.status} ${row.table.id === selected?.table.id ? 'selected' : ''}`);
+  const tablePlan = el('div', 'floor-plan floor-plan--service');
+  floor.tables.forEach((row, index) => {
+    const button = el('button', `table-tile floor-table ${row.status} ${row.table.id === selected?.table.id ? 'selected' : ''}`);
     button.type = 'button';
     button.innerHTML = tableTileMarkup(row, orders, typeof kdsSnapshot !== 'undefined' ? kdsSnapshot : undefined);
+    positionFloorTable(button, row, index);
     button.addEventListener('click', () => {
       selectedTableId = row.table.id;
       render();
     });
-    tableGrid.append(button);
-  }
-  floorPanel.append(tableGrid);
+    tablePlan.append(button);
+  });
+  if (!floor.tables.length) tablePlan.append(emptyState('No tables configured.'));
+  floorPanel.append(tablePlan);
 
   const orderPanel = el('section', 'pos-panel order-panel');
   if (!selected) {
