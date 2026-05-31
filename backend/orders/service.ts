@@ -56,12 +56,19 @@ export interface CancelOrderInput {
   reason: string;
 }
 
+const FRONT_OF_HOUSE_STATUS_FLOW: Array<{ from: OrderStatus; to: OrderStatus }> = [
+  { from: 'pending', to: 'in_preparation' },
+  { from: 'in_preparation', to: 'completed' },
+  { from: 'completed', to: 'delivered' },
+];
+
 const ROLE_STATUS_FLOW: Record<string, Array<{ from: OrderStatus; to: OrderStatus }>> = {
-  waitstaff: [
-    { from: 'pending', to: 'in_preparation' },
-    { from: 'in_preparation', to: 'completed' },
-    { from: 'completed', to: 'delivered' },
-  ],
+  cashier: FRONT_OF_HOUSE_STATUS_FLOW,
+  waitstaff: FRONT_OF_HOUSE_STATUS_FLOW,
+  shift_lead: FRONT_OF_HOUSE_STATUS_FLOW,
+  manager: FRONT_OF_HOUSE_STATUS_FLOW,
+  admin: FRONT_OF_HOUSE_STATUS_FLOW,
+  superadmin: FRONT_OF_HOUSE_STATUS_FLOW,
   kitchen: [{ from: 'in_preparation', to: 'completed' }],
   bar: [{ from: 'in_preparation', to: 'completed' }],
 };
