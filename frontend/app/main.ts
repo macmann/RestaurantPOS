@@ -16,6 +16,27 @@ import type { ReceiptPayload, SplitLabel, TableOrderItem } from '../../backend/b
 
 const APP_NAME = 'SYM POS';
 
+interface SuperadminPrinterSettings {
+  enabled: boolean;
+  printerId: string;
+  displayName: string;
+}
+
+interface SuperadminOperationalSettings {
+  restaurantBillInfo: {
+    restaurantName: string;
+    address: string;
+    contact: string;
+    taxId?: string;
+    receiptFooter?: string;
+  };
+  printers: {
+    receipt: SuperadminPrinterSettings;
+    kitchen: SuperadminPrinterSettings;
+    bar: SuperadminPrinterSettings;
+  };
+}
+
 const rootElement = document.querySelector<HTMLDivElement>('#app');
 if (!rootElement) throw new Error('App root not found.');
 const root = rootElement;
@@ -206,7 +227,7 @@ function page(title: string, subtitle: string, actions: string[] = []): HTMLElem
   const grid = el('div', 'card-grid');
   for (const action of actions) {
     const card = el('article', 'card');
-    card.innerHTML = `<h3>${action}</h3><p>Connected through the shared API client and current session.</p>`;
+    card.innerHTML = `<h3>${action}</h3><p>Ready for day-to-day restaurant operations from one secure workspace.</p>`;
     grid.append(card);
   }
   section.append(header, grid);
@@ -220,6 +241,20 @@ function roleOptions(selectedRole?: string): string {
   return assignableRoles.map((role) => `<option value="${role}" ${role === selectedRole ? 'selected' : ''}>${role}</option>`).join('');
 }
 
+
+function printerStatusCard(label: string, printer: SuperadminPrinterSettings): string {
+  const status = printer.enabled ? 'Online' : 'Paused';
+  const statusClass = printer.enabled ? 'ready' : 'warning';
+  return `
+    <div class="superadmin-printer-card">
+      <span class="badge ${statusClass}">${status}</span>
+      <strong>${label}</strong>
+      <span>${printer.displayName}</span>
+      <small>${printer.printerId}</small>
+    </div>
+  `;
+}
+
 function rolesFor(user: AuthenticatedUser): string {
   return Array.isArray(user.role) ? user.role.join(',') : user.role;
 }
@@ -230,17 +265,28 @@ function canCloseBills(): boolean {
 
 async function renderStaffSettings(isSuperadminPanel = false): Promise<HTMLElement> {
   const section = page(
-    isSuperadminPanel ? 'Superadmin command center' : 'Staff & settings administration',
+    isSuperadminPanel ? 'Super admin workspace' : 'Staff & settings administration',
     isSuperadminPanel
-      ? 'Role-based launchpad for users, bill identity, printer routing, menus, tables, reports, and audit controls.'
+      ? 'A polished control center for team access, restaurant identity, printers, menus, tables, reporting, and audit readiness.'
       : 'Create staff profiles, rotate passwords, assign roles, and deactivate access immediately.',
-    isSuperadminPanel ? ['Role-specific POS views', 'Bill identity', 'Printer routing', 'Operations configuration'] : ['Staff users', 'Role assignment', 'Activation', 'Branch settings'],
+    isSuperadminPanel ? ['Team access', 'Restaurant profile', 'Device readiness', 'Quick controls'] : ['Staff users', 'Role assignment', 'Activation', 'Branch settings'],
   );
-  const panel = el('section', 'admin-panel');
-  const [users, settings] = await Promise.all([apiClient.listUsers(), apiClient.getSettings()]);
+  if (isSuperadminPanel) section.classList.add('superadmin-page');
+
+  const panel = el('section', isSuperadminPanel ? 'admin-panel superadmin-panel' : 'admin-panel');
+  const [users, settingsResponse] = await Promise.all([apiClient.listUsers(), apiClient.getSettings()]);
+  const settings = settingsResponse as SuperadminOperationalSettings;
+  const activeUsers = users.filter((user) => user.status === 'active').length;
+  const inactiveUsers = users.length - activeUsers;
+  const roleCount = new Set(users.flatMap((user) => Array.isArray(user.role) ? user.role : [user.role])).size;
+
   panel.innerHTML = `
-    <article class="card admin-card">
-      <h3>${isSuperadminPanel ? 'Create role-based account' : 'Create staff profile'}</h3>
+    <article class="card admin-card staff-create-card">
+      <div>
+        <p class="eyebrow">People</p>
+        <h3>${isSuperadminPanel ? 'Invite a staff member' : 'Create staff profile'}</h3>
+        ${isSuperadminPanel ? '<p class="muted">Set the right role on day one so each teammate lands in the correct POS workflow.</p>' : ''}
+      </div>
       <form class="staff-form">
         <label>User ID<input name="id" placeholder="server-01" /></label>
         <label>Username<input name="username" required /></label>
@@ -252,10 +298,32 @@ async function renderStaffSettings(isSuperadminPanel = false): Promise<HTMLEleme
         <p class="form-error" hidden></p>
       </form>
     </article>
-    <article class="card admin-card">
-      <h3>Runtime settings</h3>
-      <pre class="json-preview compact">${JSON.stringify(settings, null, 2)}</pre>
-    </article>
+    ${isSuperadminPanel ? `
+      <article class="card admin-card superadmin-overview-card">
+        <div>
+          <p class="eyebrow">Today's control room</p>
+          <h3>${settings.restaurantBillInfo.restaurantName}</h3>
+          <p>${settings.restaurantBillInfo.address}</p>
+          <p>${settings.restaurantBillInfo.contact}</p>
+        </div>
+        <div class="superadmin-metrics">
+          <div><strong>${users.length}</strong><span>Total staff</span></div>
+          <div><strong>${activeUsers}</strong><span>Active users</span></div>
+          <div><strong>${inactiveUsers}</strong><span>Inactive users</span></div>
+          <div><strong>${roleCount}</strong><span>Roles in use</span></div>
+        </div>
+        <div class="superadmin-printers">
+          ${printerStatusCard('Receipts', settings.printers.receipt)}
+          ${printerStatusCard('Kitchen', settings.printers.kitchen)}
+          ${printerStatusCard('Bar', settings.printers.bar)}
+        </div>
+      </article>
+    ` : `
+      <article class="card admin-card">
+        <h3>Runtime settings</h3>
+        <pre class="json-preview compact">${JSON.stringify(settings, null, 2)}</pre>
+      </article>
+    `}
   `;
 
   if (isSuperadminPanel) {
