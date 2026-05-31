@@ -54,9 +54,9 @@ button { min-height: var(--tap); touch-action: manipulation; }
 .login-card h1 { margin: 0 0 0.75rem; font-size: clamp(1.9rem, 8vw, 2.75rem); line-height: 1; letter-spacing: -0.06em; }
 .login-card p { color: var(--muted); line-height: 1.55; }
 .login-card label { display: grid; gap: 0.55rem; margin: 1.35rem 0; font-weight: 800; }
-.login-card input, .staff-form input, .staff-form select, .inline-staff-form input, .inline-staff-form select, .open-table-form input, .checkout-box select, .mobile-route-bar select { min-height: var(--tap); border: 1px solid var(--line); border-radius: 0.9rem; padding: 0.78rem 0.9rem; background: #fff; color: var(--ink); box-shadow: 0 1px 0 rgb(15 23 42 / 3%); }
-.login-card button, .secondary, .staff-form button, .inline-staff-form button, .open-table-form button, .checkout-box button, .ticket-actions button, .menu-admin-row button { border: 0; border-radius: 0.9rem; padding: 0.8rem 1rem; background: linear-gradient(135deg, var(--primary), var(--accent)); color: #fff; font-weight: 900; cursor: pointer; box-shadow: 0 12px 22px rgb(15 118 110 / 18%); transition: transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease; }
-.login-card button:hover, .secondary:hover, .staff-form button:hover, .inline-staff-form button:hover, .open-table-form button:hover, .checkout-box button:hover, .ticket-actions button:hover, .menu-admin-row button:hover { transform: translateY(-1px); box-shadow: 0 16px 26px rgb(37 99 235 / 20%); }
+.login-card input, .staff-form input, .staff-form select, .inline-staff-form input, .inline-staff-form select, .open-table-form input, .checkout-box select, .billing-draft select, .mobile-route-bar select { min-height: var(--tap); border: 1px solid var(--line); border-radius: 0.9rem; padding: 0.78rem 0.9rem; background: #fff; color: var(--ink); box-shadow: 0 1px 0 rgb(15 23 42 / 3%); }
+.login-card button, .secondary, .staff-form button, .inline-staff-form button, .open-table-form button, .checkout-box button, .billing-action, .bill-split-card button, .ticket-actions button, .menu-admin-row button { border: 0; border-radius: 0.9rem; padding: 0.8rem 1rem; background: linear-gradient(135deg, var(--primary), var(--accent)); color: #fff; font-weight: 900; cursor: pointer; box-shadow: 0 12px 22px rgb(15 118 110 / 18%); transition: transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease; }
+.login-card button:hover, .secondary:hover, .staff-form button:hover, .inline-staff-form button:hover, .open-table-form button:hover, .checkout-box button:hover, .billing-action:hover:not(:disabled), .bill-split-card button:hover:not(:disabled), .ticket-actions button:hover, .menu-admin-row button:hover { transform: translateY(-1px); box-shadow: 0 16px 26px rgb(37 99 235 / 20%); }
 .form-error { color: #b42318; font-weight: 800; }
 
 .app-shell { display: grid; grid-template-columns: minmax(15rem, 18.5rem) 1fr; min-height: 100vh; }
@@ -94,7 +94,7 @@ button { min-height: var(--tap); touch-action: manipulation; }
 .admin-card { display: grid; gap: 1rem; }
 .staff-form, .inline-staff-form { display: grid; gap: 0.75rem; }
 .staff-form { grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr)); align-items: end; }
-.staff-form label, .inline-staff-form label, .open-table-form label, .checkout-box label { display: grid; gap: 0.4rem; color: #334155; font-weight: 850; }
+.staff-form label, .inline-staff-form label, .open-table-form label, .checkout-box label, .billing-draft label { display: grid; gap: 0.4rem; color: #334155; font-weight: 850; }
 .staff-table { display: block; width: 100%; overflow-x: auto; border-collapse: collapse; border-radius: var(--radius-md); background: #fff; box-shadow: var(--shadow-sm); }
 .staff-table th, .staff-table td { padding: 0.95rem; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
 .staff-table th { background: var(--surface-tint); color: #334155; font-size: 0.76rem; text-transform: uppercase; letter-spacing: 0.08em; }
@@ -126,6 +126,31 @@ button { min-height: var(--tap); touch-action: manipulation; }
 .checkout-box { display: grid; gap: 0.85rem; border-radius: var(--radius-md); background: linear-gradient(180deg, #eff6ff, #f0fdfa); padding: 1rem; }
 .checkout-box div { display: flex; justify-content: space-between; gap: 1rem; }
 .checkout-box .pay-clean { background: var(--success); }
+
+.billing-workspace { grid-template-columns: minmax(18rem, 0.8fr) minmax(28rem, 1.6fr); }
+.order-entry-workspace .order-summary-box p { margin: 0; }
+.billing-table-grid .table-tile:disabled { cursor: not-allowed; opacity: 0.55; transform: none; }
+.billing-detail-panel { display: grid; gap: 1rem; }
+.billing-draft, .billing-summary, .bill-lines, .bill-splits, .billing-actions { display: grid; gap: 0.85rem; }
+.billing-draft { border-radius: var(--radius-md); background: linear-gradient(180deg, #eff6ff, #f8fbff); padding: 1rem; }
+.bill-total-card { display: grid; gap: 0.25rem; border-radius: var(--radius-md); padding: 1rem; background: linear-gradient(135deg, #0f766e, #2563eb); color: #fff; box-shadow: var(--shadow-sm); }
+.bill-total-card span, .bill-total-card small { color: rgb(255 255 255 / 82%); font-weight: 800; }
+.bill-total-card strong { font-size: clamp(1.75rem, 5vw, 2.65rem); line-height: 1; letter-spacing: -0.06em; }
+.bill-metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.7rem; }
+.bill-metrics div, .bill-line-row, .bill-split-card { border: 1px solid var(--line); border-radius: var(--radius-sm); background: #fff; padding: 0.8rem; }
+.bill-metrics span, .bill-line-row small, .bill-split-card p { color: var(--muted); }
+.bill-metrics strong { display: block; margin-top: 0.2rem; }
+.bill-lines h4, .bill-splits h4 { margin: 0.25rem 0 0; }
+.bill-line-row { display: flex; justify-content: space-between; gap: 1rem; align-items: center; }
+.bill-line-row small { display: block; margin-top: 0.18rem; }
+.bill-split-card { display: grid; gap: 0.65rem; border-left: 0.45rem solid var(--warning); }
+.bill-split-card.paid { border-left-color: var(--success); }
+.bill-split-card > div { display: flex; justify-content: space-between; gap: 1rem; align-items: center; }
+.bill-split-card p { margin: 0; }
+.bill-split-card button:disabled, .billing-action:disabled { cursor: not-allowed; opacity: 0.5; transform: none; }
+.billing-actions { grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); }
+.billing-actions .close-table { background: var(--success); }
+
 .menu-category { display: grid; gap: 0.75rem; margin-top: 1rem; }
 .menu-category h4 { margin: 0; color: #334155; }
 .menu-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr)); gap: 0.75rem; }
@@ -164,7 +189,7 @@ button { min-height: var(--tap); touch-action: manipulation; }
 .audit-card pre { max-height: 14rem; overflow: auto; border-radius: 0.9rem; background: #102a43; color: #f8fafc; padding: 0.85rem; }
 
 @media (max-width: 1200px) {
-  .pos-workspace { grid-template-columns: 1fr; }
+  .pos-workspace, .billing-workspace { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 900px) {
@@ -186,8 +211,9 @@ button { min-height: var(--tap); touch-action: manipulation; }
   .mobile-route-bar { grid-template-columns: 1fr; }
   .page-header h2 { font-size: clamp(2rem, 12vw, 2.8rem); }
   .card-grid, .table-grid, .menu-grid, .kds-board, .progress-lanes, .menu-admin-list, .report-grid { grid-template-columns: 1fr; }
-  .pos-panel-heading, .cart-row, .checkout-box div { align-items: stretch; }
+  .pos-panel-heading, .cart-row, .checkout-box div, .bill-line-row, .bill-split-card > div { align-items: stretch; }
   .cart-row { grid-template-columns: 1fr; }
+  .bill-metrics { grid-template-columns: 1fr; }
   .quantity-controls { justify-content: space-between; width: 100%; }
   .quantity-controls button { width: 3rem; height: 3rem; }
   .ticket-actions button, .menu-admin-row button, .staff-form button, .inline-staff-form button { width: 100%; }

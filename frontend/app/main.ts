@@ -10,7 +10,7 @@ import { loadAdminAuditViewer } from '../admin/audit-viewer';
 import { ApiClientError, apiClient } from '../api/client';
 import { loadCashierTableFloor } from '../cashier/table-floor';
 import type { OrderRecord, OrderStatus } from '../../backend/orders/repository';
-import type { SplitLabel, TableOrderItem } from '../../backend/billing/repository';
+import type { ReceiptPayload, SplitLabel, TableOrderItem } from '../../backend/billing/repository';
 
 const APP_NAME = 'SYM POS';
 
@@ -672,6 +672,294 @@ async function payAndCleanTable(tableSessionId: string): Promise<void> {
   render();
 }
 
+function linkedOrdersForSession(orders: OrderRecord[], tableSessionId: string): OrderRecord[] {
+  return orders.filter((order) => order.tableSessionId === tableSessionId && order.status !== 'cancelled');
+}
+
+function tableSubtotal(orders: OrderRecord[], tableSessionId: string): number {
+  return linkedOrdersForSession(orders, tableSessionId).reduce((sum, order) => sum + order.subtotal, 0);
+}
+
+async function advanceSessionOrdersForClose(tableSessionId: string): Promise<void> {
+  const orders = await apiClient.listOrders();
+  for (const order of linkedOrdersForSession(orders, tableSessionId).filter((row) => row.status !== 'delivered')) {
+    await advanceOrderThroughService(order);
+  }
+}
+
+async function createBillForSession(tableSessionId: string): Promise<void> {
+  if (!session) return;
+  const orders = await apiClient.listOrders();
+  const linkedOrders = linkedOrdersForSession(orders, tableSessionId);
+  if (!linkedOrders.length || !linkedOrders.some((order) => order.items.length)) throw new Error('Add menu items before preparing the bill.');
+  await apiClient.createBill({
+    tableSessionId,
+    itemsBySplit: orderItemsForBill(orders, tableSessionId, selectedSplitCount),
+    pricing: { taxMode: 'taxable', taxRate: 0 },
+  }, session.user.id);
+}
+
+async function renderOrderEntry(): Promise<HTMLElement> {
+  const section = page('Waiter order entry', 'Open tables, add guest items, and keep the active order moving without billing controls.');
+  section.classList.add('pos-page');
+
+  const status = el('p', 'pos-status');
+  status.hidden = true;
+  const workspace = el('div', 'pos-workspace order-entry-workspace');
+  section.append(status, workspace);
+
+  const [floor, menu, orders] = await Promise.all([
+    loadCashierTableFloor(session!.user.branchId),
+    apiClient.listMenu() as Promise<MenuCategoryForPos[]>,
+    apiClient.listOrders(),
+  ]);
+  if (!selectedTableId) selectedTableId = floor.tables.find((row) => row.status !== 'inactive')?.table.id;
+  const selected = floor.tables.find((row) => row.table.id === selectedTableId) ?? floor.tables[0];
+  const activeOrder = selected?.activeSession ? findOpenOrder(orders, selected.activeSession.id) : undefined;
+
+  const floorPanel = el('section', 'pos-panel table-panel');
+  floorPanel.innerHTML = `<div class="pos-panel-heading"><h3>Tables for ordering</h3><span>${floor.counts.available} available · ${floor.counts.occupied} occupied</span></div>`;
+  const tableGrid = el('div', 'table-grid');
+  for (const row of floor.tables) {
+    const button = el('button', `table-tile ${row.status} ${row.table.id === selected?.table.id ? 'selected' : ''}`);
+    button.type = 'button';
+    button.innerHTML = `<strong>${row.table.name}</strong><span>${row.status}</span><small>${row.activeSession ? `${row.activeSession.guestCount} guests` : `${row.table.capacity} seats`}</small>`;
+    button.addEventListener('click', () => {
+      selectedTableId = row.table.id;
+      render();
+    });
+    tableGrid.append(button);
+  }
+  floorPanel.append(tableGrid);
+
+  const orderPanel = el('section', 'pos-panel order-panel');
+  if (!selected) {
+    orderPanel.innerHTML = '<h3>No tables configured</h3><p>Starter data will be seeded at sign-in. Refresh or sign in again if this remains empty.</p>';
+  } else if (!selected.activeSession) {
+    orderPanel.innerHTML = `<h3>${selected.table.name}</h3><p class="muted">Available table. Open it to start a guest order.</p>`;
+    const openForm = el('form', 'open-table-form');
+    openForm.innerHTML = '<label>Guests<input name="guestCount" type="number" min="1" value="2" /></label><button type="submit">Open table for order</button>';
+    openForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const guestCount = Number(new FormData(openForm).get('guestCount') ?? 1);
+      try {
+        await apiClient.openTableSession(session!.user.id, selected.table.id, guestCount, session!.user.branchId);
+        render();
+      } catch (caught) {
+        status.hidden = false;
+        status.textContent = caught instanceof Error ? caught.message : 'Unable to open table.';
+      }
+    });
+    orderPanel.append(openForm);
+  } else {
+    orderPanel.innerHTML = `<div class="pos-panel-heading"><h3>${selected.table.name} active order</h3><span>${selected.activeSession.guestCount} guests · send items from menu</span></div>`;
+    const cart = el('div', 'cart-list');
+    if (!activeOrder?.items.length) cart.append(el('p', 'muted', 'Tap menu items to start this table order.'));
+    const orderStatus = activeOrder?.status.replace(/_/g, ' ') ?? 'new';
+    for (const item of activeOrder?.items ?? []) {
+      const row = el('div', 'cart-row');
+      row.innerHTML = `<div><strong>${item.name}</strong><small>${money(item.unitPrice)} each · ${orderStatus}</small></div><div class="quantity-controls"><button type="button" data-delta="-1">−</button><span>${item.quantity}</span><button type="button" data-delta="1">+</button></div><strong>${money(item.lineTotal)}</strong>`;
+      row.querySelectorAll<HTMLButtonElement>('button').forEach((button) => button.addEventListener('click', () => {
+        void changeOrderItemQuantity(activeOrder!, item.id, item.quantity + Number(button.dataset.delta));
+      }));
+      cart.append(row);
+    }
+    const orderSummary = el('div', 'checkout-box order-summary-box');
+    orderSummary.innerHTML = `
+      <div><span>Order subtotal</span><strong>${money(activeOrder?.subtotal ?? 0)}</strong></div>
+      <p class="muted">Billing, split payments, and table closing are handled from the Billing page.</p>
+    `;
+    orderPanel.append(cart, orderSummary);
+  }
+
+  const menuPanel = el('section', 'pos-panel menu-panel');
+  menuPanel.innerHTML = '<div class="pos-panel-heading"><h3>Menu entry</h3><span>Tap to add to order</span></div>';
+  for (const category of menu) {
+    const group = el('div', 'menu-category');
+    group.append(el('h4', '', category.name));
+    const itemGrid = el('div', 'menu-grid');
+    for (const item of category.items.filter((row) => row.isAvailable !== false)) {
+      const button = el('button', 'menu-item-card');
+      button.type = 'button';
+      button.innerHTML = `<strong>${item.name}</strong><span>${money(item.price)}</span><small>${item.prepStation ?? 'service'}</small>`;
+      button.disabled = !selected?.activeSession;
+      button.addEventListener('click', () => void addMenuItemToOrder(selected!.activeSession!.id, item.id, activeOrder));
+      itemGrid.append(button);
+    }
+    group.append(itemGrid);
+    menuPanel.append(group);
+  }
+
+  workspace.append(floorPanel, orderPanel, menuPanel);
+  return section;
+}
+
+async function renderBillingDesk(): Promise<HTMLElement> {
+  const section = page('Billing desk', 'Review the full bill, split checks, collect payment, and close a paid table.');
+  section.classList.add('pos-page', 'billing-page');
+
+  const status = el('p', 'pos-status');
+  status.hidden = true;
+  const workspace = el('div', 'pos-workspace billing-workspace');
+  section.append(status, workspace);
+
+  const [floor, orders] = await Promise.all([
+    loadCashierTableFloor(session!.user.branchId),
+    apiClient.listOrders(),
+  ]);
+  if (!selectedTableId || !floor.tables.some((row) => row.table.id === selectedTableId)) selectedTableId = floor.tables.find((row) => row.activeSession)?.table.id ?? floor.tables[0]?.table.id;
+  const selected = floor.tables.find((row) => row.table.id === selectedTableId) ?? floor.tables[0];
+  const selectedSessionId = selected?.activeSession?.id;
+
+  const tablePanel = el('section', 'pos-panel table-panel billing-table-panel');
+  tablePanel.innerHTML = `<div class="pos-panel-heading"><h3>Open checks</h3><span>${floor.counts.occupied} occupied tables</span></div>`;
+  const tableGrid = el('div', 'table-grid billing-table-grid');
+  for (const row of floor.tables) {
+    const button = el('button', `table-tile ${row.status} ${row.table.id === selected?.table.id ? 'selected' : ''}`);
+    button.type = 'button';
+    button.innerHTML = `<strong>${row.table.name}</strong><span>${row.status}</span><small>${row.activeSession ? `${money(tableSubtotal(orders, row.activeSession.id))} · ${row.activeSession.guestCount} guests` : 'No open check'}</small>`;
+    button.disabled = !row.activeSession;
+    button.addEventListener('click', () => {
+      selectedTableId = row.table.id;
+      render();
+    });
+    tableGrid.append(button);
+  }
+  tablePanel.append(tableGrid);
+
+  const billPanel = el('section', 'pos-panel billing-detail-panel');
+  if (!selected || !selectedSessionId) {
+    billPanel.innerHTML = '<h3>No active bill selected</h3><p class="muted">Choose an occupied table to prepare or collect a bill.</p>';
+    workspace.append(tablePanel, billPanel);
+    return section;
+  }
+
+  const linkedOrders = linkedOrdersForSession(orders, selectedSessionId);
+  const itemCount = linkedOrders.reduce((sum, order) => sum + order.items.reduce((itemSum, item) => itemSum + item.quantity, 0), 0);
+  let receipt: ReceiptPayload | undefined;
+  try {
+    receipt = await apiClient.getReceipt(selectedSessionId);
+  } catch (caught) {
+    if (!(caught instanceof Error) || !/not found|No bill/i.test(caught.message)) {
+      status.hidden = false;
+      status.textContent = caught instanceof Error ? caught.message : 'Unable to load bill details.';
+    }
+  }
+
+  billPanel.innerHTML = `<div class="pos-panel-heading"><h3>${selected.table.name} bill</h3><span>${selected.activeSession!.guestCount} guests · ${itemCount} items</span></div>`;
+
+  if (!linkedOrders.length || !itemCount) {
+    billPanel.append(emptyState('No order items are ready for billing. Add items from Waiter order entry first.'));
+  } else if (!receipt) {
+    const draft = el('div', 'billing-draft');
+    draft.innerHTML = `
+      <div class="bill-total-card"><span>Current order subtotal</span><strong>${money(tableSubtotal(orders, selectedSessionId))}</strong><small>Prepare a bill to lock the current items into cashier review.</small></div>
+      <label>Split bill before preparing
+        <select name="splitCount">
+          <option value="1" ${selectedSplitCount === 1 ? 'selected' : ''}>No split</option>
+          <option value="2" ${selectedSplitCount === 2 ? 'selected' : ''}>Split A / B</option>
+          <option value="3" ${selectedSplitCount === 3 ? 'selected' : ''}>Split A / B / C</option>
+        </select>
+      </label>
+      <button type="button" class="billing-action">Prepare bill for payment</button>
+    `;
+    draft.querySelector<HTMLSelectElement>('select')?.addEventListener('change', (event) => {
+      selectedSplitCount = Number((event.currentTarget as HTMLSelectElement).value);
+      render();
+    });
+    draft.querySelector<HTMLButtonElement>('.billing-action')?.addEventListener('click', async () => {
+      try {
+        await createBillForSession(selectedSessionId);
+        render();
+      } catch (caught) {
+        status.hidden = false;
+        status.textContent = caught instanceof Error ? caught.message : 'Unable to prepare bill.';
+      }
+    });
+    billPanel.append(draft);
+  } else {
+    const summary = el('div', 'billing-summary');
+    summary.innerHTML = `
+      <div class="bill-total-card"><span>Total due</span><strong>${money(receipt.calculationBreakdown.totalDue)}</strong><small>Paid ${money(receipt.totalPaid)} · Balance ${money(receipt.balanceDue)}</small></div>
+      <div class="bill-metrics">
+        <div><span>Subtotal</span><strong>${money(receipt.calculationBreakdown.subtotal)}</strong></div>
+        <div><span>Discount</span><strong>${money(receipt.calculationBreakdown.discounts.total)}</strong></div>
+        <div><span>Tax</span><strong>${money(receipt.calculationBreakdown.taxTotal)}</strong></div>
+      </div>
+    `;
+    billPanel.append(summary);
+
+    const lines = el('div', 'bill-lines');
+    lines.append(el('h4', '', 'Bill details'));
+    for (const line of receipt.calculationBreakdown.lines) {
+      const row = el('div', 'bill-line-row');
+      row.innerHTML = `<div><strong>${line.quantity}× ${line.name}</strong><small>${money(line.unitPrice)} each${line.discounts.itemLevel || line.discounts.combo || line.discounts.happyHour ? ` · discounts ${money(line.discounts.itemLevel + line.discounts.combo + line.discounts.happyHour)}` : ''}</small></div><strong>${money(line.lineTotal)}</strong>`;
+      lines.append(row);
+    }
+    billPanel.append(lines);
+
+    const splits = el('div', 'bill-splits');
+    splits.append(el('h4', '', 'Split payments'));
+    for (const split of receipt.splits.filter((row) => row.lines.length || row.calculationBreakdown.totalDue > 0)) {
+      const paid = split.payments.reduce((sum, payment) => sum + payment.amount, 0);
+      const balance = Math.round((split.calculationBreakdown.totalDue - paid) * 100) / 100;
+      const card = el('article', `bill-split-card ${balance <= 0 ? 'paid' : 'open'}`);
+      card.innerHTML = `
+        <div><strong>Split ${split.label}</strong>${badge(balance <= 0 ? 'paid' : 'open', balance <= 0 ? 'ready' : 'warning').outerHTML}</div>
+        <p>${split.lines.length} lines · Total ${money(split.calculationBreakdown.totalDue)} · Paid ${money(paid)} · Balance ${money(Math.max(balance, 0))}</p>
+        <button type="button" ${balance <= 0 ? 'disabled' : ''}>Take cash payment</button>
+      `;
+      card.querySelector<HTMLButtonElement>('button')?.addEventListener('click', async () => {
+        try {
+          await apiClient.recordSplitPayment({
+            tableSessionId: selectedSessionId,
+            splitLabel: split.label,
+            amount: Math.max(balance, 0),
+            method: 'cash',
+            createDebtForUnpaidBalance: false,
+          }, session!.user.id, `billing-paid-${selectedSessionId}-${split.label}-${Date.now()}`);
+          render();
+        } catch (caught) {
+          status.hidden = false;
+          status.textContent = caught instanceof Error ? caught.message : 'Unable to record payment.';
+        }
+      });
+      splits.append(card);
+    }
+    billPanel.append(splits);
+
+    const billActions = el('div', 'billing-actions');
+    billActions.innerHTML = `
+      <button type="button" class="secondary tax-toggle">${receipt.calculationBreakdown.taxMode === 'taxable' ? 'Mark tax exempt' : 'Enable tax'}</button>
+      <button type="button" class="billing-action close-table" ${receipt.balanceDue > 0 ? 'disabled' : ''}>Close paid table</button>
+    `;
+    billActions.querySelector<HTMLButtonElement>('.tax-toggle')?.addEventListener('click', async () => {
+      try {
+        await apiClient.setBillTaxMode({ tableSessionId: selectedSessionId, taxMode: receipt!.calculationBreakdown.taxMode === 'taxable' ? 'tax_exempt' : 'taxable', taxRate: 0 }, session!.user.id);
+        render();
+      } catch (caught) {
+        status.hidden = false;
+        status.textContent = caught instanceof Error ? caught.message : 'Unable to update tax mode.';
+      }
+    });
+    billActions.querySelector<HTMLButtonElement>('.close-table')?.addEventListener('click', async () => {
+      try {
+        await advanceSessionOrdersForClose(selectedSessionId);
+        await apiClient.closeTableSession(session!.user.id, selectedSessionId);
+        selectedTableId = undefined;
+        render();
+      } catch (caught) {
+        status.hidden = false;
+        status.textContent = caught instanceof Error ? caught.message : 'Unable to close table.';
+      }
+    });
+    billPanel.append(billActions);
+  }
+
+  workspace.append(tablePanel, billPanel);
+  return section;
+}
+
 async function renderRestaurantPos(): Promise<HTMLElement> {
   const section = page(APP_NAME, 'Select a table, enter menu items, split a bill, mark paid, and clean the table for the next guest.');
   section.classList.add('pos-page');
@@ -793,9 +1081,13 @@ async function renderRoute(): Promise<void> {
 
   switch (current.path) {
     case '#/tables':
-    case '#/orders':
-    case '#/billing':
       content = await renderRestaurantPos();
+      break;
+    case '#/orders':
+      content = await renderOrderEntry();
+      break;
+    case '#/billing':
+      content = await renderBillingDesk();
       break;
     case '#/kitchen':
       content = await renderKdsStation('kitchen');
