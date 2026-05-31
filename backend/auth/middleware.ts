@@ -79,3 +79,19 @@ export function authorize(action: Action) {
     next();
   };
 }
+
+export function authorizeAny(...actions: Action[]) {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    if (!req.user) {
+      res.status(401).json({ error: 'Authentication required.' });
+      return;
+    }
+
+    if (!actions.some((action) => can(req.user!, action))) {
+      res.status(403).json({ error: `Missing one of permissions: ${actions.join(', ')}` });
+      return;
+    }
+
+    next();
+  };
+}

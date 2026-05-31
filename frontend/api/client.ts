@@ -23,6 +23,8 @@ type InventoryDeductionPolicy = Awaited<ReturnType<typeof InventoryAdminApi.getD
 type AuditSearchResult = Awaited<ReturnType<typeof AdminAuditApi.search>>;
 type InventoryUsageReport = Awaited<ReturnType<typeof import('../../backend/reports/controller').ReportsApi.inventoryUsage>>;
 type FinancialSummaryReport = Awaited<ReturnType<typeof import('../../backend/reports/controller').ReportsApi.financialSummary>>;
+type SalesReport = Awaited<ReturnType<typeof import('../../backend/reports/controller').ReportsApi.sales>>;
+type ReportFilters = import('../../backend/reports/service').ReportFilters;
 
 declare global {
   // Optional deploy-time override, for example when the API is hosted on another origin.
@@ -588,8 +590,8 @@ export class RestaurantApiClient {
     return this.request('/api/settings', { method: 'PUT', body: input, operationKind: 'idempotent_write' });
   }
 
-  getSalesReport(period: 'day' | 'week' | 'month') {
-    return this.request(`/api/reports/sales/${period}`);
+  getSalesReport(period: 'day' | 'week' | 'month', filters: ReportFilters = {}): Promise<SalesReport> {
+    return this.request<SalesReport>(`/api/reports/sales/${period}${queryString(filters as Record<string, unknown>)}`);
   }
 
   getInventoryUsageReport(): Promise<InventoryUsageReport> {

@@ -274,3 +274,12 @@ button { min-height: var(--tap); touch-action: manipulation; }
 .checkbox-row { display: flex !important; grid-template-columns: auto 1fr; align-items: center; gap: 0.5rem; font-weight: 900; color: var(--ink) !important; }
 .checkbox-row input { width: 1.2rem; height: 1.2rem; }
 .receipt-preview-card { position: sticky; top: 1rem; }
+
+.sales-history-panel { gap: 1rem; }
+.sales-history-tabs { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.sales-history-tabs button { border: 1px solid var(--line); background: #fff; color: var(--muted); box-shadow: none; }
+.sales-history-tabs button.active { border-color: rgb(15 118 110 / 35%); background: var(--primary); color: #fff; }
+.sales-history-body { display: grid; gap: 1rem; }
+.sales-summary-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr)); }
+.sales-history-wide { grid-column: 1 / -1; }
+.sales-history-wide ol { margin: 0; padding-left: 1.25rem; display: grid; gap: 0.55rem; }

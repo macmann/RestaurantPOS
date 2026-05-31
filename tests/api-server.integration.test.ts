@@ -100,6 +100,13 @@ async function runApiIntegration(): Promise<void> {
     assert(close.status === 200, `Cashier close paid table should return 200, got ${close.status}.`);
     assert(close.body.data.status === 'closed', 'Cashier close paid table should mark the table session closed.');
 
+    const cashierSales = await apiRequest<{ data: { summary: { orderCount: number; revenue: number } } }>(server.baseUrl, `/api/reports/sales/day?branchId=${branchId}`, { token: cashier.token });
+    assert(cashierSales.status === 200, `Cashier sales history should return 200, got ${cashierSales.status}.`);
+    assert(cashierSales.body.data.summary.orderCount >= 1, 'Cashier sales history should include completed sales.');
+
+    const cashierFinancial = await apiRequest(server.baseUrl, '/api/reports/financial-summary', { token: cashier.token });
+    assert(cashierFinancial.status === 403, `Cashier financial report should remain restricted, got ${cashierFinancial.status}.`);
+
     const audit = await apiRequest<{ data: { events: Array<{ action: string }> } }>(server.baseUrl, '/api/audit/events?query=cash_drawer_opened&limit=20', { token: manager.token });
     assert(audit.status === 200, `Admin audit search should return 200, got ${audit.status}.`);
     assert(audit.body.data.events.some((event) => event.action === 'cash_drawer_opened'), 'Admin audit should expose the cash drawer payment event.');

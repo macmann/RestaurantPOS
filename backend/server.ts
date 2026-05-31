@@ -4,7 +4,7 @@ declare const module: unknown;
 import express, { type NextFunction, type Request, type Response, type Router } from 'express';
 import { createReadStream, existsSync, statSync } from 'node:fs';
 import { extname, join, normalize } from 'node:path';
-import { loadUser, requireActiveUser, requireAuth, authorize } from './auth/middleware';
+import { loadUser, requireActiveUser, requireAuth, authorize, authorizeAny } from './auth/middleware';
 import { Actions, RolePermissions } from './auth/permissions';
 import { getCurrentBranchId, getRuntimeSettings } from './config/branch';
 import { getPosOperationalSettings, updatePosOperationalSettings } from './config/posSettings';
@@ -310,13 +310,13 @@ function buildInventoryRouter(): Router {
 
 function buildReportsRouter(): Router {
   const router = express.Router();
-  router.use(authorize(Actions.ViewReports));
-  router.get('/sales/:period', send((req) => ReportsApi.sales(requireUser(req), stringParam(req, 'period') as any, queryObject(req) as any)));
-  router.get('/sales/day', send((req) => ReportsApi.salesByDay(requireUser(req), queryObject(req) as any)));
-  router.get('/sales/week', send((req) => ReportsApi.salesByWeek(requireUser(req), queryObject(req) as any)));
-  router.get('/sales/month', send((req) => ReportsApi.salesByMonth(requireUser(req), queryObject(req) as any)));
-  router.get('/inventory-usage', send((req) => ReportsApi.inventoryUsage(requireUser(req), queryObject(req) as any)));
-  router.get('/financial-summary', send((req) => ReportsApi.financialSummary(requireUser(req), queryObject(req) as any)));
+  const viewSalesHistory = authorizeAny(Actions.ViewReports, Actions.ViewSalesHistory);
+  router.get('/sales/:period', viewSalesHistory, send((req) => ReportsApi.sales(requireUser(req), stringParam(req, 'period') as any, queryObject(req) as any)));
+  router.get('/sales/day', viewSalesHistory, send((req) => ReportsApi.salesByDay(requireUser(req), queryObject(req) as any)));
+  router.get('/sales/week', viewSalesHistory, send((req) => ReportsApi.salesByWeek(requireUser(req), queryObject(req) as any)));
+  router.get('/sales/month', viewSalesHistory, send((req) => ReportsApi.salesByMonth(requireUser(req), queryObject(req) as any)));
+  router.get('/inventory-usage', authorize(Actions.ViewReports), send((req) => ReportsApi.inventoryUsage(requireUser(req), queryObject(req) as any)));
+  router.get('/financial-summary', authorize(Actions.ViewReports), send((req) => ReportsApi.financialSummary(requireUser(req), queryObject(req) as any)));
   return router;
 }
 

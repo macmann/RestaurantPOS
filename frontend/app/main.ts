@@ -58,8 +58,12 @@ function navigate(path: string): void {
   else window.location.hash = path;
 }
 
+function routePath(value = route): string {
+  return value.split('?')[0];
+}
+
 function activeRoute(): AppRoute {
-  return appRoutes.find((item) => item.path === route) ?? defaultRoute(session?.permissions ?? []);
+  return appRoutes.find((item) => item.path === routePath()) ?? defaultRoute(session?.permissions ?? []);
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, text?: string): HTMLElementTagNameMap[K] {
@@ -571,6 +575,140 @@ async function renderBillSettings(): Promise<HTMLElement> {
   const preview = el('article', 'card admin-card receipt-preview-card');
   preview.innerHTML = `<h3>Receipt preview header</h3><p><strong>${info.restaurantName ?? 'Restaurant name'}</strong><br>${info.address ?? 'Address'}<br>${info.contact ?? 'Contact'}</p><small>${info.receiptFooter ?? ''}</small>`;
   panel.append(form, preview);
+  section.append(panel);
+  return section;
+}
+
+
+type SalesHistoryPeriod = 'day' | 'week' | 'month';
+type SalesHistoryTab = 'list' | 'summary';
+
+function isoDateOnly(date = new Date()): string {
+  return date.toISOString().slice(0, 10);
+}
+
+function dateRangeForPreset(preset: SalesHistoryPeriod | 'range'): { dateFrom?: string; dateTo?: string } {
+  const now = new Date();
+  const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 23, 59, 59, 999));
+  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0));
+  if (preset === 'week') start.setUTCDate(start.getUTCDate() - 6);
+  if (preset === 'month') start.setUTCMonth(start.getUTCMonth() - 1);
+  return preset === 'range' ? {} : { dateFrom: start.toISOString(), dateTo: end.toISOString() };
+}
+
+function endOfDateInput(value: string): string | undefined {
+  if (!value) return undefined;
+  return new Date(`${value}T23:59:59.999Z`).toISOString();
+}
+
+function startOfDateInput(value: string): string | undefined {
+  if (!value) return undefined;
+  return new Date(`${value}T00:00:00.000Z`).toISOString();
+}
+
+async function renderSalesHistory(): Promise<HTMLElement> {
+  const params = new URLSearchParams(route.split('?')[1] ?? '');
+  const period = (params.get('period') === 'week' || params.get('period') === 'month' ? params.get('period') : 'day') as SalesHistoryPeriod;
+  const activeTab = params.get('tab') === 'summary' ? 'summary' : 'list';
+  const preset = (params.get('preset') === 'week' || params.get('preset') === 'month' || params.get('preset') === 'range' ? params.get('preset') : 'day') as SalesHistoryPeriod | 'range';
+  const presetRange = dateRangeForPreset(preset);
+  const dateFromInput = params.get('dateFrom') ?? (preset !== 'range' && presetRange.dateFrom ? presetRange.dateFrom.slice(0, 10) : isoDateOnly());
+  const dateToInput = params.get('dateTo') ?? (preset !== 'range' && presetRange.dateTo ? presetRange.dateTo.slice(0, 10) : isoDateOnly());
+  const dateFrom = startOfDateInput(dateFromInput) ?? presetRange.dateFrom;
+  const dateTo = endOfDateInput(dateToInput) ?? presetRange.dateTo;
+
+  const section = page('Sales history', 'Filter completed sales by day, week, month, or a custom date range. Cashiers and admins can review the list view and the summary tab.');
+  const panel = el('section', 'admin-panel sales-history-panel');
+  const form = el('form', 'staff-form sales-history-filter');
+  form.innerHTML = `
+    <label>Quick filter
+      <select name="preset">
+        <option value="day" ${preset === 'day' ? 'selected' : ''}>Today</option>
+        <option value="week" ${preset === 'week' ? 'selected' : ''}>Last 7 days</option>
+        <option value="month" ${preset === 'month' ? 'selected' : ''}>Last month</option>
+        <option value="range" ${preset === 'range' ? 'selected' : ''}>Custom range</option>
+      </select>
+    </label>
+    <label>Group by
+      <select name="period">
+        <option value="day" ${period === 'day' ? 'selected' : ''}>Day</option>
+        <option value="week" ${period === 'week' ? 'selected' : ''}>Week</option>
+        <option value="month" ${period === 'month' ? 'selected' : ''}>Month</option>
+      </select>
+    </label>
+    <label>From<input name="dateFrom" type="date" value="${dateFromInput}" /></label>
+    <label>To<input name="dateTo" type="date" value="${dateToInput}" /></label>
+    <button type="submit">Apply filter</button>
+    <p class="form-error" hidden></p>
+  `;
+
+  const tabs = el('div', 'sales-history-tabs');
+  tabs.innerHTML = `
+    <button type="button" class="${activeTab === 'list' ? 'active' : ''}" data-tab="list">List view</button>
+    <button type="button" class="${activeTab === 'summary' ? 'active' : ''}" data-tab="summary">Summary</button>
+  `;
+
+  const body = el('div', 'sales-history-body');
+  try {
+    const report = await apiClient.getSalesReport(period, { dateFrom, dateTo, branchId: session?.user.branchId });
+    const rows = report.rows ?? [];
+    const itemRows = rows.flatMap((row: any) => (row.items ?? []).map((item: any) => ({ ...item, periodLabel: row.periodLabel })));
+
+    if (activeTab === 'summary') {
+      const topItems = [...itemRows].sort((a, b) => (b.grossSales ?? 0) - (a.grossSales ?? 0)).slice(0, 5);
+      const summary = el('div', 'report-grid sales-summary-grid');
+      summary.innerHTML = `
+        <article class="card report-card"><h3>Total revenue</h3><p><strong>${money(report.summary?.revenue ?? 0)}</strong></p></article>
+        <article class="card report-card"><h3>Orders</h3><p><strong>${report.summary?.orderCount ?? 0}</strong> orders</p></article>
+        <article class="card report-card"><h3>Quantity sold</h3><p><strong>${report.summary?.quantitySold ?? 0}</strong> items</p></article>
+      `;
+      const topCard = el('article', 'card report-card sales-history-wide');
+      topCard.innerHTML = `<h3>Top items</h3>${topItems.length ? `<ol>${topItems.map((item) => `<li><strong>${item.itemName}</strong> — ${item.quantitySold} sold · ${money(item.grossSales)}</li>`).join('')}</ol>` : '<p class="muted">No sales in this range.</p>'}`;
+      summary.append(topCard);
+      body.append(summary);
+    } else {
+      const table = el('table', 'staff-table sales-history-table');
+      table.innerHTML = '<thead><tr><th>Period</th><th>Item</th><th>Quantity</th><th>Gross sales</th><th>Orders</th></tr></thead>';
+      const tbody = el('tbody');
+      if (!itemRows.length) {
+        const row = el('tr');
+        row.innerHTML = '<td colspan="5">No sales found for this filter.</td>';
+        tbody.append(row);
+      }
+      for (const item of itemRows) {
+        const row = el('tr');
+        row.innerHTML = `<td>${item.periodLabel}</td><td><strong>${item.itemName}</strong></td><td>${item.quantitySold}</td><td>${money(item.grossSales)}</td><td>${(item.orderIds ?? []).length}</td>`;
+        tbody.append(row);
+      }
+      table.append(tbody);
+      body.append(table);
+    }
+  } catch (caught) {
+    body.append(el('p', 'pos-status', caught instanceof Error ? caught.message : 'Unable to load sales history.'));
+  }
+
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const data = new FormData(form);
+    const next = new URLSearchParams();
+    next.set('preset', String(data.get('preset') ?? 'day'));
+    next.set('period', String(data.get('period') ?? 'day'));
+    next.set('tab', activeTab);
+    next.set('dateFrom', String(data.get('dateFrom') ?? ''));
+    next.set('dateTo', String(data.get('dateTo') ?? ''));
+    navigate(`#/sales-history?${next.toString()}`);
+  });
+
+  tabs.querySelectorAll<HTMLButtonElement>('button').forEach((button) => button.addEventListener('click', () => {
+    params.set('tab', button.dataset.tab as SalesHistoryTab);
+    if (!params.get('preset')) params.set('preset', preset);
+    if (!params.get('period')) params.set('period', period);
+    if (!params.get('dateFrom')) params.set('dateFrom', dateFromInput);
+    if (!params.get('dateTo')) params.set('dateTo', dateToInput);
+    navigate(`#/sales-history?${params.toString()}`);
+  }));
+
+  panel.append(form, tabs, body);
   section.append(panel);
   return section;
 }
@@ -1626,6 +1764,9 @@ async function renderRoute(): Promise<void> {
       break;
     case '#/billing':
       content = await renderBillingDesk();
+      break;
+    case '#/sales-history':
+      content = await renderSalesHistory();
       break;
     case '#/kitchen':
       content = await renderKdsStation('kitchen');
