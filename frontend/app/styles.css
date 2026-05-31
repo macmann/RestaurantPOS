@@ -263,3 +263,14 @@ button { min-height: var(--tap); touch-action: manipulation; }
   .quantity-controls button { width: 3rem; height: 3rem; }
   .ticket-actions button, .menu-admin-row button, .staff-form button, .inline-staff-form button { width: 100%; }
 }
+
+.admin-launchpad { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr)); gap: 0.85rem; margin: 1rem 0; }
+.admin-launchpad button { border: 0; border-radius: var(--radius-md); padding: 1rem; background: linear-gradient(135deg, var(--primary), var(--accent)); color: #fff; font-weight: 950; box-shadow: var(--shadow-sm); cursor: pointer; }
+.bill-settings-panel { grid-template-columns: minmax(min(100%, 34rem), 1.3fr) minmax(min(100%, 18rem), 0.7fr); align-items: start; }
+.bill-settings-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr)); gap: 1rem; }
+.bill-settings-form > button, .bill-settings-form > .form-error { grid-column: 1 / -1; }
+.settings-card { display: grid; gap: 0.75rem; }
+.settings-card textarea { min-height: 5rem; resize: vertical; }
+.checkbox-row { display: flex !important; grid-template-columns: auto 1fr; align-items: center; gap: 0.5rem; font-weight: 900; color: var(--ink) !important; }
+.checkbox-row input { width: 1.2rem; height: 1.2rem; }
+.receipt-preview-card { position: sticky; top: 1rem; }

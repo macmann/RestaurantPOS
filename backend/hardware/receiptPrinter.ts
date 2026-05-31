@@ -43,6 +43,10 @@ function renderSplit(payload: ReceiptPayload, split: ReceiptPayload['splits'][nu
 
 export function renderReceiptPayload(payload: ReceiptPayload): string {
   return [
+    payload.restaurant.restaurantName,
+    payload.restaurant.address,
+    payload.restaurant.contact,
+    payload.restaurant.taxId ? `Tax ID: ${payload.restaurant.taxId}` : '',
     `${payload.labels.receipt} ${payload.receiptId}`,
     `${payload.labels.table_session}: ${payload.tableSessionId}`,
     `Locale: ${payload.locale}`,
@@ -51,7 +55,8 @@ export function renderReceiptPayload(payload: ReceiptPayload): string {
     ...payload.splits.flatMap((split) => renderSplit(payload, split)),
     `${payload.labels.total_paid}: ${money(payload.totalPaid)}`,
     `${payload.labels.balance_due}: ${money(payload.balanceDue)}`,
-  ].join('\n');
+    payload.restaurant.receiptFooter ?? '',
+  ].filter(Boolean).join('\n');
 }
 
 export class SimulatorReceiptPrinterAdapter implements ReceiptPrinterAdapter {

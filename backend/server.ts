@@ -7,6 +7,8 @@ import { extname, join, normalize } from 'node:path';
 import { loadUser, requireActiveUser, requireAuth, authorize } from './auth/middleware';
 import { Actions, RolePermissions } from './auth/permissions';
 import { getCurrentBranchId, getRuntimeSettings } from './config/branch';
+import { getPosOperationalSettings, updatePosOperationalSettings } from './config/posSettings';
+import { getOrderPrinterAdapter } from './hardware/orderPrinter';
 import { listUsers } from './users/repository';
 import { ensureDefaultSuperadmin } from './users/bootstrap';
 import { activateUser, createStaffProfile, deactivateUser, updateStaffProfile } from './users/service';
@@ -22,6 +24,7 @@ import {
   voidBill,
   getBillCalculationBreakdown,
   getPrintedReceiptPayload,
+  printBillReceipt,
   recordSplitPayment,
   settleDebt,
 } from './billing/service';
@@ -224,7 +227,7 @@ function buildTablesRouter(): Router {
     return TablesApi.openSession(requireUser(req), { tableId: stringParam(req, 'tableId'), guestCount: requiredNumber(body.guestCount, 'guestCount'), branchId: optionalString(body.branchId) });
   }, 201));
   router.get('/sessions/:tableSessionId', send((req) => TablesApi.getSession(stringParam(req, 'tableSessionId'))));
-  router.post('/sessions/:tableSessionId/close', authorize(Actions.CreateOrder), send((req) => TablesApi.closeSession(requireUser(req), stringParam(req, 'tableSessionId'))));
+  router.post('/sessions/:tableSessionId/close', authorize(Actions.CloseBill), send((req) => TablesApi.closeSession(requireUser(req), stringParam(req, 'tableSessionId'))));
   return router;
 }
 
@@ -238,6 +241,12 @@ function buildOrdersRouter(): Router {
   router.post('/:orderId/status', authorize(Actions.TransitionOrderStatus), send((req) => {
     const body = bodyObject(req);
     return transitionOrderStatus(requireUser(req), stringParam(req, 'orderId'), requiredNumber(body.expectedVersion, 'expectedVersion'), requiredString(body.nextStatus, 'nextStatus') as any);
+  }));
+  router.post('/:orderId/print', authorize(Actions.EditOrder), send(async (req) => {
+    const order = await getOrder(stringParam(req, 'orderId'));
+    if (!order) throw new HttpError(404, 'Order not found.');
+    const results = await Promise.all([getOrderPrinterAdapter().printOrder(order, 'kitchen'), getOrderPrinterAdapter().printOrder(order, 'bar')]);
+    return { orderId: order.id, printed: results.filter(Boolean) };
   }));
   return router;
 }
@@ -276,8 +285,12 @@ function buildBillingRouter(): Router {
   router.patch('/bills/:tableSessionId/tax', authorize(Actions.CloseBill), send((req) => setBillTaxMode({ ...bodyObject(req), tableSessionId: stringParam(req, 'tableSessionId'), actorUserId: req.user!.id } as any)));
   router.patch('/bills/:tableSessionId/promotions', authorize(Actions.CloseBill), send((req) => applyBillPromotions({ ...bodyObject(req), tableSessionId: stringParam(req, 'tableSessionId'), actorUserId: req.user!.id } as any)));
   router.post('/bills/:tableSessionId/void', authorize(Actions.CloseBill), send((req) => voidBill({ ...bodyObject(req), tableSessionId: stringParam(req, 'tableSessionId'), actorUserId: req.user!.id } as any)));
-  router.get('/bills/:tableSessionId/breakdown', authorize(Actions.CloseBill), send((req) => getBillCalculationBreakdown(stringParam(req, 'tableSessionId'))));
-  router.get('/bills/:tableSessionId/receipt', authorize(Actions.CloseBill), send((req) => getPrintedReceiptPayload(stringParam(req, 'tableSessionId'), optionalString(queryObject(req).locale))));
+  router.get('/bills/:tableSessionId/breakdown', authorize(Actions.ViewBill), send((req) => getBillCalculationBreakdown(stringParam(req, 'tableSessionId'))));
+  router.get('/bills/:tableSessionId/receipt', authorize(Actions.ViewBill), send((req) => getPrintedReceiptPayload(stringParam(req, 'tableSessionId'), optionalString(queryObject(req).locale))));
+  router.post('/bills/:tableSessionId/print', authorize(Actions.CloseBill), send((req) => {
+    const body = bodyObject(req);
+    return printBillReceipt({ tableSessionId: stringParam(req, 'tableSessionId'), actorUserId: req.user!.id, locale: optionalString(body.locale), copies: body.copies === undefined ? undefined : requiredNumber(body.copies, 'copies'), printerId: optionalString(body.printerId) });
+  }));
   router.post('/bills/:tableSessionId/payments', authorize(Actions.CloseBill), send((req) => recordSplitPayment({ ...bodyObject(req), tableSessionId: stringParam(req, 'tableSessionId'), actorUserId: req.user!.id } as any)));
   router.post('/bills/:tableSessionId/debt/settlements', authorize(Actions.MarkDebt), send((req) => settleDebt({ ...bodyObject(req), tableSessionId: stringParam(req, 'tableSessionId'), actorUserId: req.user!.id } as any)));
   return router;
@@ -327,7 +340,8 @@ function buildUsersRouter(): Router {
 
 function buildSettingsRouter(): Router {
   const router = express.Router();
-  router.get('/', send(() => ({ branch: getRuntimeSettings().branch, inventoryDeductionPolicy: InventoryAdminApi.getDeductionPolicy() })));
+  router.get('/', send(() => ({ branch: getRuntimeSettings().branch, inventoryDeductionPolicy: InventoryAdminApi.getDeductionPolicy(), pos: getPosOperationalSettings() })));
+  router.put('/', authorize(Actions.ManageSystem), send((req) => ({ branch: getRuntimeSettings().branch, inventoryDeductionPolicy: InventoryAdminApi.getDeductionPolicy(), pos: updatePosOperationalSettings((bodyObject(req).pos as any) ?? (bodyObject(req) as any)) })));
   router.get('/branch', send(() => getRuntimeSettings().branch));
   router.get('/inventory/deduction-policy', authorize(Actions.AdjustStock), send(() => InventoryAdminApi.getDeductionPolicy()));
   router.put('/inventory/deduction-policy', authorize(Actions.AdjustStock), send((req) => InventoryAdminApi.setDeductionPolicy(requireUser(req), requiredString(bodyObject(req).policy, 'policy') as any)));

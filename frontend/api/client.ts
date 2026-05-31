@@ -189,6 +189,13 @@ async function requestInProcess<T>(path: string, method: string, body: unknown, 
       const statusBody = body as { expectedVersion: number; nextStatus: string };
       return service.transitionOrderStatus(await userFor(userId), parts[2], statusBody.expectedVersion, statusBody.nextStatus) as Promise<T>;
     }
+    if (parts.length === 4 && parts[3] === 'print') {
+      const printer = await backendModule<any>('../../backend/hardware/orderPrinter.js');
+      const order = await service.getOrder(parts[2]);
+      if (!order) throw new ApiClientError('Order not found.', 404);
+      const printed = (await Promise.all([printer.getOrderPrinterAdapter().printOrder(order, 'kitchen'), printer.getOrderPrinterAdapter().printOrder(order, 'bar')])).filter(Boolean);
+      return { orderId: order.id, printed } as T;
+    }
   }
 
   if (parts[1] === 'kds') {
@@ -210,6 +217,7 @@ async function requestInProcess<T>(path: string, method: string, body: unknown, 
     if (parts[4] === 'receipt') return billing.getPrintedReceiptPayload(tableSessionId, url.searchParams.get('locale') ?? undefined) as Promise<T>;
     if (parts[4] === 'tax') return billing.setBillTaxMode({ ...(body as object), tableSessionId, actorUserId: userId }) as Promise<T>;
     if (parts[4] === 'promotions') return billing.applyBillPromotions({ ...(body as object), tableSessionId, actorUserId: userId }) as Promise<T>;
+    if (parts[4] === 'print') return billing.printBillReceipt({ ...(body as object), tableSessionId, actorUserId: userId }) as Promise<T>;
     if (parts[4] === 'payments') return billing.recordSplitPayment({ ...(body as object), tableSessionId, actorUserId: userId }) as Promise<T>;
   }
 
@@ -253,7 +261,9 @@ async function requestInProcess<T>(path: string, method: string, body: unknown, 
   if (parts[1] === 'settings') {
     const branch = await backendModule<any>('../../backend/config/branch.js');
     const { InventoryAdminApi } = await backendModule<any>('../../backend/inventory/controller.js');
-    return { branch: branch.getRuntimeSettings().branch, inventoryDeductionPolicy: await InventoryAdminApi.getDeductionPolicy() } as T;
+    const posSettings = await backendModule<any>('../../backend/config/posSettings.js');
+    if (method === 'PUT') return { branch: branch.getRuntimeSettings().branch, inventoryDeductionPolicy: await InventoryAdminApi.getDeductionPolicy(), pos: posSettings.updatePosOperationalSettings((body as any).pos ?? body) } as T;
+    return { branch: branch.getRuntimeSettings().branch, inventoryDeductionPolicy: await InventoryAdminApi.getDeductionPolicy(), pos: posSettings.getPosOperationalSettings() } as T;
   }
 
   if (parts[1] === 'reports') {
@@ -429,6 +439,10 @@ export class RestaurantApiClient {
     });
   }
 
+  printOrderTickets(userId: string, orderId: string) {
+    return this.request(`/api/orders/${encodeURIComponent(orderId)}/print`, { method: 'POST', userId, operationKind: 'idempotent_write' });
+  }
+
   getKdsSnapshot(station?: Station): Promise<KdsSnapshot> {
     return this.request<KdsSnapshot>(`/api/kds${queryString({ station })}`);
   }
@@ -472,6 +486,10 @@ export class RestaurantApiClient {
 
   getReceipt(tableSessionId: string, locale?: string): Promise<ReceiptPayload> {
     return this.request<ReceiptPayload>(`/api/billing/bills/${encodeURIComponent(tableSessionId)}/receipt${queryString({ locale })}`);
+  }
+
+  printReceipt(tableSessionId: string, input: { locale?: string; copies?: number; printerId?: string } = {}, userId?: string) {
+    return this.request(`/api/billing/bills/${encodeURIComponent(tableSessionId)}/print`, { method: 'POST', userId, body: input, operationKind: 'idempotent_write' });
   }
 
   setBillTaxMode(input: { tableSessionId: string; taxMode: BillPricingOptions['taxMode']; taxRate?: number }, userId?: string) {
@@ -564,6 +582,10 @@ export class RestaurantApiClient {
 
   getSettings() {
     return this.request('/api/settings');
+  }
+
+  updateSettings(input: unknown) {
+    return this.request('/api/settings', { method: 'PUT', body: input, operationKind: 'idempotent_write' });
   }
 
   getSalesReport(period: 'day' | 'week' | 'month') {
