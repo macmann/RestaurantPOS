@@ -16,6 +16,7 @@ import { AdminMenuApi } from './menu/controller';
 import { createOrderDraft, editOrderBeforePayment, cancelOrder, transitionOrderStatus, getOrder } from './orders/service';
 import { listOrders } from './orders/repository';
 import { listStationQueue, patchItemProgress, onKdsEvent } from './kds/controller';
+import type { KdsView } from './kds/service';
 import type { Station, KdsProgress } from './kds/repository';
 import {
   generateBillFromSessionItems,
@@ -174,6 +175,12 @@ function parseLimit(value: unknown): number | undefined {
   return numeric;
 }
 
+function parseKdsView(value: unknown): KdsView {
+  if (value === undefined) return 'active';
+  if (value === 'active' || value === 'history' || value === 'all') return value;
+  throw new HttpError(400, 'view must be active, history, or all.');
+}
+
 
 function permissionsForUser(user: AuthenticatedUser) {
   const roles = Array.isArray(user.role) ? user.role : [user.role];
@@ -254,7 +261,10 @@ function buildOrdersRouter(): Router {
 function buildKdsRouter(): Router {
   const router = express.Router();
   router.use(authorize(Actions.TransitionOrderStatus));
-  router.get('/', send((req) => listStationQueue(optionalString(queryObject(req).station) as Station | undefined)));
+  router.get('/', send((req) => {
+    const query = queryObject(req);
+    return listStationQueue(optionalString(query.station) as Station | undefined, parseKdsView(query.view));
+  }));
   router.patch('/orders/:orderId/items/:orderItemId/progress', send((req) => {
     const body = bodyObject(req);
     return patchItemProgress(requireUser(req), stringParam(req, 'orderId'), stringParam(req, 'orderItemId'), requiredString(body.progress, 'progress') as KdsProgress);
@@ -269,7 +279,8 @@ function buildKdsRouter(): Router {
     const writeEvent = (event: unknown) => {
       res.write(`data: ${JSON.stringify(event)}\n\n`);
     };
-    writeEvent({ type: 'snapshot', at: new Date().toISOString(), payload: await listStationQueue(optionalString(queryObject(req).station) as Station | undefined) });
+    const query = queryObject(req);
+    writeEvent({ type: 'snapshot', at: new Date().toISOString(), payload: await listStationQueue(optionalString(query.station) as Station | undefined, parseKdsView(query.view)) });
     const unsubscribe = onKdsEvent(writeEvent);
     req.on('close', unsubscribe);
   }));

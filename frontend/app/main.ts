@@ -351,12 +351,23 @@ function formatElapsed(seconds: number): string {
 
 async function renderKdsStation(station: 'kitchen' | 'bar'): Promise<HTMLElement> {
   const title = station === 'kitchen' ? 'Kitchen KDS' : 'Bar KDS';
-  const section = page(title, `${title} tickets are grouped by station with action buttons for prep progress.`);
+  const section = page(title, `${title} tickets are grouped by active prep tickets and ready history.`);
+  const activeTab = new URLSearchParams(route.split('?')[1] ?? '').get('tab') === 'history' ? 'history' : 'active';
   const state = station === 'kitchen' ? await loadKitchenQueue() : await loadBarQueue();
-  const group = state.queue.groups.find((row) => row.station === station);
+  const queue = activeTab === 'history' ? state.history : state.queue;
+  const group = queue.groups.find((row) => row.station === station);
   const board = el('div', 'kds-board');
   const items = group?.items ?? [];
-  if (!items.length) board.append(emptyState(`No ${station} tickets are waiting.`));
+  const tabs = el('div', 'sales-history-tabs kds-tabs');
+  tabs.innerHTML = `
+    <button type="button" class="${activeTab === 'active' ? 'active' : ''}" data-tab="active">Active orders</button>
+    <button type="button" class="${activeTab === 'history' ? 'active' : ''}" data-tab="history">History</button>
+  `;
+  tabs.querySelectorAll<HTMLButtonElement>('button').forEach((button) => button.addEventListener('click', () => {
+    navigate(`${routePath()}?tab=${button.dataset.tab}`);
+  }));
+
+  if (!items.length) board.append(emptyState(activeTab === 'history' ? `No ${station} tickets are ready yet.` : `No active ${station} tickets are waiting.`));
   for (const item of items) {
     const ticket = el('article', `kds-ticket ${item.progress}`);
     ticket.innerHTML = `
@@ -366,20 +377,24 @@ async function renderKdsStation(station: 'kitchen' | 'bar'): Promise<HTMLElement
     `;
     ticket.querySelector('.ticket-head')?.append(badge(item.progress, item.progress));
     const actions = ticket.querySelector<HTMLElement>('.ticket-actions')!;
-    for (const next of ['preparing', 'ready'] as const) {
-      const button = el('button', next === item.progress ? 'secondary' : '', next === 'preparing' ? 'Start prep' : 'Mark ready');
-      button.type = 'button';
-      button.disabled = item.progress === next || item.progress === 'served';
-      button.addEventListener('click', async () => {
-        if (station === 'kitchen') await setKitchenItemProgress(session!.user, item.orderId, item.orderItemId, next);
-        else await setBarItemProgress(session!.user, item.orderId, item.orderItemId, next);
-        render();
-      });
-      actions.append(button);
+    if (activeTab === 'history') {
+      actions.append(el('small', 'muted', 'Moved to history when marked ready.'));
+    } else {
+      for (const next of ['preparing', 'ready'] as const) {
+        const button = el('button', next === item.progress ? 'secondary' : '', next === 'preparing' ? 'Start prep' : 'Mark ready');
+        button.type = 'button';
+        button.disabled = item.progress === next || item.progress === 'served';
+        button.addEventListener('click', async () => {
+          if (station === 'kitchen') await setKitchenItemProgress(session!.user, item.orderId, item.orderItemId, next);
+          else await setBarItemProgress(session!.user, item.orderId, item.orderItemId, next);
+          render();
+        });
+        actions.append(button);
+      }
     }
     board.append(ticket);
   }
-  section.append(board);
+  section.append(tabs, board);
   return section;
 }
 
@@ -1173,7 +1188,7 @@ async function renderOrderEntry(): Promise<HTMLElement> {
     loadCashierTableFloor(session!.user.branchId),
     apiClient.listMenu() as Promise<MenuCategoryForPos[]>,
     apiClient.listOrders(),
-    apiClient.getKdsSnapshot(),
+    apiClient.getKdsSnapshot(undefined, 'all'),
   ]);
   if (!selectedTableId) selectedTableId = floor.tables.find((row) => row.status !== 'inactive')?.table.id;
   const selected = floor.tables.find((row) => row.table.id === selectedTableId) ?? floor.tables[0];
@@ -1460,7 +1475,7 @@ async function renderTableFloor(): Promise<HTMLElement> {
   const [floor, orders, kdsSnapshot] = await Promise.all([
     loadCashierTableFloor(session!.user.branchId),
     apiClient.listOrders(),
-    apiClient.getKdsSnapshot(),
+    apiClient.getKdsSnapshot(undefined, 'all'),
   ]);
   const summary = el('section', 'pos-panel table-floor-summary');
   summary.innerHTML = `<div class="pos-panel-heading"><h3>Floor layout</h3><span>${floor.counts.available} available · ${floor.counts.occupied} occupied · ${floor.counts.inactive} inactive</span></div>`;
@@ -1646,7 +1661,7 @@ async function renderRestaurantPos(): Promise<HTMLElement> {
     loadCashierTableFloor(session!.user.branchId),
     apiClient.listMenu() as Promise<MenuCategoryForPos[]>,
     apiClient.listOrders(),
-    apiClient.getKdsSnapshot(),
+    apiClient.getKdsSnapshot(undefined, 'all'),
   ]);
   if (!selectedTableId) selectedTableId = floor.tables.find((row) => row.status !== 'inactive')?.table.id;
   const selected = floor.tables.find((row) => row.table.id === selectedTableId) ?? floor.tables[0];

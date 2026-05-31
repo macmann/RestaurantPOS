@@ -6,7 +6,7 @@ export async function loadOrderProgressForWaiter(locale?: string) {
   return {
     title: resource.screens.waiter_progress,
     localeSwitch: buildLocaleSwitchState(resource.locale),
-    snapshot: await apiClient.getKdsSnapshot(),
+    snapshot: await apiClient.getKdsSnapshot(undefined, 'all'),
   };
 }
 

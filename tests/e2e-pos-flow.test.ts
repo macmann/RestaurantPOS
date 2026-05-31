@@ -152,6 +152,10 @@ async function runEndToEndPosFlow(): Promise<void> {
   const kitchenTicket = kitchenQueue.groups.flatMap((group) => group.items).find((item) => item.orderId === order.id);
   assert(kitchenTicket, 'KDS should receive the order item for kitchen preparation.');
   await updateKdsItemProgress(kitchen, order.id, kitchenTicket.orderItemId, 'ready');
+  const activeKitchenQueue = await getKdsSnapshot('kitchen', 'active');
+  const kitchenHistory = await getKdsSnapshot('kitchen', 'history');
+  assert(!activeKitchenQueue.groups.flatMap((group) => group.items).some((item) => item.orderId === order.id), 'Ready KDS items should leave the active kitchen queue.');
+  assert(kitchenHistory.groups.flatMap((group) => group.items).some((item) => item.orderId === order.id), 'Ready KDS items should move into kitchen history.');
   order = await transitionOrderStatus(kitchen, order.id, order.version, 'completed');
   order = await transitionOrderStatus(waiter, order.id, order.version, 'delivered');
   assertEqual(order.status, 'delivered', 'Order should complete the service workflow');

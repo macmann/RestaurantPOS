@@ -7,6 +7,7 @@ import type { getBillCalculationBreakdown, getPrintedReceiptPayload } from '../.
 import type { AdminMenuApi } from '../../backend/menu/controller';
 import type { InventoryAdminApi } from '../../backend/inventory/controller';
 import type { AdminAuditApi } from '../../backend/audit/controller';
+import type { KdsView } from '../../backend/kds/service';
 import type { Station, KdsProgress } from '../../backend/kds/repository';
 import type { KdsEvent, KdsSnapshot } from '../../backend/kds/service';
 import type { TableFloorState } from '../../backend/tables/service';
@@ -202,8 +203,8 @@ async function requestInProcess<T>(path: string, method: string, body: unknown, 
 
   if (parts[1] === 'kds') {
     const controller = await backendModule<any>('../../backend/kds/controller.js');
-    if (parts.length === 2 && method === 'GET') return controller.listStationQueue(url.searchParams.get('station') ?? undefined) as Promise<T>;
-    if (parts.length === 6 && parts[2] === 'orders' && parts[4] === 'items') {
+    if (parts.length === 2 && method === 'GET') return controller.listStationQueue(url.searchParams.get('station') ?? undefined, url.searchParams.get('view') ?? undefined) as Promise<T>;
+    if (parts.length === 7 && parts[2] === 'orders' && parts[4] === 'items' && parts[6] === 'progress') {
       return controller.patchItemProgress(await userFor(userId), parts[3], parts[5], (body as { progress: string }).progress) as Promise<T>;
     }
   }
@@ -445,8 +446,8 @@ export class RestaurantApiClient {
     return this.request(`/api/orders/${encodeURIComponent(orderId)}/print`, { method: 'POST', userId, operationKind: 'idempotent_write' });
   }
 
-  getKdsSnapshot(station?: Station): Promise<KdsSnapshot> {
-    return this.request<KdsSnapshot>(`/api/kds${queryString({ station })}`);
+  getKdsSnapshot(station?: Station, view?: KdsView): Promise<KdsSnapshot> {
+    return this.request<KdsSnapshot>(`/api/kds${queryString({ station, view })}`);
   }
 
   patchKdsItemProgress(userId: string, orderId: string, orderItemId: string, progress: KdsProgress) {
@@ -458,15 +459,15 @@ export class RestaurantApiClient {
     });
   }
 
-  subscribeKds(station: Station | undefined, onUpdate: (event: KdsEvent) => void): () => void {
-    const source = new EventSource(`${this.baseUrl}/api/kds/events${queryString({ station })}`);
+  subscribeKds(station: Station | undefined, onUpdate: (event: KdsEvent) => void, view?: KdsView): () => void {
+    const source = new EventSource(`${this.baseUrl}/api/kds/events${queryString({ station, view })}`);
     source.onmessage = (event) => {
       this.setNetworkStatus('online', { message: 'KDS stream connected.' });
       onUpdate(JSON.parse(event.data) as KdsEvent);
     };
     source.onerror = () => {
       this.setNetworkStatus('degraded', { message: 'KDS stream disconnected; reloading snapshot.' });
-      void this.getKdsSnapshot(station).then((snapshot) => onUpdate({ type: 'snapshot', at: new Date().toISOString(), payload: snapshot })).catch((caught) => {
+      void this.getKdsSnapshot(station, view).then((snapshot) => onUpdate({ type: 'snapshot', at: new Date().toISOString(), payload: snapshot })).catch((caught) => {
         this.setNetworkStatus('offline', { message: caught instanceof Error ? caught.message : 'KDS reload failed.' });
       });
     };

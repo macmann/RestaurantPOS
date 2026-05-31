@@ -8,7 +8,8 @@ export async function loadBarQueue(locale?: string) {
   return {
     title: resource.screens.bar,
     localeSwitch: buildLocaleSwitchState(resource.locale),
-    queue: await apiClient.getKdsSnapshot('bar'),
+    queue: await apiClient.getKdsSnapshot('bar', 'active'),
+    history: await apiClient.getKdsSnapshot('bar', 'history'),
   };
 }
 
@@ -17,5 +18,5 @@ export async function setBarItemProgress(user: AuthenticatedUser, orderId: strin
 }
 
 export function subscribeBarQueue(onUpdate: Parameters<typeof apiClient.subscribeKds>[1]) {
-  return apiClient.subscribeKds('bar', onUpdate);
+  return apiClient.subscribeKds('bar', onUpdate, 'active');
 }
