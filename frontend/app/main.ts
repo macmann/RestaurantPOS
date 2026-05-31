@@ -139,7 +139,26 @@ function renderShell(content: HTMLElement): void {
 
   const layout = el('div', 'app-shell');
   const sidebar = el('aside', 'sidebar');
-  sidebar.innerHTML = `<div class="sidebar-brand">${brandLogo()}<h1>${APP_NAME}</h1></div><p>${session.user.id} · ${Array.isArray(session.user.role) ? session.user.role.join(', ') : session.user.role}</p>`;
+  const roleLabel = Array.isArray(session.user.role) ? session.user.role.join(', ') : session.user.role;
+  sidebar.innerHTML = `
+    <div class="sidebar-brand">${brandLogo()}<div><h1>${APP_NAME}</h1><span>Restaurant command center</span></div></div>
+    <p class="sidebar-user">${session.user.id} · ${roleLabel}</p>
+  `;
+
+  const mobileNav = el('div', 'mobile-route-bar');
+  mobileNav.innerHTML = `
+    <div class="mobile-route-brand">${brandLogo()}<div><strong>${APP_NAME}</strong><span>${current.label}</span></div></div>
+  `;
+  const routeSelect = el('select');
+  routeSelect.setAttribute('aria-label', 'Switch POS section');
+  for (const item of available) {
+    const option = el('option', '', item.label);
+    option.value = item.path;
+    option.selected = item.path === current.path;
+    routeSelect.append(option);
+  }
+  routeSelect.addEventListener('change', () => navigate(routeSelect.value));
+  mobileNav.append(routeSelect);
 
   for (const section of ['operations', 'admin'] as const) {
     const groupRoutes = available.filter((item) => item.section === section);
@@ -168,7 +187,7 @@ function renderShell(content: HTMLElement): void {
   banner.setAttribute('role', 'status');
   banner.setAttribute('aria-live', 'polite');
   updateNetworkBanner(banner);
-  main.append(banner, content);
+  main.append(mobileNav, banner, content);
   startHealthChecks();
   layout.append(sidebar, main);
   root.replaceChildren(layout);
