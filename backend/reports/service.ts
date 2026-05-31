@@ -110,6 +110,10 @@ function assertCanViewReports(user: AuthenticatedUser): void {
   if (!can(user, Actions.ViewReports)) throw new Error('Forbidden: cannot view reports.');
 }
 
+function assertCanViewSalesHistory(user: AuthenticatedUser): void {
+  if (!can(user, Actions.ViewReports) && !can(user, Actions.ViewSalesHistory)) throw new Error('Forbidden: cannot view sales history.');
+}
+
 function optionalRecordField(row: unknown, key: string): string | undefined {
   if (!row || typeof row !== 'object') return undefined;
   const value = (row as Record<string, unknown>)[key];
@@ -202,7 +206,7 @@ function makeReport<TSummary, TRow>(reportId: string, titleKey: string, filters:
 }
 
 export async function getSalesReport(user: AuthenticatedUser, period: SalesPeriod, filters: ReportFilters = {}) {
-  assertCanViewReports(user);
+  assertCanViewSalesHistory(user);
   const normalized = normalizeFilters(filters);
   const [orders, bills] = await Promise.all([listOrders(), listBills()]);
   const buckets = new Map<string, SalesReportRow>();

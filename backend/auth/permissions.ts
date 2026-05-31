@@ -8,6 +8,7 @@ export const Actions = {
   ViewBill: 'billing:view',
   CloseBill: 'billing:close',
   ViewReports: 'reports:view',
+  ViewSalesHistory: 'sales_history:view',
   ViewAudit: 'audit:view',
   ManageMenu: 'menu:manage',
   ManageStaff: 'staff:manage',
@@ -19,7 +20,7 @@ export type Action = (typeof Actions)[keyof typeof Actions];
 
 export const RolePermissions: Record<string, Action[]> = {
   superadmin: Object.values(Actions),
-  cashier: [Actions.CreateOrder, Actions.EditOrder, Actions.ViewBill, Actions.MarkDebt, Actions.CloseBill, Actions.TransitionOrderStatus],
+  cashier: [Actions.CreateOrder, Actions.EditOrder, Actions.ViewBill, Actions.MarkDebt, Actions.CloseBill, Actions.ViewSalesHistory, Actions.TransitionOrderStatus],
   waitstaff: [Actions.CreateOrder, Actions.EditOrder, Actions.ViewBill, Actions.TransitionOrderStatus],
   kitchen: [Actions.TransitionOrderStatus],
   bar: [Actions.TransitionOrderStatus],
@@ -41,6 +42,7 @@ export const RolePermissions: Record<string, Action[]> = {
     Actions.MarkDebt,
     Actions.CloseBill,
     Actions.ViewReports,
+    Actions.ViewSalesHistory,
     Actions.ViewAudit,
     Actions.ManageMenu,
     Actions.ManageStaff,
@@ -54,6 +56,7 @@ export const RolePermissions: Record<string, Action[]> = {
     Actions.MarkDebt,
     Actions.CloseBill,
     Actions.ViewReports,
+    Actions.ViewSalesHistory,
     Actions.ViewAudit,
     Actions.ManageMenu,
     Actions.ManageStaff,

@@ -11,6 +11,7 @@ export const appRoutes: AppRoute[] = [
   { path: '#/tables', label: 'Table floor', section: 'operations', requiredPermissions: [Actions.CreateOrder] },
   { path: '#/orders', label: 'Order', section: 'operations', requiredPermissions: [Actions.CreateOrder] },
   { path: '#/billing', label: 'Billing', section: 'operations', requiredPermissions: [Actions.ViewBill, Actions.CloseBill] },
+  { path: '#/sales-history', label: 'Sales history', section: 'operations', requiredPermissions: [Actions.ViewSalesHistory] },
   { path: '#/kitchen', label: 'Kitchen KDS', section: 'operations', requiredPermissions: [Actions.TransitionOrderStatus] },
   { path: '#/bar', label: 'Bar KDS', section: 'operations', requiredPermissions: [Actions.TransitionOrderStatus] },
   { path: '#/waiter-progress', label: 'Waiter progress', section: 'operations', requiredPermissions: [Actions.TransitionOrderStatus] },
