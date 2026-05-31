@@ -11,11 +11,22 @@ export interface BrowserSession {
   expiresAt: string;
 }
 
+function isUsableSession(value: Partial<BrowserSession> | null | undefined): value is BrowserSession {
+  if (!value?.user?.id || !value.token || !value.expiresAt) return false;
+  const expiresAt = Date.parse(value.expiresAt);
+  return Number.isFinite(expiresAt) && expiresAt > Date.now();
+}
+
 function readStoredSession(): BrowserSession | null {
   try {
     const raw = window.localStorage.getItem(SESSION_KEY);
-    return raw ? (JSON.parse(raw) as BrowserSession) : null;
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<BrowserSession>;
+    if (isUsableSession(parsed)) return parsed;
+    window.localStorage.removeItem(SESSION_KEY);
+    return null;
   } catch {
+    window.localStorage.removeItem(SESSION_KEY);
     return null;
   }
 }

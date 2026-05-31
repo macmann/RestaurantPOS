@@ -7,7 +7,7 @@ import { loadBarQueue, setBarItemProgress } from '../kds/bar-screen';
 import { loadOrderProgressForWaiter } from '../waiter/order-progress';
 import { loadAdminMenuDashboard } from '../admin/menu-management';
 import { loadAdminAuditViewer } from '../admin/audit-viewer';
-import { apiClient } from '../api/client';
+import { ApiClientError, apiClient } from '../api/client';
 import { loadCashierTableFloor } from '../cashier/table-floor';
 import type { OrderRecord, OrderStatus } from '../../backend/orders/repository';
 import type { SplitLabel, TableOrderItem } from '../../backend/billing/repository';
@@ -20,6 +20,7 @@ let session: BrowserSession | null = getStoredSession();
 let route = window.location.hash || defaultRoute(session?.permissions ?? []).path;
 let apiStatus = apiClient.getNetworkStatus();
 let apiStatusMessage = 'API connection healthy.';
+let loginNotice: string | undefined;
 let healthTimer: number | undefined;
 let selectedTableId: string | undefined;
 let selectedSplitCount = 1;
@@ -64,7 +65,7 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, t
   return node;
 }
 
-function renderLogin(): void {
+function renderLogin(message = loginNotice): void {
   const shell = el('main', 'login-shell');
   const card = el('form', 'login-card');
   card.innerHTML = `
@@ -74,7 +75,7 @@ function renderLogin(): void {
     <label>Username or email<input name="identifier" autocomplete="username" placeholder="manager-1" required /></label>
     <label>Password<input name="password" type="password" autocomplete="current-password" required /></label>
     <button type="submit">Start secure session</button>
-    <p class="form-error" hidden></p>
+    <p class="form-error" ${message ? '' : 'hidden'}>${message ?? ''}</p>
   `;
   card.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -84,6 +85,7 @@ function renderLogin(): void {
     const error = card.querySelector<HTMLParagraphElement>('.form-error');
     try {
       session = await login(String(input ?? ''), String(password ?? ''));
+      loginNotice = undefined;
       navigate(defaultRoute(session.permissions).path);
     } catch (caught) {
       if (error) {
@@ -799,7 +801,16 @@ async function renderRoute(): Promise<void> {
 }
 
 function render(): void {
-  void renderRoute();
+  void renderRoute().catch((caught) => {
+    if (caught instanceof ApiClientError && caught.status === 401) {
+      session = null;
+      loginNotice = 'Your session has expired. Please sign in again.';
+      void logout().finally(() => renderLogin(loginNotice));
+      return;
+    }
+
+    throw caught;
+  });
 }
 
 render();
