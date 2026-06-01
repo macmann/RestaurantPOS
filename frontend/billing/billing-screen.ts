@@ -1,5 +1,8 @@
 import { buildLocaleSwitchState, getLocaleResource } from '../i18n/locale-switcher';
 import { apiClient } from '../api/client';
+import type { AuthenticatedUser } from '../../backend/auth/policies';
+import type { CashierTableFloorViewModel } from '../cashier/table-floor';
+import { loadCashierTableFloor } from '../cashier/table-floor';
 import type { BillPricingOptions, BillPromotion, SplitLabel, TableOrderItem } from '../../backend/billing/repository';
 
 export interface BillingScreenViewModel {
@@ -32,6 +35,30 @@ export async function openBillingScreen(tableSessionId: string, locale?: string)
     localeSwitch: buildLocaleSwitchState(resource.locale),
     labels: { title: resource.screens.billing, taxEnabled: resource.common.tax_enabled, taxExempt: resource.common.tax_exempt },
   };
+}
+
+export interface ClosePaidTableResult {
+  closedSession: Awaited<ReturnType<typeof apiClient.closeTableSession>>;
+  floor: CashierTableFloorViewModel;
+}
+
+export async function closePaidTableFromBillingScreen(input: {
+  user: AuthenticatedUser;
+  tableSessionId: string;
+  branchId?: string;
+  locale?: string;
+}): Promise<ClosePaidTableResult> {
+  const receipt = await apiClient.getReceipt(input.tableSessionId, input.locale);
+  if (receipt.balanceDue > 0) throw new Error('Cannot close table until the bill is fully paid or moved to debt.');
+
+  const closedSession = await apiClient.closeTableSession(input.user.id, input.tableSessionId);
+  if (closedSession.status !== 'closed') throw new Error('Table session did not close. Please refresh and try again.');
+
+  const floor = await loadCashierTableFloor(input.branchId ?? input.user.branchId, input.locale);
+  const stillOpen = floor.tables.some((row) => row.activeSession?.id === input.tableSessionId);
+  if (stillOpen) throw new Error('Table still appears open after close. Please refresh and try again.');
+
+  return { closedSession, floor };
 }
 
 export async function startBillForBillingScreen(input: {

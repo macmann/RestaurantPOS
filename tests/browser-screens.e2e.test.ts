@@ -11,10 +11,11 @@ import { loadCashierTableFloor } from '../frontend/cashier/table-floor';
 import { startDineInOrder, advanceOrderStatus, loadOrderForScreen } from '../frontend/orders/order-screen';
 import { loadKitchenQueue, setKitchenItemProgress } from '../frontend/kds/kitchen-screen';
 import { loadBarQueue } from '../frontend/kds/bar-screen';
-import { startBillForBillingScreen, openBillingScreen } from '../frontend/billing/billing-screen';
+import { closePaidTableFromBillingScreen, startBillForBillingScreen, openBillingScreen } from '../frontend/billing/billing-screen';
 import { loadAdminMenuDashboard } from '../frontend/admin/menu-management';
 import { loadAdminInventoryAlerts } from '../frontend/admin/inventory-alerts';
 import { loadAdminAuditViewer } from '../frontend/admin/audit-viewer';
+import { recordSplitPayment } from '../backend/billing/service';
 import type { TableOrderItem } from '../backend/billing/repository';
 import { assert } from './helpers/assertions';
 
@@ -75,6 +76,12 @@ async function runBrowserScreenE2e(): Promise<void> {
   assert(startedBill.calculationBreakdown.totalDue > 0, 'Billing browser screen should calculate a positive total.');
   const billing = await openBillingScreen(tableSession.id, 'my');
   assert(billing.receiptPreview.tableSessionId === tableSession.id, 'Billing browser screen should load receipt preview for the session.');
+  await recordSplitPayment({ tableSessionId: tableSession.id, splitLabel: 'A', amount: startedBill.calculationBreakdown.totalDue, method: 'cash', actorUserId: cashier.id });
+  order = await advanceOrderStatus(waiter, order.id, order.version, 'completed');
+  order = await advanceOrderStatus(waiter, order.id, order.version, 'delivered');
+  const closeResult = await closePaidTableFromBillingScreen({ user: cashier, tableSessionId: tableSession.id, branchId, locale: 'en' });
+  assert(closeResult.closedSession.status === 'closed', 'Close paid table action should return a closed session.');
+  assert(closeResult.floor.tables.some((row) => row.table.id === table.id && row.status === 'available'), 'Close paid table action should refresh the floor with the table available.');
 
   const menuDashboard = await loadAdminMenuDashboard('en');
   assert(menuDashboard.categories.some((row) => row.id === category.id), 'Admin menu browser screen should load menu categories.');
