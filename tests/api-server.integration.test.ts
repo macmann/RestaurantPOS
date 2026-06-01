@@ -36,6 +36,23 @@ async function runApiIntegration(): Promise<void> {
     assert(manager.permissions.includes('menu:manage'), 'Manager login should return real RBAC permissions.');
     assert(cashier.permissions.includes('orders:transition_status'), 'Cashier login should include order transition permission for checkout table close flows.');
 
+    const superadminMenuItem = await apiRequest<{ data: { id: string; name: string } }>(server.baseUrl, '/api/menu/items', {
+      method: 'POST',
+      token: superadmin.token,
+      body: { branchId, categoryId: category.id, name: 'API Superadmin Editable', price: 5, prepStation: 'bar', isAvailable: true },
+    });
+    assert(superadminMenuItem.status === 201, `Superadmin menu item create should return 201, got ${superadminMenuItem.status}.`);
+    const superadminMenuEdit = await apiRequest<{ data: { name: string; price: number; prepStation: string } }>(server.baseUrl, `/api/menu/items/${superadminMenuItem.body.data.id}`, {
+      method: 'PATCH',
+      token: superadmin.token,
+      body: { name: 'API Superadmin Edited', price: 6.5, prepStation: 'kitchen' },
+    });
+    assert(superadminMenuEdit.status === 200, `Superadmin menu item edit should return 200, got ${superadminMenuEdit.status}.`);
+    assert(superadminMenuEdit.body.data.name === 'API Superadmin Edited' && superadminMenuEdit.body.data.price === 6.5, 'Superadmin menu item edit should persist the updated name and price.');
+    const superadminMenuDelete = await apiRequest<{ data: boolean }>(server.baseUrl, `/api/menu/items/${superadminMenuItem.body.data.id}`, { method: 'DELETE', token: superadmin.token });
+    assert(superadminMenuDelete.status === 200, `Superadmin menu item delete should return 200, got ${superadminMenuDelete.status}.`);
+    assert(superadminMenuDelete.body.data === true, 'Superadmin menu item delete should remove the edited item.');
+
     const floor = await apiRequest<{ data: Array<{ table: { id: string }; status: string }> }>(server.baseUrl, `/api/tables?branchId=${branchId}`, { token: cashier.token });
     assert(floor.status === 200, `Cashier table floor should load over HTTP, got ${floor.status}.`);
     assert(floor.body.data.some((row) => row.table.id === table.id && row.status === 'available'), 'Cashier table floor should include the seeded table.');

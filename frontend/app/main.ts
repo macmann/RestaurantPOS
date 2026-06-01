@@ -282,7 +282,7 @@ function translationInputName(index: number): string {
 }
 
 function escapeHtml(value: string): string {
-  return value.replace(/[&<>"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[character] ?? character);
+  return value.replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character] ?? character);
 }
 
 function collectEnglishMyanmarTranslations(form: HTMLFormElement, entries: EnglishMyanmarTranslationEntry[]): Record<string, string> {
@@ -641,7 +641,8 @@ async function renderWaiterProgress(): Promise<HTMLElement> {
 }
 
 async function renderMenuAdmin(): Promise<HTMLElement> {
-  const section = page('Menu admin', 'Create items, route them to kitchen or bar, toggle availability, and flag promotions.');
+  const canEditMenuItems = Boolean(session?.permissions.includes(Actions.ManageSystem));
+  const section = page('Menu admin', canEditMenuItems ? 'Create, edit, delete, route, and promote menu items.' : 'Create items, route them to kitchen or bar, toggle availability, and flag promotions.');
   const state = await loadAdminMenuDashboard();
   const panel = el('section', 'admin-panel menu-admin-panel');
   const categories = state.categories;
@@ -658,7 +659,7 @@ async function renderMenuAdmin(): Promise<HTMLElement> {
     <article class="card admin-card">
       <h3>Create menu item</h3>
       <form class="staff-form item-form">
-        <label>Category<select name="categoryId">${categories.map((cat) => `<option value="${cat.id}">${cat.name}</option>`).join('')}</select></label>
+        <label>Category<select name="categoryId">${categories.map((cat) => `<option value="${escapeHtml(cat.id)}">${escapeHtml(cat.name)}</option>`).join('')}</select></label>
         <label>Name<input name="name" required placeholder="Tea leaf salad" /></label>
         <label>Price<input name="price" type="number" min="0" step="0.01" required /></label>
         <label>Station<select name="prepStation"><option value="kitchen">Kitchen</option><option value="bar">Bar</option></select></label>
@@ -676,15 +677,48 @@ async function renderMenuAdmin(): Promise<HTMLElement> {
     if (!category.items.length) card.append(emptyState('No menu items in this category.'));
     for (const item of category.items) {
       const row = el('div', 'menu-admin-row');
-      row.innerHTML = `<div><strong>${item.name}</strong><small>${money(item.price)} · ${item.prepStation ?? 'service'}${item.description ? ` · ${item.description}` : ''}</small></div>`;
+      let editForm: HTMLFormElement | undefined;
+      row.innerHTML = `<div><strong>${escapeHtml(item.name)}</strong><small>${money(item.price)} · ${escapeHtml(item.prepStation ?? 'service')}${item.description ? ` · ${escapeHtml(item.description)}` : ''}</small></div>`;
       row.append(badge(item.isAvailable ? 'available' : 'hidden', item.isAvailable ? 'ready' : 'queued'));
       row.append(badge(item.isPromotional ? 'promo' : 'regular'));
+      const actions = el('div', 'menu-admin-actions');
       const availability = el('button', 'secondary', item.isAvailable ? 'Hide' : 'Show');
+      availability.type = 'button';
       availability.addEventListener('click', async () => { await apiClient.setMenuItemAvailability(item.id, !item.isAvailable); render(); });
       const promo = el('button', 'secondary', item.isPromotional ? 'Remove promo' : 'Make promo');
+      promo.type = 'button';
       promo.addEventListener('click', async () => { await apiClient.setMenuItemPromotional(item.id, !item.isPromotional); render(); });
-      row.append(availability, promo);
+      actions.append(availability, promo);
+      if (canEditMenuItems) {
+        const edit = el('button', 'secondary', 'Edit');
+        edit.type = 'button';
+        const remove = el('button', 'secondary danger', 'Delete');
+        remove.type = 'button';
+        remove.addEventListener('click', async () => {
+          if (!window.confirm(`Delete ${item.name}? This cannot be undone.`)) return;
+          await apiClient.deleteMenuItem(item.id);
+          render();
+        });
+        actions.append(edit, remove);
+        editForm = el('form', 'staff-form menu-item-edit-form');
+        editForm.hidden = true;
+        editForm.dataset.itemId = item.id;
+        editForm.innerHTML = `
+          <label>Category<select name="categoryId">${categories.map((cat) => `<option value="${escapeHtml(cat.id)}" ${cat.id === item.categoryId ? 'selected' : ''}>${escapeHtml(cat.name)}</option>`).join('')}</select></label>
+          <label>Name<input name="name" required value="${escapeHtml(item.name)}" /></label>
+          <label>Price<input name="price" type="number" min="0" step="0.01" required value="${item.price}" /></label>
+          <label>Station<select name="prepStation"><option value="kitchen" ${item.prepStation === 'kitchen' ? 'selected' : ''}>Kitchen</option><option value="bar" ${item.prepStation === 'bar' ? 'selected' : ''}>Bar</option></select></label>
+          <label>Description<input name="description" value="${escapeHtml(item.description ?? '')}" /></label>
+          <button type="submit">Save item</button>
+          <button type="button" class="secondary cancel-edit">Cancel</button>
+        `;
+        const formForItem = editForm;
+        edit.addEventListener('click', () => { formForItem.hidden = !formForItem.hidden; });
+        formForItem.querySelector<HTMLButtonElement>('.cancel-edit')?.addEventListener('click', () => { formForItem.hidden = true; });
+      }
+      row.append(actions);
       card.append(row);
+      if (editForm) card.append(editForm);
     }
     list.append(card);
   }
@@ -707,6 +741,18 @@ async function renderMenuAdmin(): Promise<HTMLElement> {
     });
     render();
   });
+  panel.querySelectorAll<HTMLFormElement>('.menu-item-edit-form').forEach((form) => form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const data = new FormData(form);
+    await apiClient.updateMenuItem(form.dataset.itemId!, {
+      categoryId: String(data.get('categoryId') ?? ''),
+      name: String(data.get('name') ?? ''),
+      description: String(data.get('description') ?? '') || undefined,
+      price: Number(data.get('price') ?? 0),
+      prepStation: String(data.get('prepStation') ?? 'kitchen') as 'kitchen' | 'bar',
+    });
+    render();
+  }));
   section.append(panel);
   return section;
 }
