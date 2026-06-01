@@ -22,19 +22,32 @@ interface SuperadminPrinterSettings {
   displayName: string;
 }
 
+interface RestaurantBillInfo {
+  restaurantName: string;
+  address: string;
+  contact: string;
+  taxId?: string;
+  receiptFooter?: string;
+}
+
 interface SuperadminOperationalSettings {
-  restaurantBillInfo: {
-    restaurantName: string;
-    address: string;
-    contact: string;
-    taxId?: string;
-    receiptFooter?: string;
-  };
+  restaurantBillInfo: RestaurantBillInfo;
   printers: {
     receipt: SuperadminPrinterSettings;
     kitchen: SuperadminPrinterSettings;
     bar: SuperadminPrinterSettings;
   };
+}
+
+interface RuntimeSettingsResponse {
+  branch?: {
+    branchName?: string;
+    address?: string;
+    contactNumber?: string;
+  };
+  pos?: Partial<SuperadminOperationalSettings>;
+  restaurantBillInfo?: Partial<RestaurantBillInfo>;
+  printers?: Partial<Record<keyof SuperadminOperationalSettings['printers'], Partial<SuperadminPrinterSettings>>>;
 }
 
 const rootElement = document.querySelector<HTMLDivElement>('#app');
@@ -242,6 +255,36 @@ function roleOptions(selectedRole?: string): string {
 }
 
 
+function normalizePrinterSettings(label: string, printer?: Partial<SuperadminPrinterSettings>): SuperadminPrinterSettings {
+  return {
+    enabled: Boolean(printer?.enabled),
+    displayName: printer?.displayName?.trim() || `${label} printer`,
+    printerId: printer?.printerId?.trim() || 'Not configured',
+  };
+}
+
+function normalizeOperationalSettings(response: unknown): SuperadminOperationalSettings {
+  const runtimeSettings = (response ?? {}) as RuntimeSettingsResponse;
+  const posSettings = runtimeSettings.pos ?? runtimeSettings;
+  const billInfo = posSettings.restaurantBillInfo ?? runtimeSettings.restaurantBillInfo ?? {};
+  const branch = runtimeSettings.branch ?? {};
+
+  return {
+    restaurantBillInfo: {
+      restaurantName: billInfo.restaurantName?.trim() || branch.branchName?.trim() || APP_NAME,
+      address: billInfo.address?.trim() || branch.address?.trim() || 'Address not configured',
+      contact: billInfo.contact?.trim() || branch.contactNumber?.trim() || 'Contact not configured',
+      taxId: billInfo.taxId?.trim() || undefined,
+      receiptFooter: billInfo.receiptFooter?.trim() || undefined,
+    },
+    printers: {
+      receipt: normalizePrinterSettings('Receipt', posSettings.printers?.receipt),
+      kitchen: normalizePrinterSettings('Kitchen', posSettings.printers?.kitchen),
+      bar: normalizePrinterSettings('Bar', posSettings.printers?.bar),
+    },
+  };
+}
+
 function printerStatusCard(label: string, printer: SuperadminPrinterSettings): string {
   const status = printer.enabled ? 'Online' : 'Paused';
   const statusClass = printer.enabled ? 'ready' : 'warning';
@@ -275,7 +318,7 @@ async function renderStaffSettings(isSuperadminPanel = false): Promise<HTMLEleme
 
   const panel = el('section', isSuperadminPanel ? 'admin-panel superadmin-panel' : 'admin-panel');
   const [users, settingsResponse] = await Promise.all([apiClient.listUsers(), apiClient.getSettings()]);
-  const settings = settingsResponse as SuperadminOperationalSettings;
+  const settings = normalizeOperationalSettings(settingsResponse);
   const activeUsers = users.filter((user) => user.status === 'active').length;
   const inactiveUsers = users.length - activeUsers;
   const roleCount = new Set(users.flatMap((user) => Array.isArray(user.role) ? user.role : [user.role])).size;
@@ -321,7 +364,7 @@ async function renderStaffSettings(isSuperadminPanel = false): Promise<HTMLEleme
     ` : `
       <article class="card admin-card">
         <h3>Runtime settings</h3>
-        <pre class="json-preview compact">${JSON.stringify(settings, null, 2)}</pre>
+        <pre class="json-preview compact">${JSON.stringify(settingsResponse, null, 2)}</pre>
       </article>
     `}
   `;
