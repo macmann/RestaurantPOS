@@ -519,7 +519,7 @@ export class RestaurantApiClient {
     return this.request('/api/menu/items', { method: 'POST', body: input });
   }
 
-  updateMenuItem(itemId: string, input: { name?: string; description?: string; price?: number; prepStation?: 'kitchen' | 'bar'; isAvailable?: boolean; isPromotional?: boolean }) {
+  updateMenuItem(itemId: string, input: { categoryId?: string; name?: string; description?: string; price?: number; prepStation?: 'kitchen' | 'bar'; isAvailable?: boolean; isPromotional?: boolean }) {
     return this.request(`/api/menu/items/${encodeURIComponent(itemId)}`, { method: 'PATCH', body: input });
   }
 

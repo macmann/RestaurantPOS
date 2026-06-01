@@ -214,6 +214,9 @@ button { min-height: var(--tap); touch-action: manipulation; }
 .ticket-head strong { font-size: 1.15rem; }
 .ticket-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
 .ticket-actions button, .menu-admin-row button { padding: 0.68rem 0.85rem; }
+.menu-admin-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; justify-content: flex-end; }
+.menu-item-edit-form { width: 100%; margin-top: 0.85rem; padding: 0.85rem; border: 1px dashed var(--line); border-radius: var(--radius-sm); background: var(--surface-soft); }
+.menu-admin-row .danger, .menu-item-edit-form .cancel-edit { background: linear-gradient(135deg, var(--danger), #f97316); }
 .progress-lanes { grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr)); }
 .progress-lane { padding: 1rem; }
 .progress-row { border-top: 1px solid var(--line); padding: 0.8rem 0; }
