@@ -302,6 +302,10 @@ button { min-height: var(--tap); touch-action: manipulation; }
 .superadmin-printer-card strong { font-size: 1rem; }
 .superadmin-printer-card .badge { width: fit-content; }
 .superadmin-printer-card small { overflow-wrap: anywhere; }
+.superadmin-localization-card { grid-column: 1 / -1; }
+.locale-preview { display: grid; gap: 0.35rem; border: 1px solid var(--line); border-radius: 0.9rem; background: #f8fafc; padding: 0.9rem; }
+.locale-preview strong { font-size: 1.1rem; }
+.locale-preview span, .locale-preview small { color: var(--muted); line-height: 1.45; }
 .superadmin-page .admin-launchpad { margin-top: 0; }
 .superadmin-page .admin-launchpad button { display: grid; gap: 0.35rem; min-height: 7.5rem; text-align: left; background: linear-gradient(135deg, #0f766e, #2563eb); transition: transform 140ms ease, box-shadow 140ms ease; }
 .superadmin-page .admin-launchpad button:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); }

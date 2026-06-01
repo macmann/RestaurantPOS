@@ -13,6 +13,8 @@ import type { OrderRecord, OrderStatus } from '../../backend/orders/repository';
 import type { KdsSnapshot } from '../../backend/kds/service';
 import type { TableFloorState } from '../../backend/tables/service';
 import type { ReceiptPayload, SplitLabel, TableOrderItem } from '../../backend/billing/repository';
+import { buildLocaleSwitchState, getLocaleResource, getTypographyForLocale, listLocaleOptions, normalizeLocale, setActiveLocale, verifyUnicodeCompatibility } from '../i18n/locale-switcher';
+import type { SupportedLocale } from '../../backend/i18n/resources';
 
 const APP_NAME = 'SYM POS';
 
@@ -37,6 +39,9 @@ interface SuperadminOperationalSettings {
     kitchen: SuperadminPrinterSettings;
     bar: SuperadminPrinterSettings;
   };
+  localization: {
+    defaultLocale: SupportedLocale;
+  };
 }
 
 interface RuntimeSettingsResponse {
@@ -48,6 +53,7 @@ interface RuntimeSettingsResponse {
   pos?: Partial<SuperadminOperationalSettings>;
   restaurantBillInfo?: Partial<RestaurantBillInfo>;
   printers?: Partial<Record<keyof SuperadminOperationalSettings['printers'], Partial<SuperadminPrinterSettings>>>;
+  localization?: Partial<SuperadminOperationalSettings['localization']>;
 }
 
 const rootElement = document.querySelector<HTMLDivElement>('#app');
@@ -268,6 +274,7 @@ function normalizeOperationalSettings(response: unknown): SuperadminOperationalS
   const posSettings = runtimeSettings.pos ?? runtimeSettings;
   const billInfo = posSettings.restaurantBillInfo ?? runtimeSettings.restaurantBillInfo ?? {};
   const branch = runtimeSettings.branch ?? {};
+  const localization = posSettings.localization ?? runtimeSettings.localization ?? {};
 
   return {
     restaurantBillInfo: {
@@ -282,6 +289,9 @@ function normalizeOperationalSettings(response: unknown): SuperadminOperationalS
       kitchen: normalizePrinterSettings('Kitchen', posSettings.printers?.kitchen),
       bar: normalizePrinterSettings('Bar', posSettings.printers?.bar),
     },
+    localization: {
+      defaultLocale: normalizeLocale(localization.defaultLocale),
+    },
   };
 }
 
@@ -295,6 +305,41 @@ function printerStatusCard(label: string, printer: SuperadminPrinterSettings): s
       <span>${printer.displayName}</span>
       <small>${printer.printerId}</small>
     </div>
+  `;
+}
+
+
+function localeOptionsHtml(selectedLocale: SupportedLocale): string {
+  return listLocaleOptions().map((option) => `
+    <option value="${option.locale}" ${option.locale === selectedLocale ? 'selected' : ''}>${option.label}</option>
+  `).join('');
+}
+
+function superadminLocalizationCard(defaultLocale: SupportedLocale): string {
+  const resource = getLocaleResource(defaultLocale);
+  const switchState = buildLocaleSwitchState(defaultLocale);
+  const unicode = verifyUnicodeCompatibility(defaultLocale);
+  return `
+    <article class="card admin-card settings-card superadmin-localization-card">
+      <div>
+        <p class="eyebrow">Localization</p>
+        <h3>Restaurant language</h3>
+        <p class="muted">Choose the default UI, report, and receipt language for this branch.</p>
+      </div>
+      <form class="staff-form localization-form">
+        <label>${switchState.label}
+          <select name="defaultLocale">${localeOptionsHtml(defaultLocale)}</select>
+        </label>
+        <div class="locale-preview" style="font-family: ${resource.fontStack}; direction: ${resource.direction};">
+          <strong>${resource.nativeName}</strong>
+          <span>${resource.screens.billing} · ${resource.common.receipt} · ${resource.common.total_due}</span>
+          <small>${unicode.sample}</small>
+        </div>
+        <p class="muted">Receipt font stack: ${unicode.recommendedFonts.join(', ')}</p>
+        <button type="submit">Save language</button>
+        <p class="form-error" hidden></p>
+      </form>
+    </article>
   `;
 }
 
@@ -319,6 +364,10 @@ async function renderStaffSettings(isSuperadminPanel = false): Promise<HTMLEleme
   const panel = el('section', isSuperadminPanel ? 'admin-panel superadmin-panel' : 'admin-panel');
   const [users, settingsResponse] = await Promise.all([apiClient.listUsers(), apiClient.getSettings()]);
   const settings = normalizeOperationalSettings(settingsResponse);
+  const typography = getTypographyForLocale(settings.localization.defaultLocale);
+  setActiveLocale(settings.localization.defaultLocale);
+  root.style.fontFamily = typography.fontFamily;
+  root.dir = typography.direction;
   const activeUsers = users.filter((user) => user.status === 'active').length;
   const inactiveUsers = users.length - activeUsers;
   const roleCount = new Set(users.flatMap((user) => Array.isArray(user.role) ? user.role : [user.role])).size;
@@ -361,6 +410,7 @@ async function renderStaffSettings(isSuperadminPanel = false): Promise<HTMLEleme
           ${printerStatusCard('Bar', settings.printers.bar)}
         </div>
       </article>
+      ${superadminLocalizationCard(settings.localization.defaultLocale)}
     ` : `
       <article class="card admin-card">
         <h3>Runtime settings</h3>
@@ -406,6 +456,26 @@ async function renderStaffSettings(isSuperadminPanel = false): Promise<HTMLEleme
   table.append(body);
   panel.append(table);
   section.append(panel);
+
+  panel.querySelector<HTMLFormElement>('.localization-form')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget as HTMLFormElement;
+    const data = new FormData(form);
+    const error = form.querySelector<HTMLParagraphElement>('.form-error');
+    try {
+      await apiClient.updateSettings({
+        pos: {
+          localization: { defaultLocale: normalizeLocale(String(data.get('defaultLocale') ?? settings.localization.defaultLocale)) },
+        },
+      });
+      render();
+    } catch (caught) {
+      if (error) {
+        error.hidden = false;
+        error.textContent = caught instanceof Error ? caught.message : 'Unable to save language.';
+      }
+    }
+  });
 
   panel.querySelector<HTMLFormElement>('.staff-form')?.addEventListener('submit', async (event) => {
     event.preventDefault();

@@ -323,12 +323,11 @@ function updateBillStateAndBreakdown(bill: BillRecord): BillRecord {
 function buildReceiptPayload(bill: BillRecord, localeInput?: string): ReceiptPayload {
   const totalPaid = round2(SPLIT_LABELS.reduce((sum, label) => sum + bill.splits[label].payments.reduce((paymentSum, payment) => paymentSum + getPaymentContribution(payment), 0), 0));
   const balanceDue = round2(Math.max(bill.calculationBreakdown.totalDue - totalPaid, 0));
-  const locale = normalizeLocale(localeInput);
+  const settings = getPosOperationalSettings();
+  const locale = normalizeLocale(localeInput ?? settings.localization.defaultLocale);
   const resource = getLocaleResource(locale);
   const typography = getTypographyForLocale(locale);
   const receiptCss = `font-family: ${typography.printFontFamily}; direction: ${typography.direction}; unicode-bidi: plaintext;`;
-
-  const settings = getPosOperationalSettings();
 
   return {
     receiptId: createId('receipt'),

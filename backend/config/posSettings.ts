@@ -1,4 +1,6 @@
 import { getRuntimeSettings } from './branch';
+import { DEFAULT_LOCALE, type SupportedLocale } from '../i18n/resources';
+import { normalizeLocale } from '../i18n/service';
 
 export interface RestaurantBillInfo {
   restaurantName: string;
@@ -20,9 +22,14 @@ export interface PrinterSettings {
   bar: PrinterDeviceConfig;
 }
 
+export interface LocalizationSettings {
+  defaultLocale: SupportedLocale;
+}
+
 export interface PosOperationalSettings {
   restaurantBillInfo: RestaurantBillInfo;
   printers: PrinterSettings;
+  localization: LocalizationSettings;
 }
 
 function envValue(key: string): string | undefined {
@@ -44,6 +51,9 @@ function defaultSettings(): PosOperationalSettings {
       kitchen: { enabled: envValue('POS_KITCHEN_PRINTER_ENABLED') !== 'false', printerId: envValue('POS_KITCHEN_PRINTER_ID') ?? 'kitchen-hotline', displayName: envValue('POS_KITCHEN_PRINTER_NAME') ?? 'Kitchen printer' },
       bar: { enabled: envValue('POS_BAR_PRINTER_ENABLED') !== 'false', printerId: envValue('POS_BAR_PRINTER_ID') ?? 'bar-service', displayName: envValue('POS_BAR_PRINTER_NAME') ?? 'Bar printer' },
     },
+    localization: {
+      defaultLocale: normalizeLocale(envValue('POS_DEFAULT_LOCALE') ?? envValue('DEFAULT_LOCALE') ?? DEFAULT_LOCALE),
+    },
   };
 }
 
@@ -52,6 +62,12 @@ let currentSettings: PosOperationalSettings = defaultSettings();
 function cleanText(value: unknown, fallback: string): string {
   const text = String(value ?? '').trim();
   return text || fallback;
+}
+
+function normalizeLocalization(input: Partial<LocalizationSettings> | undefined, fallback: LocalizationSettings): LocalizationSettings {
+  return {
+    defaultLocale: normalizeLocale(input?.defaultLocale ?? fallback.defaultLocale),
+  };
 }
 
 function normalizePrinter(input: Partial<PrinterDeviceConfig> | undefined, fallback: PrinterDeviceConfig): PrinterDeviceConfig {
@@ -80,6 +96,7 @@ export function updatePosOperationalSettings(input: Partial<PosOperationalSettin
       kitchen: normalizePrinter(input.printers?.kitchen, currentSettings.printers.kitchen),
       bar: normalizePrinter(input.printers?.bar, currentSettings.printers.bar),
     },
+    localization: normalizeLocalization(input.localization, currentSettings.localization),
   };
   return getPosOperationalSettings();
 }

@@ -5,6 +5,7 @@ import { generateBillFromSessionItems, printBillReceipt, recordSplitPayment, ref
 import { resetCashDrawerAdapter } from '../backend/hardware/cashDrawer';
 import { resetReceiptPrinterAdapter } from '../backend/hardware/receiptPrinter';
 import { resetPaymentTerminalAdapter } from '../backend/integrations/paymentTerminal';
+import { updatePosOperationalSettings } from '../backend/config/posSettings';
 import { createTable, openTableSession } from '../backend/tables/service';
 import type { AuthenticatedUser } from '../backend/auth/policies';
 
@@ -56,6 +57,13 @@ async function runHardwareBillingIntegration(): Promise<void> {
   assert(printed.fontFamily.includes('Myanmar') || printed.fontFamily.includes('Padauk') || printed.fontFamily.includes('Pyidaungsu'), 'Myanmar receipt should select a Myanmar-capable print font.');
   assert(printed.renderedText.includes('ဘောင်ချာ'), 'Rendered receipt should include localized Myanmar labels.');
   assertEqual(printer.jobs.length, 1, 'Simulator printer should capture the receipt job.');
+
+  updatePosOperationalSettings({ localization: { defaultLocale: 'my' } });
+  const defaultLocaleFixture = await createBillFixture('default-locale', 15);
+  const defaultLocalePrint = await printBillReceipt({ tableSessionId: defaultLocaleFixture.session.id, actorUserId: defaultLocaleFixture.cashier.id });
+  assertEqual(defaultLocalePrint.locale, 'my', 'Receipt printing should use the configured Myanmar default locale when no locale override is supplied.');
+  assert(defaultLocalePrint.renderedText.includes('ဘောင်ချာ'), 'Default-locale receipt should render Myanmar labels.');
+  updatePosOperationalSettings({ localization: { defaultLocale: 'en' } });
 
   const cashFixture = await createBillFixture('cash', 25);
   await recordSplitPayment({ tableSessionId: cashFixture.session.id, splitLabel: 'A', amount: 25, method: 'cash', actorUserId: cashFixture.cashier.id });
