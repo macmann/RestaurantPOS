@@ -9,6 +9,7 @@ import { loadAdminMenuDashboard } from '../admin/menu-management';
 import { loadAdminAuditViewer } from '../admin/audit-viewer';
 import { ApiClientError, apiClient } from '../api/client';
 import { loadCashierTableFloor } from '../cashier/table-floor';
+import { closePaidTableFromBillingScreen } from '../billing/billing-screen';
 import type { OrderRecord, OrderStatus } from '../../backend/orders/repository';
 import type { KdsSnapshot } from '../../backend/kds/service';
 import type { TableFloorState } from '../../backend/tables/service';
@@ -1690,13 +1691,19 @@ async function renderBillingDesk(): Promise<HTMLElement> {
         status.textContent = caught instanceof Error ? caught.message : 'Unable to print receipt.';
       }
     });
-    billActions.querySelector<HTMLButtonElement>('.close-table')?.addEventListener('click', async () => {
+    billActions.querySelector<HTMLButtonElement>('.close-table')?.addEventListener('click', async (event) => {
+      const button = event.currentTarget as HTMLButtonElement;
+      button.disabled = true;
+      status.hidden = false;
+      status.textContent = 'Closing paid table…';
       try {
         await advanceSessionOrdersForClose(selectedSessionId);
-        await apiClient.closeTableSession(session!.user.id, selectedSessionId);
+        await closePaidTableFromBillingScreen({ user: session!.user, tableSessionId: selectedSessionId, branchId: session!.user.branchId });
         selectedTableId = undefined;
+        status.textContent = 'Paid table closed and returned to available.';
         render();
       } catch (caught) {
+        button.disabled = receipt!.balanceDue > 0 || !cashierMode;
         status.hidden = false;
         status.textContent = caught instanceof Error ? caught.message : 'Unable to close table.';
       }
