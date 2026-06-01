@@ -54,6 +54,10 @@ async function runBrowserScreenE2e(): Promise<void> {
   assert(!canAccessRoute(appRoutes.find((route) => route.path === '#/audit')!, permissionsFor('cashier') as any), 'Cashier browser navigation should hide audit route.');
   assert(canAccessRoute(appRoutes.find((route) => route.path === '#/audit')!, permissionsFor('manager') as any), 'Manager browser navigation should expose audit route.');
 
+  const superadminRoutes = visibleRoutes(permissionsFor('superadmin') as any);
+  assert(superadminRoutes.some((route) => route.path === '#/localization'), 'Superadmin browser navigation should expose localization route.');
+  assert(canAccessRoute(appRoutes.find((route) => route.path === '#/localization')!, permissionsFor('superadmin') as any), 'Superadmin browser navigation should allow localization route.');
+
   const tableFloor = await loadCashierTableFloor(branchId, 'en');
   assert(tableFloor.tables.some((row) => row.table.id === table.id && row.status === 'occupied'), 'Cashier table-floor screen should render the occupied session.');
 

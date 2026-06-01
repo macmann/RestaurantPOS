@@ -21,6 +21,7 @@ export const appRoutes: AppRoute[] = [
   { path: '#/reports', label: 'Reports', section: 'admin', requiredPermissions: [Actions.ViewReports] },
   { path: '#/audit', label: 'Audit', section: 'admin', requiredPermissions: [Actions.ViewAudit] },
   { path: '#/superadmin', label: 'Super admin panel', section: 'admin', requiredPermissions: [Actions.ManageSystem] },
+  { path: '#/localization', label: 'Localization', section: 'admin', requiredPermissions: [Actions.ManageSystem] },
   { path: '#/bill-settings', label: 'Bill & printer settings', section: 'admin', requiredPermissions: [Actions.ManageSystem] },
   { path: '#/staff-settings', label: 'Staff & settings', section: 'admin', requiredPermissions: [Actions.ManageStaff] },
 ];
