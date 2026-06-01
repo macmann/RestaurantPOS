@@ -3,7 +3,10 @@ import { DEFAULT_LOCALE, localeResources, type LocaleResource, type SupportedLoc
 let activeLocale: SupportedLocale = normalizeLocale();
 
 export function normalizeLocale(locale?: string): SupportedLocale {
-  return locale === 'my' || locale === 'en' ? locale : DEFAULT_LOCALE;
+  const normalized = locale?.toLowerCase().replace('_', '-');
+  if (normalized === 'my' || normalized?.startsWith('my-')) return 'my';
+  if (normalized === 'en' || normalized?.startsWith('en-')) return 'en';
+  return DEFAULT_LOCALE;
 }
 
 export function getLocaleResource(locale?: string): LocaleResource {

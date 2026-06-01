@@ -4,6 +4,7 @@ import { getPosOperationalSettings } from '../config/posSettings';
 import { requireOpenTableSession } from '../tables/service';
 import { withTransaction } from '../db/client';
 import { getLocaleResource, getTypographyForLocale, normalizeLocale } from '../i18n/service';
+import { applyEnglishMyanmarLocalizationMap } from '../i18n/resources';
 import { getPaymentTerminalAdapter } from '../integrations/paymentTerminal';
 import { getCashDrawerAdapter } from '../hardware/cashDrawer';
 import { getReceiptPrinterAdapter, type ReceiptPrintResult } from '../hardware/receiptPrinter';
@@ -323,12 +324,11 @@ function updateBillStateAndBreakdown(bill: BillRecord): BillRecord {
 function buildReceiptPayload(bill: BillRecord, localeInput?: string): ReceiptPayload {
   const totalPaid = round2(SPLIT_LABELS.reduce((sum, label) => sum + bill.splits[label].payments.reduce((paymentSum, payment) => paymentSum + getPaymentContribution(payment), 0), 0));
   const balanceDue = round2(Math.max(bill.calculationBreakdown.totalDue - totalPaid, 0));
-  const locale = normalizeLocale(localeInput);
-  const resource = getLocaleResource(locale);
+  const settings = getPosOperationalSettings();
+  const locale = normalizeLocale(localeInput ?? settings.localization.defaultLocale);
+  const resource = applyEnglishMyanmarLocalizationMap(getLocaleResource(locale), settings.localization.englishToMyanmar);
   const typography = getTypographyForLocale(locale);
   const receiptCss = `font-family: ${typography.printFontFamily}; direction: ${typography.direction}; unicode-bidi: plaintext;`;
-
-  const settings = getPosOperationalSettings();
 
   return {
     receiptId: createId('receipt'),
