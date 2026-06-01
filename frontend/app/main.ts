@@ -375,6 +375,31 @@ function superadminLocalizationCard(defaultLocale: SupportedLocale, englishToMya
   `;
 }
 
+function attachLocalizationForm(container: ParentNode, settings: SuperadminOperationalSettings): void {
+  container.querySelector<HTMLFormElement>('.localization-form')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget as HTMLFormElement;
+    const data = new FormData(form);
+    const error = form.querySelector<HTMLParagraphElement>('.form-error');
+    try {
+      await apiClient.updateSettings({
+        pos: {
+          localization: {
+            defaultLocale: normalizeLocale(String(data.get('defaultLocale') ?? settings.localization.defaultLocale)),
+            englishToMyanmar: collectEnglishMyanmarTranslations(form, listEnglishMyanmarTranslationEntries(settings.localization.englishToMyanmar)),
+          },
+        },
+      });
+      render();
+    } catch (caught) {
+      if (error) {
+        error.hidden = false;
+        error.textContent = caught instanceof Error ? caught.message : 'Unable to save language.';
+      }
+    }
+  });
+}
+
 function rolesFor(user: AuthenticatedUser): string {
   return Array.isArray(user.role) ? user.role.join(',') : user.role;
 }
@@ -454,6 +479,7 @@ async function renderStaffSettings(isSuperadminPanel = false): Promise<HTMLEleme
   if (isSuperadminPanel) {
     const launchpad = el('section', 'admin-launchpad');
     launchpad.innerHTML = `
+      <button type="button" data-target="#/localization">Localization</button>
       <button type="button" data-target="#/bill-settings">Bill & printer setup</button>
       <button type="button" data-target="#/menu-admin">Menu setup</button>
       <button type="button" data-target="#/table-admin">Table layout</button>
@@ -489,28 +515,7 @@ async function renderStaffSettings(isSuperadminPanel = false): Promise<HTMLEleme
   panel.append(table);
   section.append(panel);
 
-  panel.querySelector<HTMLFormElement>('.localization-form')?.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    const form = event.currentTarget as HTMLFormElement;
-    const data = new FormData(form);
-    const error = form.querySelector<HTMLParagraphElement>('.form-error');
-    try {
-      await apiClient.updateSettings({
-        pos: {
-          localization: {
-            defaultLocale: normalizeLocale(String(data.get('defaultLocale') ?? settings.localization.defaultLocale)),
-            englishToMyanmar: collectEnglishMyanmarTranslations(form, listEnglishMyanmarTranslationEntries(settings.localization.englishToMyanmar)),
-          },
-        },
-      });
-      render();
-    } catch (caught) {
-      if (error) {
-        error.hidden = false;
-        error.textContent = caught instanceof Error ? caught.message : 'Unable to save language.';
-      }
-    }
-  });
+  attachLocalizationForm(panel, settings);
 
   panel.querySelector<HTMLFormElement>('.staff-form')?.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -745,6 +750,23 @@ async function renderInventoryAlerts(): Promise<HTMLElement> {
   return section;
 }
 
+
+async function renderLocalizationSettings(): Promise<HTMLElement> {
+  const section = page('Localization', 'Choose the default POS language and maintain Myanmar receipt labels.', ['Default language', 'Myanmar labels', 'Receipt fonts']);
+  section.classList.add('superadmin-page');
+  const settingsResponse = await apiClient.getSettings();
+  const settings = normalizeOperationalSettings(settingsResponse);
+  const typography = getTypographyForLocale(settings.localization.defaultLocale);
+  setActiveLocale(settings.localization.defaultLocale);
+  root.style.fontFamily = typography.fontFamily;
+  root.dir = typography.direction;
+
+  const panel = el('section', 'admin-panel localization-panel');
+  panel.innerHTML = superadminLocalizationCard(settings.localization.defaultLocale, settings.localization.englishToMyanmar);
+  section.append(panel);
+  attachLocalizationForm(panel, settings);
+  return section;
+}
 
 async function renderBillSettings(): Promise<HTMLElement> {
   const section = page('Bill & printer settings', 'Configure restaurant details printed on receipts and route order/receipt tickets to the correct devices.', ['Receipt header', 'Receipt printer', 'Kitchen printer', 'Bar printer']);
@@ -2058,6 +2080,9 @@ async function renderRoute(): Promise<void> {
       break;
     case '#/superadmin':
       content = await renderStaffSettings(true);
+      break;
+    case '#/localization':
+      content = await renderLocalizationSettings();
       break;
     case '#/bill-settings':
       content = await renderBillSettings();
