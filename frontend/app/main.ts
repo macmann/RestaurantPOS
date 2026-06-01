@@ -13,7 +13,7 @@ import type { KdsSnapshot } from '../../backend/kds/service';
 import type { TableFloorState } from '../../backend/tables/service';
 import type { ReceiptPayload, SplitLabel, TableOrderItem } from '../../backend/billing/repository';
 import { buildLocaleSwitchState, getLocaleResource, getTypographyForLocale, listLocaleOptions, normalizeLocale, setActiveLocale, verifyUnicodeCompatibility } from '../i18n/locale-switcher';
-import { listEnglishMyanmarTranslationEntries, type EnglishMyanmarTranslationEntry, type SupportedLocale } from '../../backend/i18n/resources';
+import { buildEnglishMyanmarLocalizationMap, listEnglishMyanmarTranslationEntries, type EnglishMyanmarTranslationEntry, type SupportedLocale } from '../../backend/i18n/resources';
 
 const APP_NAME = 'SYM POS';
 
@@ -74,6 +74,8 @@ let loginNotice: string | undefined;
 let healthTimer: number | undefined;
 let selectedTableId: string | undefined;
 let selectedSplitCount = 1;
+let activeUiLocale: SupportedLocale = normalizeLocale();
+let englishToMyanmarUiLabels: Record<string, string> = buildEnglishMyanmarLocalizationMap();
 
 apiClient.onNetworkStatus((status, detail) => {
   apiStatus = status;
@@ -98,6 +100,64 @@ window.addEventListener('hashchange', () => {
   route = window.location.hash || defaultRoute(session?.permissions ?? []).path;
   render();
 });
+
+
+function translateUiText(value: string): string {
+  if (activeUiLocale !== 'my') return value;
+  const trimmed = value.trim();
+  if (!trimmed) return value;
+  const exact = englishToMyanmarUiLabels[trimmed];
+  if (exact) return value.replace(trimmed, exact);
+
+  let translated = value;
+  const phraseEntries = Object.entries(englishToMyanmarUiLabels)
+    .filter(([english]) => english.length > 2 && /[A-Za-z]/.test(english))
+    .sort((a, b) => b[0].length - a[0].length);
+  for (const [english, myanmar] of phraseEntries) {
+    if (!myanmar || !translated.includes(english)) continue;
+    const escaped = english.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    translated = translated.replace(new RegExp(`(^|[^A-Za-z])(${escaped})(?=$|[^A-Za-z])`, 'g'), (_match, prefix) => `${prefix}${myanmar}`);
+  }
+  return translated;
+}
+
+function translateUiHtml(value: string): string {
+  return escapeHtml(translateUiText(value));
+}
+
+function localizeElementText(rootNode: ParentNode): void {
+  if (activeUiLocale !== 'my') return;
+  const walker = document.createTreeWalker(rootNode, NodeFilter.SHOW_TEXT);
+  const textNodes: Text[] = [];
+  while (walker.nextNode()) textNodes.push(walker.currentNode as Text);
+  for (const node of textNodes) {
+    const parent = node.parentElement;
+    if (!parent || ['SCRIPT', 'STYLE', 'PRE', 'CODE'].includes(parent.tagName)) continue;
+    node.textContent = translateUiText(node.textContent ?? '');
+  }
+
+  const localizedAttributes = ['aria-label', 'placeholder', 'title'];
+  rootNode.querySelectorAll<HTMLElement>('*').forEach((element) => {
+    for (const attribute of localizedAttributes) {
+      const value = element.getAttribute(attribute);
+      if (value) element.setAttribute(attribute, translateUiText(value));
+    }
+  });
+}
+
+async function syncApplicationLocale(): Promise<void> {
+  try {
+    const settings = normalizeOperationalSettings(await apiClient.getSettings());
+    activeUiLocale = setActiveLocale(settings.localization.defaultLocale);
+    englishToMyanmarUiLabels = { ...buildEnglishMyanmarLocalizationMap(), ...settings.localization.englishToMyanmar };
+  } catch {
+    activeUiLocale = setActiveLocale(activeUiLocale);
+    englishToMyanmarUiLabels = buildEnglishMyanmarLocalizationMap();
+  }
+  const typography = getTypographyForLocale(activeUiLocale);
+  root.style.fontFamily = typography.fontFamily;
+  root.dir = typography.direction;
+}
 
 function navigate(path: string): void {
   if (window.location.hash === path) render();
@@ -199,12 +259,12 @@ function renderShell(content: HTMLElement): void {
 
   const mobileNav = el('div', 'mobile-route-bar');
   mobileNav.innerHTML = `
-    <div class="mobile-route-brand">${brandLogo()}<div><strong>${APP_NAME}</strong><span>${current.label}</span></div></div>
+    <div class="mobile-route-brand">${brandLogo()}<div><strong>${APP_NAME}</strong><span>${translateUiHtml(current.label)}</span></div></div>
   `;
   const routeSelect = el('select');
-  routeSelect.setAttribute('aria-label', 'Switch POS section');
+  routeSelect.setAttribute('aria-label', translateUiText('Switch POS section'));
   for (const item of available) {
-    const option = el('option', '', item.label);
+    const option = el('option', '', translateUiText(item.label));
     option.value = item.path;
     option.selected = item.path === current.path;
     routeSelect.append(option);
@@ -215,17 +275,17 @@ function renderShell(content: HTMLElement): void {
   for (const section of ['operations', 'admin'] as const) {
     const groupRoutes = available.filter((item) => item.section === section);
     if (!groupRoutes.length) continue;
-    const heading = el('h2', '', section === 'operations' ? 'Operations' : 'Administration');
+    const heading = el('h2', '', translateUiText(section === 'operations' ? 'Operations' : 'Administration'));
     const nav = el('nav');
     for (const item of groupRoutes) {
-      const link = el('a', item.path === current.path ? 'active' : '', item.label);
+      const link = el('a', item.path === current.path ? 'active' : '', translateUiText(item.label));
       link.href = item.path;
       nav.append(link);
     }
     sidebar.append(heading, nav);
   }
 
-  const signOut = el('button', 'secondary', 'Sign out');
+  const signOut = el('button', 'secondary', translateUiText('Sign out'));
   signOut.addEventListener('click', () => {
     void logout().finally(() => {
       session = null;
@@ -248,11 +308,11 @@ function renderShell(content: HTMLElement): void {
 function page(title: string, subtitle: string, actions: string[] = []): HTMLElement {
   const section = el('section', 'page');
   const header = el('header', 'page-header');
-  header.innerHTML = `<p class="eyebrow">${APP_NAME} client</p><h2>${title}</h2><p>${subtitle}</p>`;
+  header.innerHTML = `<p class="eyebrow">${APP_NAME} ${translateUiHtml('client')}</p><h2>${translateUiHtml(title)}</h2><p>${translateUiHtml(subtitle)}</p>`;
   const grid = el('div', 'card-grid');
   for (const action of actions) {
     const card = el('article', 'card');
-    card.innerHTML = `<h3>${action}</h3><p>Ready for day-to-day restaurant operations from one secure workspace.</p>`;
+    card.innerHTML = `<h3>${translateUiHtml(action)}</h3><p>${translateUiHtml('Ready for day-to-day restaurant operations from one secure workspace.')}</p>`;
     grid.append(card);
   }
   section.append(header, grid);
@@ -2180,6 +2240,7 @@ async function renderRestaurantPos(): Promise<HTMLElement> {
 
 async function renderRoute(): Promise<void> {
   if (!session) return renderLogin();
+  await syncApplicationLocale();
   const current = activeRoute();
   let content: HTMLElement;
 
@@ -2236,10 +2297,11 @@ async function renderRoute(): Promise<void> {
       content = await renderStaffSettings();
       break;
     default:
-      content = page(current.label, 'Route shell ready for production workflows.');
+      content = page(translateUiText(current.label), translateUiText('Route shell ready for production workflows.'));
   }
 
   renderShell(content);
+  localizeElementText(root);
 }
 
 function render(): void {
