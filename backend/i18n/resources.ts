@@ -1,5 +1,7 @@
 export type SupportedLocale = 'en' | 'my';
 
+export type LocalizableNamespace = 'paymentLabels' | 'billStatuses' | 'reportHeadings' | 'common' | 'screens';
+
 export interface LocaleResource {
   locale: SupportedLocale;
   nativeName: string;
@@ -16,6 +18,14 @@ export interface LocaleResource {
 
 export const DEFAULT_LOCALE: SupportedLocale = 'en';
 export const REQUIRED_LOCALE: SupportedLocale = 'my';
+export const LOCALIZABLE_NAMESPACES: LocalizableNamespace[] = ['paymentLabels', 'billStatuses', 'reportHeadings', 'common', 'screens'];
+
+export interface EnglishMyanmarTranslationEntry {
+  namespace: LocalizableNamespace;
+  key: string;
+  english: string;
+  myanmar: string;
+}
 
 const burmeseFontStack = "'Noto Sans Myanmar', 'Padauk', 'Myanmar Text', 'Pyidaungsu', sans-serif";
 
@@ -161,3 +171,36 @@ export const localeResources: Record<SupportedLocale, LocaleResource> = {
     },
   },
 };
+
+
+export function buildEnglishMyanmarLocalizationMap(): Record<string, string> {
+  const mapping: Record<string, string> = {};
+  for (const namespace of LOCALIZABLE_NAMESPACES) {
+    for (const [key, english] of Object.entries(localeResources.en[namespace])) {
+      mapping[english] = localeResources.my[namespace][key] ?? english;
+    }
+  }
+  return mapping;
+}
+
+export function listEnglishMyanmarTranslationEntries(overrides: Record<string, string> = {}): EnglishMyanmarTranslationEntry[] {
+  return LOCALIZABLE_NAMESPACES.flatMap((namespace) => Object.entries(localeResources.en[namespace]).map(([key, english]) => ({
+    namespace,
+    key,
+    english,
+    myanmar: overrides[english] ?? localeResources.my[namespace][key] ?? english,
+  })));
+}
+
+export function applyEnglishMyanmarLocalizationMap(resource: LocaleResource, mapping: Record<string, string>): LocaleResource {
+  if (resource.locale !== 'my') return structuredClone(resource);
+
+  const localized = structuredClone(resource);
+  for (const namespace of LOCALIZABLE_NAMESPACES) {
+    for (const [key, english] of Object.entries(localeResources.en[namespace])) {
+      const mapped = mapping[english]?.trim();
+      if (mapped) localized[namespace][key] = mapped;
+    }
+  }
+  return localized;
+}

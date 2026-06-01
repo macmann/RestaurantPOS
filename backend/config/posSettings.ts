@@ -1,4 +1,6 @@
 import { getRuntimeSettings } from './branch';
+import { buildEnglishMyanmarLocalizationMap, DEFAULT_LOCALE, type SupportedLocale } from '../i18n/resources';
+import { normalizeLocale } from '../i18n/service';
 
 export interface RestaurantBillInfo {
   restaurantName: string;
@@ -20,9 +22,15 @@ export interface PrinterSettings {
   bar: PrinterDeviceConfig;
 }
 
+export interface LocalizationSettings {
+  defaultLocale: SupportedLocale;
+  englishToMyanmar: Record<string, string>;
+}
+
 export interface PosOperationalSettings {
   restaurantBillInfo: RestaurantBillInfo;
   printers: PrinterSettings;
+  localization: LocalizationSettings;
 }
 
 function envValue(key: string): string | undefined {
@@ -44,6 +52,10 @@ function defaultSettings(): PosOperationalSettings {
       kitchen: { enabled: envValue('POS_KITCHEN_PRINTER_ENABLED') !== 'false', printerId: envValue('POS_KITCHEN_PRINTER_ID') ?? 'kitchen-hotline', displayName: envValue('POS_KITCHEN_PRINTER_NAME') ?? 'Kitchen printer' },
       bar: { enabled: envValue('POS_BAR_PRINTER_ENABLED') !== 'false', printerId: envValue('POS_BAR_PRINTER_ID') ?? 'bar-service', displayName: envValue('POS_BAR_PRINTER_NAME') ?? 'Bar printer' },
     },
+    localization: {
+      defaultLocale: normalizeLocale(envValue('POS_DEFAULT_LOCALE') ?? envValue('DEFAULT_LOCALE') ?? DEFAULT_LOCALE),
+      englishToMyanmar: buildEnglishMyanmarLocalizationMap(),
+    },
   };
 }
 
@@ -52,6 +64,25 @@ let currentSettings: PosOperationalSettings = defaultSettings();
 function cleanText(value: unknown, fallback: string): string {
   const text = String(value ?? '').trim();
   return text || fallback;
+}
+
+function normalizeEnglishMyanmarMapping(input: unknown, fallback: Record<string, string>): Record<string, string> {
+  if (!input || Array.isArray(input) || typeof input !== 'object') return { ...fallback };
+
+  const cleaned: Record<string, string> = {};
+  for (const [english, myanmar] of Object.entries(input as Record<string, unknown>)) {
+    const normalizedEnglish = english.trim();
+    if (!normalizedEnglish) continue;
+    cleaned[normalizedEnglish] = String(myanmar ?? '').trim() || fallback[normalizedEnglish] || normalizedEnglish;
+  }
+  return { ...fallback, ...cleaned };
+}
+
+function normalizeLocalization(input: Partial<LocalizationSettings> | undefined, fallback: LocalizationSettings): LocalizationSettings {
+  return {
+    defaultLocale: normalizeLocale(input?.defaultLocale ?? fallback.defaultLocale),
+    englishToMyanmar: normalizeEnglishMyanmarMapping(input?.englishToMyanmar, fallback.englishToMyanmar),
+  };
 }
 
 function normalizePrinter(input: Partial<PrinterDeviceConfig> | undefined, fallback: PrinterDeviceConfig): PrinterDeviceConfig {
@@ -66,7 +97,11 @@ export function getPosOperationalSettings(): PosOperationalSettings {
   return structuredClone(currentSettings);
 }
 
-export function updatePosOperationalSettings(input: Partial<PosOperationalSettings>): PosOperationalSettings {
+type PosOperationalSettingsInput = Partial<Omit<PosOperationalSettings, 'localization'>> & {
+  localization?: Partial<LocalizationSettings>;
+};
+
+export function updatePosOperationalSettings(input: PosOperationalSettingsInput): PosOperationalSettings {
   currentSettings = {
     restaurantBillInfo: {
       restaurantName: cleanText(input.restaurantBillInfo?.restaurantName, currentSettings.restaurantBillInfo.restaurantName),
@@ -80,6 +115,7 @@ export function updatePosOperationalSettings(input: Partial<PosOperationalSettin
       kitchen: normalizePrinter(input.printers?.kitchen, currentSettings.printers.kitchen),
       bar: normalizePrinter(input.printers?.bar, currentSettings.printers.bar),
     },
+    localization: normalizeLocalization(input.localization, currentSettings.localization),
   };
   return getPosOperationalSettings();
 }

@@ -13,6 +13,8 @@ import type { OrderRecord, OrderStatus } from '../../backend/orders/repository';
 import type { KdsSnapshot } from '../../backend/kds/service';
 import type { TableFloorState } from '../../backend/tables/service';
 import type { ReceiptPayload, SplitLabel, TableOrderItem } from '../../backend/billing/repository';
+import { buildLocaleSwitchState, getLocaleResource, getTypographyForLocale, listLocaleOptions, normalizeLocale, setActiveLocale, verifyUnicodeCompatibility } from '../i18n/locale-switcher';
+import { listEnglishMyanmarTranslationEntries, type EnglishMyanmarTranslationEntry, type SupportedLocale } from '../../backend/i18n/resources';
 
 const APP_NAME = 'SYM POS';
 
@@ -37,6 +39,10 @@ interface SuperadminOperationalSettings {
     kitchen: SuperadminPrinterSettings;
     bar: SuperadminPrinterSettings;
   };
+  localization: {
+    defaultLocale: SupportedLocale;
+    englishToMyanmar: Record<string, string>;
+  };
 }
 
 interface RuntimeSettingsResponse {
@@ -48,6 +54,7 @@ interface RuntimeSettingsResponse {
   pos?: Partial<SuperadminOperationalSettings>;
   restaurantBillInfo?: Partial<RestaurantBillInfo>;
   printers?: Partial<Record<keyof SuperadminOperationalSettings['printers'], Partial<SuperadminPrinterSettings>>>;
+  localization?: Partial<SuperadminOperationalSettings['localization']>;
 }
 
 const rootElement = document.querySelector<HTMLDivElement>('#app');
@@ -263,11 +270,31 @@ function normalizePrinterSettings(label: string, printer?: Partial<SuperadminPri
   };
 }
 
+
+function settingsLocalizationMap(input: unknown): Record<string, string> {
+  if (!input || Array.isArray(input) || typeof input !== 'object') return {};
+  return Object.fromEntries(Object.entries(input as Record<string, unknown>).map(([english, myanmar]) => [english, String(myanmar ?? '')]));
+}
+
+function translationInputName(index: number): string {
+  return `translation_${index}`;
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[character] ?? character);
+}
+
+function collectEnglishMyanmarTranslations(form: HTMLFormElement, entries: EnglishMyanmarTranslationEntry[]): Record<string, string> {
+  const data = new FormData(form);
+  return Object.fromEntries(entries.map((entry, index) => [entry.english, String(data.get(translationInputName(index)) ?? entry.myanmar).trim() || entry.myanmar]));
+}
+
 function normalizeOperationalSettings(response: unknown): SuperadminOperationalSettings {
   const runtimeSettings = (response ?? {}) as RuntimeSettingsResponse;
   const posSettings = runtimeSettings.pos ?? runtimeSettings;
   const billInfo = posSettings.restaurantBillInfo ?? runtimeSettings.restaurantBillInfo ?? {};
   const branch = runtimeSettings.branch ?? {};
+  const localization = posSettings.localization ?? runtimeSettings.localization ?? {};
 
   return {
     restaurantBillInfo: {
@@ -282,6 +309,10 @@ function normalizeOperationalSettings(response: unknown): SuperadminOperationalS
       kitchen: normalizePrinterSettings('Kitchen', posSettings.printers?.kitchen),
       bar: normalizePrinterSettings('Bar', posSettings.printers?.bar),
     },
+    localization: {
+      defaultLocale: normalizeLocale(localization.defaultLocale),
+      englishToMyanmar: { ...settingsLocalizationMap(localization.englishToMyanmar) },
+    },
   };
 }
 
@@ -295,6 +326,51 @@ function printerStatusCard(label: string, printer: SuperadminPrinterSettings): s
       <span>${printer.displayName}</span>
       <small>${printer.printerId}</small>
     </div>
+  `;
+}
+
+
+function localeOptionsHtml(selectedLocale: SupportedLocale): string {
+  return listLocaleOptions().map((option) => `
+    <option value="${option.locale}" ${option.locale === selectedLocale ? 'selected' : ''}>${option.label}</option>
+  `).join('');
+}
+
+function superadminLocalizationCard(defaultLocale: SupportedLocale, englishToMyanmar: Record<string, string>): string {
+  const resource = getLocaleResource(defaultLocale);
+  const switchState = buildLocaleSwitchState(defaultLocale);
+  const unicode = verifyUnicodeCompatibility(defaultLocale);
+  const entries = listEnglishMyanmarTranslationEntries(englishToMyanmar);
+  return `
+    <article class="card admin-card settings-card superadmin-localization-card">
+      <div>
+        <p class="eyebrow">Localization</p>
+        <h3>Restaurant language & Myanmar labels</h3>
+        <p class="muted">Choose the default UI, report, and receipt language for this branch, then edit the English → Burmese label map used for Myanmar receipts and localized views.</p>
+      </div>
+      <form class="staff-form localization-form">
+        <label>${switchState.label}
+          <select name="defaultLocale">${localeOptionsHtml(defaultLocale)}</select>
+        </label>
+        <div class="locale-preview" style="font-family: ${resource.fontStack}; direction: ${resource.direction};">
+          <strong>${resource.nativeName}</strong>
+          <span>${resource.screens.billing} · ${resource.common.receipt} · ${resource.common.total_due}</span>
+          <small>${unicode.sample}</small>
+        </div>
+        <p class="muted">Receipt font stack: ${unicode.recommendedFonts.join(', ')}</p>
+        <div class="translation-map">
+          <div class="translation-map__header"><span>English label</span><span>Burmese label</span></div>
+          ${entries.map((entry, index) => `
+            <label class="translation-row">
+              <span><small>${entry.namespace}.${entry.key}</small><strong>${escapeHtml(entry.english)}</strong></span>
+              <input name="${translationInputName(index)}" value="${escapeHtml(entry.myanmar)}" lang="my" />
+            </label>
+          `).join('')}
+        </div>
+        <button type="submit">Save localization</button>
+        <p class="form-error" hidden></p>
+      </form>
+    </article>
   `;
 }
 
@@ -319,6 +395,10 @@ async function renderStaffSettings(isSuperadminPanel = false): Promise<HTMLEleme
   const panel = el('section', isSuperadminPanel ? 'admin-panel superadmin-panel' : 'admin-panel');
   const [users, settingsResponse] = await Promise.all([apiClient.listUsers(), apiClient.getSettings()]);
   const settings = normalizeOperationalSettings(settingsResponse);
+  const typography = getTypographyForLocale(settings.localization.defaultLocale);
+  setActiveLocale(settings.localization.defaultLocale);
+  root.style.fontFamily = typography.fontFamily;
+  root.dir = typography.direction;
   const activeUsers = users.filter((user) => user.status === 'active').length;
   const inactiveUsers = users.length - activeUsers;
   const roleCount = new Set(users.flatMap((user) => Array.isArray(user.role) ? user.role : [user.role])).size;
@@ -361,6 +441,7 @@ async function renderStaffSettings(isSuperadminPanel = false): Promise<HTMLEleme
           ${printerStatusCard('Bar', settings.printers.bar)}
         </div>
       </article>
+      ${superadminLocalizationCard(settings.localization.defaultLocale, settings.localization.englishToMyanmar)}
     ` : `
       <article class="card admin-card">
         <h3>Runtime settings</h3>
@@ -406,6 +487,29 @@ async function renderStaffSettings(isSuperadminPanel = false): Promise<HTMLEleme
   table.append(body);
   panel.append(table);
   section.append(panel);
+
+  panel.querySelector<HTMLFormElement>('.localization-form')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget as HTMLFormElement;
+    const data = new FormData(form);
+    const error = form.querySelector<HTMLParagraphElement>('.form-error');
+    try {
+      await apiClient.updateSettings({
+        pos: {
+          localization: {
+            defaultLocale: normalizeLocale(String(data.get('defaultLocale') ?? settings.localization.defaultLocale)),
+            englishToMyanmar: collectEnglishMyanmarTranslations(form, listEnglishMyanmarTranslationEntries(settings.localization.englishToMyanmar)),
+          },
+        },
+      });
+      render();
+    } catch (caught) {
+      if (error) {
+        error.hidden = false;
+        error.textContent = caught instanceof Error ? caught.message : 'Unable to save language.';
+      }
+    }
+  });
 
   panel.querySelector<HTMLFormElement>('.staff-form')?.addEventListener('submit', async (event) => {
     event.preventDefault();
