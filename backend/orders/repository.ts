@@ -8,7 +8,7 @@ export interface OrderItem {
   id: string;
   menuItemId: string;
   name: string;
-  station?: 'kitchen' | 'bar';
+  station?: string;
   quantity: number;
   unitPrice: number;
   note?: string;

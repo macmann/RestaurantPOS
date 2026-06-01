@@ -1,7 +1,7 @@
 import { isSqlRepositoryEnabled } from '../db/client';
 import { getRecord, listRecords, putRecord } from '../db/repositoryStore';
 
-export type Station = 'kitchen' | 'bar';
+export type Station = string;
 export type KdsProgress = 'queued' | 'preparing' | 'ready' | 'served';
 
 export interface KdsItemState {

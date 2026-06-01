@@ -252,8 +252,8 @@ function buildOrdersRouter(): Router {
   router.post('/:orderId/print', authorize(Actions.EditOrder), send(async (req) => {
     const order = await getOrder(stringParam(req, 'orderId'));
     if (!order) throw new HttpError(404, 'Order not found.');
-    const results = await Promise.all([getOrderPrinterAdapter().printOrder(order, 'kitchen'), getOrderPrinterAdapter().printOrder(order, 'bar')]);
-    return { orderId: order.id, printed: results.filter(Boolean) };
+    const printed = await getOrderPrinterAdapter().printOrderForConfiguredStations(order);
+    return { orderId: order.id, printed };
   }));
   return router;
 }

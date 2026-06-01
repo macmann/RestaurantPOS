@@ -1,10 +1,11 @@
 import type { OrderRecord } from '../orders/repository';
-import { getPosOperationalSettings } from '../config/posSettings';
+import { getPosOperationalSettings, listPrepStations } from '../config/posSettings';
+import type { Station } from '../kds/repository';
 
 export interface OrderPrintResult {
   printJobId: string;
   printerId: string;
-  station: 'kitchen' | 'bar';
+  station: Station;
   printedAt: string;
   renderedText: string;
 }
@@ -12,11 +13,11 @@ export interface OrderPrintResult {
 export class SimulatorOrderPrinterAdapter {
   readonly jobs: OrderPrintResult[] = [];
 
-  async printOrder(order: OrderRecord, station: 'kitchen' | 'bar'): Promise<OrderPrintResult | null> {
+  async printOrder(order: OrderRecord, station: Station): Promise<OrderPrintResult | null> {
     const settings = getPosOperationalSettings();
     const printer = settings.printers[station];
     const items = order.items.filter((item) => (item.station ?? 'kitchen') === station);
-    if (!printer.enabled || !items.length) return null;
+    if (!printer?.enabled || !items.length) return null;
     const printedAt = new Date().toISOString();
     const renderedText = [
       `${station.toUpperCase()} ORDER ${order.id}`,
@@ -26,6 +27,11 @@ export class SimulatorOrderPrinterAdapter {
     const result = { printJobId: `order_print_${this.jobs.length + 1}`, printerId: printer.printerId, station, printedAt, renderedText };
     this.jobs.push(structuredClone(result));
     return structuredClone(result);
+  }
+
+  async printOrderForConfiguredStations(order: OrderRecord): Promise<OrderPrintResult[]> {
+    const results = await Promise.all(listPrepStations().map((station) => this.printOrder(order, station.id)));
+    return results.filter((result): result is OrderPrintResult => Boolean(result));
   }
 }
 

@@ -1,6 +1,8 @@
 declare const process: { exitCode?: number };
 
 import type { AuthenticatedUser } from '../backend/auth/policies';
+import { updatePosOperationalSettings } from '../backend/config/posSettings';
+import { getKdsSnapshot } from '../backend/kds/service';
 import { adminCreateCategory, adminCreateItem } from '../backend/menu/service';
 import { createOrderDraft, editOrderBeforePayment } from '../backend/orders/service';
 import { saveUser } from '../backend/users/repository';
@@ -89,6 +91,17 @@ async function runAuthoritativeMenuUnitTests(): Promise<void> {
     () => createOrderDraft(waiter, { branchId, serviceMode: 'takeout', takeoutName: 'Mismatch', items: [{ menuItemId: otherItem.id, quantity: 1 }] }),
     'Branch mismatch',
   );
+
+  updatePosOperationalSettings({ prepStations: [
+    { id: 'kitchen', displayName: 'Kitchen', enabled: true, sortOrder: 10 },
+    { id: 'bar', displayName: 'Bar', enabled: true, sortOrder: 20 },
+    { id: 'salad-bar', displayName: 'Salad bar', enabled: true, sortOrder: 30 },
+  ] });
+  const saladItem = await adminCreateItem({ branchId, categoryId: category.id, name: 'Unit Salad Counter Salad', price: 6, prepStation: 'salad-bar', isAvailable: true });
+  const saladOrder = await createOrderDraft(waiter, { branchId, serviceMode: 'takeout', takeoutName: 'Dynamic Station', items: [{ menuItemId: saladItem.id, quantity: 1 }] });
+  assertEqual(saladOrder.items[0].station, 'salad-bar', 'Create should derive dynamically configured prep station from menu');
+  const saladQueue = await getKdsSnapshot('salad-bar', 'active');
+  assert(saladQueue.groups.some((group) => group.station === 'salad-bar' && group.items.some((item) => item.orderId === saladOrder.id)), 'KDS should expose a board for dynamically configured prep stations.');
 
   const emptyOrder = await createOrderDraft(waiter, { branchId, serviceMode: 'takeout', takeoutName: 'Edit Add' });
   const edited = await editOrderBeforePayment(waiter, emptyOrder.id, {

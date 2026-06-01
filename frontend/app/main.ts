@@ -2,8 +2,6 @@ import { getStoredSession, login, logout, type BrowserSession } from '../auth/se
 import { appRoutes, canAccessRoute, defaultRoute, visibleRoutes, type AppRoute } from '../auth/navigation';
 import type { AuthenticatedUser } from '../../backend/auth/policies';
 import { Actions, RolePermissions } from '../../backend/auth/permissions';
-import { loadKitchenQueue, setKitchenItemProgress } from '../kds/kitchen-screen';
-import { loadBarQueue, setBarItemProgress } from '../kds/bar-screen';
 import { loadOrderProgressForWaiter } from '../waiter/order-progress';
 import { loadAdminMenuDashboard } from '../admin/menu-management';
 import { loadAdminAuditViewer } from '../admin/audit-viewer';
@@ -33,12 +31,18 @@ interface RestaurantBillInfo {
   receiptFooter?: string;
 }
 
+interface SuperadminPrepStation {
+  id: string;
+  displayName: string;
+  enabled: boolean;
+  sortOrder: number;
+}
+
 interface SuperadminOperationalSettings {
   restaurantBillInfo: RestaurantBillInfo;
-  printers: {
+  prepStations: SuperadminPrepStation[];
+  printers: Record<string, SuperadminPrinterSettings> & {
     receipt: SuperadminPrinterSettings;
-    kitchen: SuperadminPrinterSettings;
-    bar: SuperadminPrinterSettings;
   };
   localization: {
     defaultLocale: SupportedLocale;
@@ -54,7 +58,7 @@ interface RuntimeSettingsResponse {
   };
   pos?: Partial<SuperadminOperationalSettings>;
   restaurantBillInfo?: Partial<RestaurantBillInfo>;
-  printers?: Partial<Record<keyof SuperadminOperationalSettings['printers'], Partial<SuperadminPrinterSettings>>>;
+  printers?: Partial<Record<string, Partial<SuperadminPrinterSettings>>>;
   localization?: Partial<SuperadminOperationalSettings['localization']>;
 }
 
@@ -265,7 +269,7 @@ function roleOptions(selectedRole?: string): string {
 
 function normalizePrinterSettings(label: string, printer?: Partial<SuperadminPrinterSettings>): SuperadminPrinterSettings {
   return {
-    enabled: Boolean(printer?.enabled),
+    enabled: printer?.enabled !== false,
     displayName: printer?.displayName?.trim() || `${label} printer`,
     printerId: printer?.printerId?.trim() || 'Not configured',
   };
@@ -290,12 +294,42 @@ function collectEnglishMyanmarTranslations(form: HTMLFormElement, entries: Engli
   return Object.fromEntries(entries.map((entry, index) => [entry.english, String(data.get(translationInputName(index)) ?? entry.myanmar).trim() || entry.myanmar]));
 }
 
+function normalizeStationId(value: string): string {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48);
+}
+
+function fallbackStationName(id: string): string {
+  return id.replace(/-/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function normalizePrepStations(value: unknown): SuperadminPrepStation[] {
+  const rows = Array.isArray(value) ? value : [];
+  const stations = rows.map((row, index) => {
+    const input = row as Partial<SuperadminPrepStation> & { name?: string };
+    const id = normalizeStationId(String(input.id ?? input.name ?? input.displayName ?? ''));
+    if (!id || id === 'receipt') return undefined;
+    return {
+      id,
+      displayName: String(input.displayName ?? input.name ?? fallbackStationName(id)).trim() || fallbackStationName(id),
+      enabled: input.enabled !== false,
+      sortOrder: Number.isFinite(input.sortOrder) ? Number(input.sortOrder) : (index + 1) * 10,
+    };
+  }).filter((station): station is SuperadminPrepStation => Boolean(station));
+  return stations.length ? stations.sort((a, b) => a.sortOrder - b.sortOrder || a.displayName.localeCompare(b.displayName)) : [
+    { id: 'kitchen', displayName: 'Kitchen', enabled: true, sortOrder: 10 },
+    { id: 'bar', displayName: 'Bar', enabled: true, sortOrder: 20 },
+  ];
+}
+
 function normalizeOperationalSettings(response: unknown): SuperadminOperationalSettings {
   const runtimeSettings = (response ?? {}) as RuntimeSettingsResponse;
   const posSettings = runtimeSettings.pos ?? runtimeSettings;
   const billInfo = posSettings.restaurantBillInfo ?? runtimeSettings.restaurantBillInfo ?? {};
   const branch = runtimeSettings.branch ?? {};
   const localization = posSettings.localization ?? runtimeSettings.localization ?? {};
+  const prepStations = normalizePrepStations((posSettings as any).prepStations);
+  const printers = { receipt: normalizePrinterSettings('Receipt', posSettings.printers?.receipt) } as SuperadminOperationalSettings['printers'];
+  for (const station of prepStations) printers[station.id] = normalizePrinterSettings(station.displayName, posSettings.printers?.[station.id]);
 
   return {
     restaurantBillInfo: {
@@ -305,11 +339,8 @@ function normalizeOperationalSettings(response: unknown): SuperadminOperationalS
       taxId: billInfo.taxId?.trim() || undefined,
       receiptFooter: billInfo.receiptFooter?.trim() || undefined,
     },
-    printers: {
-      receipt: normalizePrinterSettings('Receipt', posSettings.printers?.receipt),
-      kitchen: normalizePrinterSettings('Kitchen', posSettings.printers?.kitchen),
-      bar: normalizePrinterSettings('Bar', posSettings.printers?.bar),
-    },
+    prepStations,
+    printers,
     localization: {
       defaultLocale: normalizeLocale(localization.defaultLocale),
       englishToMyanmar: { ...settingsLocalizationMap(localization.englishToMyanmar) },
@@ -463,8 +494,7 @@ async function renderStaffSettings(isSuperadminPanel = false): Promise<HTMLEleme
         </div>
         <div class="superadmin-printers">
           ${printerStatusCard('Receipts', settings.printers.receipt)}
-          ${printerStatusCard('Kitchen', settings.printers.kitchen)}
-          ${printerStatusCard('Bar', settings.printers.bar)}
+          ${settings.prepStations.map((station) => printerStatusCard(station.displayName, settings.printers[station.id])).join('')}
         </div>
       </article>
       ${superadminLocalizationCard(settings.localization.defaultLocale, settings.localization.englishToMyanmar)}
@@ -571,12 +601,11 @@ function formatElapsed(seconds: number): string {
   return minutes > 0 ? `${minutes}m ${seconds % 60}s` : `${seconds}s`;
 }
 
-async function renderKdsStation(station: 'kitchen' | 'bar'): Promise<HTMLElement> {
-  const title = station === 'kitchen' ? 'Kitchen KDS' : 'Bar KDS';
+async function renderKdsStation(station: string, stationLabel?: string): Promise<HTMLElement> {
+  const title = `${stationLabel ?? fallbackStationName(station)} KDS`;
   const section = page(title, `${title} tickets are grouped by active prep tickets and ready history.`);
   const activeTab = new URLSearchParams(route.split('?')[1] ?? '').get('tab') === 'history' ? 'history' : 'active';
-  const state = station === 'kitchen' ? await loadKitchenQueue() : await loadBarQueue();
-  const queue = activeTab === 'history' ? state.history : state.queue;
+  const queue = await apiClient.getKdsSnapshot(station, activeTab);
   const group = queue.groups.find((row) => row.station === station);
   const board = el('div', 'kds-board');
   const items = group?.items ?? [];
@@ -586,15 +615,16 @@ async function renderKdsStation(station: 'kitchen' | 'bar'): Promise<HTMLElement
     <button type="button" class="${activeTab === 'history' ? 'active' : ''}" data-tab="history">History</button>
   `;
   tabs.querySelectorAll<HTMLButtonElement>('button').forEach((button) => button.addEventListener('click', () => {
-    navigate(`${routePath()}?tab=${button.dataset.tab}`);
+    const separator = routePath() === '#/prep-stations' ? `?station=${encodeURIComponent(station)}&` : '?';
+    navigate(`${routePath()}${separator}tab=${button.dataset.tab}`);
   }));
 
-  if (!items.length) board.append(emptyState(activeTab === 'history' ? `No ${station} tickets are ready yet.` : `No active ${station} tickets are waiting.`));
+  if (!items.length) board.append(emptyState(activeTab === 'history' ? `No ${stationLabel ?? station} tickets are ready yet.` : `No active ${stationLabel ?? station} tickets are waiting.`));
   for (const item of items) {
     const ticket = el('article', `kds-ticket ${item.progress}`);
     ticket.innerHTML = `
-      <div class="ticket-head"><strong>${item.quantity}× ${item.itemName}</strong><span>${formatElapsed(item.elapsedSeconds)}</span></div>
-      <p>Order ${item.orderId.slice(-8)}${item.note ? ` · ${item.note}` : ''}</p>
+      <div class="ticket-head"><strong>${item.quantity}× ${escapeHtml(item.itemName)}</strong><span>${formatElapsed(item.elapsedSeconds)}</span></div>
+      <p>Order ${item.orderId.slice(-8)}${item.note ? ` · ${escapeHtml(item.note)}` : ''}</p>
       <div class="ticket-actions"></div>
     `;
     ticket.querySelector('.ticket-head')?.append(badge(item.progress, item.progress));
@@ -607,8 +637,7 @@ async function renderKdsStation(station: 'kitchen' | 'bar'): Promise<HTMLElement
         button.type = 'button';
         button.disabled = item.progress === next || item.progress === 'served';
         button.addEventListener('click', async () => {
-          if (station === 'kitchen') await setKitchenItemProgress(session!.user, item.orderId, item.orderItemId, next);
-          else await setBarItemProgress(session!.user, item.orderId, item.orderItemId, next);
+          await apiClient.patchKdsItemProgress(session!.user.id, item.orderId, item.orderItemId, next);
           render();
         });
         actions.append(button);
@@ -620,18 +649,32 @@ async function renderKdsStation(station: 'kitchen' | 'bar'): Promise<HTMLElement
   return section;
 }
 
+async function renderPrepStations(): Promise<HTMLElement> {
+  const settings = normalizeOperationalSettings(await apiClient.getSettings());
+  const params = new URLSearchParams(route.split('?')[1] ?? '');
+  const stationId = params.get('station');
+  const station = settings.prepStations.find((row) => row.id === stationId) ?? settings.prepStations[0];
+  if (!station) return page('Prep boards', 'No prep stations are configured yet. Add one from Bill & printer settings.');
+  const section = await renderKdsStation(station.id, station.displayName);
+  const switcher = el('div', 'sales-history-tabs kds-tabs');
+  switcher.innerHTML = settings.prepStations.map((row) => `<button type="button" class="${row.id === station.id ? 'active' : ''}" data-station="${escapeHtml(row.id)}">${escapeHtml(row.displayName)}</button>`).join('');
+  switcher.querySelectorAll<HTMLButtonElement>('button').forEach((button) => button.addEventListener('click', () => navigate(`#/prep-stations?station=${encodeURIComponent(button.dataset.station ?? '')}`)));
+  section.prepend(switcher);
+  return section;
+}
+
+
 async function renderWaiterProgress(): Promise<HTMLElement> {
-  const section = page('Waiter progress', 'Track kitchen and bar readiness for orders before updating guests.');
   const state = await loadOrderProgressForWaiter();
+  const section = page('Waiter progress', 'Track all prep stations from one service view.');
   const lanes = el('div', 'progress-lanes');
   for (const group of state.snapshot.groups) {
     const lane = el('section', 'progress-lane');
-    lane.append(el('h3', '', group.station === 'kitchen' ? 'Kitchen' : 'Bar'));
+    lane.append(el('h3', '', fallbackStationName(group.station)));
     if (!group.items.length) lane.append(emptyState('No active items.'));
     for (const item of group.items) {
       const row = el('div', 'progress-row');
-      row.innerHTML = `<strong>${item.quantity}× ${item.itemName}</strong><small>Order ${item.orderId.slice(-8)} · ${formatElapsed(item.elapsedSeconds)}</small>`;
-      row.append(badge(item.progress, item.progress));
+      row.innerHTML = `<strong>${escapeHtml(item.itemName)}</strong><span>${item.quantity}× · ${escapeHtml(item.progress)}</span><small>Order ${item.orderId.slice(-8)}</small>`;
       lane.append(row);
     }
     lanes.append(lane);
@@ -642,8 +685,10 @@ async function renderWaiterProgress(): Promise<HTMLElement> {
 
 async function renderMenuAdmin(): Promise<HTMLElement> {
   const canEditMenuItems = Boolean(session?.permissions.includes(Actions.ManageSystem));
-  const section = page('Menu admin', canEditMenuItems ? 'Create, edit, delete, route, and promote menu items.' : 'Create items, route them to kitchen or bar, toggle availability, and flag promotions.');
+  const section = page('Menu admin', canEditMenuItems ? 'Create, edit, delete, route, and promote menu items.' : 'Create items, route them to configured prep stations, toggle availability, and flag promotions.');
   const state = await loadAdminMenuDashboard();
+  const settings = normalizeOperationalSettings(await apiClient.getSettings());
+  const stationOptions = (selected?: string) => settings.prepStations.map((station) => `<option value="${escapeHtml(station.id)}" ${station.id === selected ? 'selected' : ''}>${escapeHtml(station.displayName)}</option>`).join('');
   const panel = el('section', 'admin-panel menu-admin-panel');
   const categories = state.categories;
   panel.innerHTML = `
@@ -662,7 +707,7 @@ async function renderMenuAdmin(): Promise<HTMLElement> {
         <label>Category<select name="categoryId">${categories.map((cat) => `<option value="${escapeHtml(cat.id)}">${escapeHtml(cat.name)}</option>`).join('')}</select></label>
         <label>Name<input name="name" required placeholder="Tea leaf salad" /></label>
         <label>Price<input name="price" type="number" min="0" step="0.01" required /></label>
-        <label>Station<select name="prepStation"><option value="kitchen">Kitchen</option><option value="bar">Bar</option></select></label>
+        <label>Station<select name="prepStation">${stationOptions()}</select></label>
         <label>Description<input name="description" /></label>
         <button type="submit">Add item</button>
         <p class="form-error" hidden></p>
@@ -707,7 +752,7 @@ async function renderMenuAdmin(): Promise<HTMLElement> {
           <label>Category<select name="categoryId">${categories.map((cat) => `<option value="${escapeHtml(cat.id)}" ${cat.id === item.categoryId ? 'selected' : ''}>${escapeHtml(cat.name)}</option>`).join('')}</select></label>
           <label>Name<input name="name" required value="${escapeHtml(item.name)}" /></label>
           <label>Price<input name="price" type="number" min="0" step="0.01" required value="${item.price}" /></label>
-          <label>Station<select name="prepStation"><option value="kitchen" ${item.prepStation === 'kitchen' ? 'selected' : ''}>Kitchen</option><option value="bar" ${item.prepStation === 'bar' ? 'selected' : ''}>Bar</option></select></label>
+          <label>Station<select name="prepStation">${stationOptions(item.prepStation)}</select></label>
           <label>Description<input name="description" value="${escapeHtml(item.description ?? '')}" /></label>
           <button type="submit">Save item</button>
           <button type="button" class="secondary cancel-edit">Cancel</button>
@@ -737,7 +782,7 @@ async function renderMenuAdmin(): Promise<HTMLElement> {
       name: String(data.get('name') ?? ''),
       description: String(data.get('description') ?? '') || undefined,
       price: Number(data.get('price') ?? 0),
-      prepStation: String(data.get('prepStation') ?? 'kitchen') as 'kitchen' | 'bar',
+      prepStation: String(data.get('prepStation') ?? 'kitchen'),
     });
     render();
   });
@@ -749,7 +794,7 @@ async function renderMenuAdmin(): Promise<HTMLElement> {
       name: String(data.get('name') ?? ''),
       description: String(data.get('description') ?? '') || undefined,
       price: Number(data.get('price') ?? 0),
-      prepStation: String(data.get('prepStation') ?? 'kitchen') as 'kitchen' | 'bar',
+      prepStation: String(data.get('prepStation') ?? 'kitchen'),
     });
     render();
   }));
@@ -815,41 +860,91 @@ async function renderLocalizationSettings(): Promise<HTMLElement> {
 }
 
 async function renderBillSettings(): Promise<HTMLElement> {
-  const section = page('Bill & printer settings', 'Configure restaurant details printed on receipts and route order/receipt tickets to the correct devices.', ['Receipt header', 'Receipt printer', 'Kitchen printer', 'Bar printer']);
-  const settings = await apiClient.getSettings() as any;
-  const pos = settings.pos ?? {};
-  const info = pos.restaurantBillInfo ?? {};
-  const printers = pos.printers ?? {};
+  const section = page('Bill, prep station & printer settings', 'Configure receipt details and add any prep board such as salad bar, helper counter, kitchen, or bar.', ['Receipt header', 'Prep stations', 'Station printers']);
+  const settings = normalizeOperationalSettings(await apiClient.getSettings());
+  const info = settings.restaurantBillInfo;
   const panel = el('section', 'admin-panel bill-settings-panel');
   const form = el('form', 'staff-form bill-settings-form');
+  const stationRows = settings.prepStations.map((station) => {
+    const printer = settings.printers[station.id];
+    return `
+      <article class="card admin-card settings-card station-settings-card" data-station-id="${escapeHtml(station.id)}">
+        <h3>${escapeHtml(station.displayName)} prep station</h3>
+        <label>Station ID<input name="stationId" value="${escapeHtml(station.id)}" readonly /></label>
+        <label>Display name<input name="stationDisplayName" value="${escapeHtml(station.displayName)}" required /></label>
+        <label>Sort order<input name="stationSortOrder" type="number" value="${station.sortOrder}" /></label>
+        <label class="checkbox-row"><input type="checkbox" name="stationEnabled" ${station.enabled ? 'checked' : ''} /> Board enabled</label>
+        <label class="checkbox-row"><input type="checkbox" name="stationPrinterEnabled" ${printer.enabled ? 'checked' : ''} /> Printer enabled</label>
+        <label>Printer ID<input name="stationPrinterId" value="${escapeHtml(printer.printerId)}" required /></label>
+        <label>Printer display name<input name="stationPrinterDisplayName" value="${escapeHtml(printer.displayName)}" required /></label>
+        <a class="secondary-link" href="#/prep-stations?station=${encodeURIComponent(station.id)}">Open ${escapeHtml(station.displayName)} board</a>
+      </article>
+    `;
+  }).join('');
   form.innerHTML = `
     <article class="card admin-card settings-card">
       <h3>Restaurant bill information</h3>
-      <label>Restaurant name<input name="restaurantName" value="${info.restaurantName ?? ''}" required /></label>
-      <label>Address<textarea name="address" rows="3" required>${info.address ?? ''}</textarea></label>
-      <label>Contact<input name="contact" value="${info.contact ?? ''}" required /></label>
-      <label>Tax / registration ID<input name="taxId" value="${info.taxId ?? ''}" /></label>
-      <label>Receipt footer<input name="receiptFooter" value="${info.receiptFooter ?? ''}" /></label>
+      <label>Restaurant name<input name="restaurantName" value="${escapeHtml(info.restaurantName)}" required /></label>
+      <label>Address<textarea name="address" rows="3" required>${escapeHtml(info.address)}</textarea></label>
+      <label>Contact<input name="contact" value="${escapeHtml(info.contact)}" required /></label>
+      <label>Tax / registration ID<input name="taxId" value="${escapeHtml(info.taxId ?? '')}" /></label>
+      <label>Receipt footer<input name="receiptFooter" value="${escapeHtml(info.receiptFooter ?? '')}" /></label>
     </article>
-    ${(['receipt', 'kitchen', 'bar'] as const).map((key) => `
-      <article class="card admin-card settings-card">
-        <h3>${key === 'receipt' ? 'Receipt printer' : key === 'kitchen' ? 'Kitchen order printer' : 'Bar order printer'}</h3>
-        <label class="checkbox-row"><input type="checkbox" name="${key}Enabled" ${(printers[key]?.enabled ?? true) ? 'checked' : ''} /> Enabled</label>
-        <label>Printer ID<input name="${key}PrinterId" value="${printers[key]?.printerId ?? ''}" required /></label>
-        <label>Display name<input name="${key}DisplayName" value="${printers[key]?.displayName ?? ''}" required /></label>
-      </article>
-    `).join('')}
-    <button type="submit">Save bill & printer settings</button>
+    <article class="card admin-card settings-card">
+      <h3>Receipt printer</h3>
+      <label class="checkbox-row"><input type="checkbox" name="receiptEnabled" ${settings.printers.receipt.enabled ? 'checked' : ''} /> Enabled</label>
+      <label>Printer ID<input name="receiptPrinterId" value="${escapeHtml(settings.printers.receipt.printerId)}" required /></label>
+      <label>Display name<input name="receiptDisplayName" value="${escapeHtml(settings.printers.receipt.displayName)}" required /></label>
+    </article>
+    ${stationRows}
+    <article class="card admin-card settings-card">
+      <h3>Add prep station</h3>
+      <p class="muted">Add boards like Salad bar, Helper counter, Dessert, Coffee, or Pastry. A printer setting is created for each station.</p>
+      <label>New station name<input name="newStationName" placeholder="Salad bar" /></label>
+      <label>Printer ID<input name="newStationPrinterId" placeholder="salad-bar-printer" /></label>
+    </article>
+    <button type="submit">Save bill, prep station & printer settings</button>
     <p class="form-error" hidden></p>
   `;
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     const data = new FormData(form);
-    const printerInput = (key: 'receipt' | 'kitchen' | 'bar') => ({
-      enabled: data.get(`${key}Enabled`) === 'on',
-      printerId: String(data.get(`${key}PrinterId`) ?? ''),
-      displayName: String(data.get(`${key}DisplayName`) ?? ''),
+    const prepStations: SuperadminPrepStation[] = [];
+    const printers: Record<string, SuperadminPrinterSettings> = {
+      receipt: {
+        enabled: data.get('receiptEnabled') === 'on',
+        printerId: String(data.get('receiptPrinterId') ?? ''),
+        displayName: String(data.get('receiptDisplayName') ?? ''),
+      },
+    };
+
+    form.querySelectorAll<HTMLElement>('.station-settings-card').forEach((card) => {
+      const id = card.dataset.stationId ?? '';
+      const station = {
+        id,
+        displayName: (card.querySelector<HTMLInputElement>('input[name="stationDisplayName"]')?.value ?? '').trim(),
+        enabled: card.querySelector<HTMLInputElement>('input[name="stationEnabled"]')?.checked ?? true,
+        sortOrder: Number(card.querySelector<HTMLInputElement>('input[name="stationSortOrder"]')?.value ?? 0),
+      };
+      prepStations.push(station);
+      printers[id] = {
+        enabled: card.querySelector<HTMLInputElement>('input[name="stationPrinterEnabled"]')?.checked ?? true,
+        printerId: card.querySelector<HTMLInputElement>('input[name="stationPrinterId"]')?.value ?? '',
+        displayName: card.querySelector<HTMLInputElement>('input[name="stationPrinterDisplayName"]')?.value ?? '',
+      };
     });
+
+    const newStationName = String(data.get('newStationName') ?? '').trim();
+    if (newStationName) {
+      const id = normalizeStationId(newStationName);
+      prepStations.push({ id, displayName: newStationName, enabled: true, sortOrder: (prepStations.length + 1) * 10 });
+      printers[id] = {
+        enabled: true,
+        printerId: String(data.get('newStationPrinterId') ?? '').trim() || `${id}-printer`,
+        displayName: `${newStationName} printer`,
+      };
+    }
+
     try {
       await apiClient.updateSettings({
         pos: {
@@ -860,7 +955,8 @@ async function renderBillSettings(): Promise<HTMLElement> {
             taxId: String(data.get('taxId') ?? ''),
             receiptFooter: String(data.get('receiptFooter') ?? ''),
           },
-          printers: { receipt: printerInput('receipt'), kitchen: printerInput('kitchen'), bar: printerInput('bar') },
+          prepStations,
+          printers,
         },
       });
       render();
@@ -873,7 +969,7 @@ async function renderBillSettings(): Promise<HTMLElement> {
     }
   });
   const preview = el('article', 'card admin-card receipt-preview-card');
-  preview.innerHTML = `<h3>Receipt preview header</h3><p><strong>${info.restaurantName ?? 'Restaurant name'}</strong><br>${info.address ?? 'Address'}<br>${info.contact ?? 'Contact'}</p><small>${info.receiptFooter ?? ''}</small>`;
+  preview.innerHTML = `<h3>Receipt preview header</h3><p><strong>${escapeHtml(info.restaurantName)}</strong><br>${escapeHtml(info.address)}<br>${escapeHtml(info.contact)}</p><small>${escapeHtml(info.receiptFooter ?? '')}</small>`;
   panel.append(form, preview);
   section.append(panel);
   return section;
@@ -1557,7 +1653,7 @@ async function renderOrderEntry(): Promise<HTMLElement> {
     orderSummary.innerHTML = `
       <div><span>Order subtotal</span><strong>${money(activeOrder?.subtotal ?? 0)}</strong></div>
       <button type="button" class="save-order" ${activeOrder?.items.length ? '' : 'disabled'}>Save order & print tickets</button>
-      <p class="muted">Save sends kitchen/bar tickets to configured station printers. Billing and table closing stay with the cashier.</p>
+      <p class="muted">Save sends prep tickets to configured station printers. Billing and table closing stay with the cashier.</p>
     `;
     orderSummary.querySelector<HTMLButtonElement>('.save-order')?.addEventListener('click', async () => {
       try {
@@ -2101,10 +2197,13 @@ async function renderRoute(): Promise<void> {
       content = await renderSalesHistory();
       break;
     case '#/kitchen':
-      content = await renderKdsStation('kitchen');
+      content = await renderKdsStation('kitchen', 'Kitchen');
       break;
     case '#/bar':
-      content = await renderKdsStation('bar');
+      content = await renderKdsStation('bar', 'Bar');
+      break;
+    case '#/prep-stations':
+      content = await renderPrepStations();
       break;
     case '#/waiter-progress':
       content = await renderWaiterProgress();

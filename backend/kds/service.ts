@@ -1,4 +1,5 @@
 import { can, type AuthenticatedUser } from '../auth/policies';
+import { listPrepStations } from '../config/posSettings';
 import { Actions } from '../auth/permissions';
 import type { OrderRecord, OrderStatus } from '../orders/repository';
 import { getKdsItemState, listKdsItemStates, type KdsItemState, type KdsProgress, type Station, upsertKdsItemState } from './repository';
@@ -75,8 +76,12 @@ export async function getKdsSnapshot(station?: Station, view: KdsView = 'all'): 
   const rows = await listKdsItemStates();
   const filtered = rows.filter((row) => (!station || row.station === station) && matchesKdsView(row, view));
 
-  const grouped: KdsTicketGroup[] = ['kitchen', 'bar'].map((groupStation) => ({
-    station: groupStation as Station,
+  const stationIds = new Set(listPrepStations().map((row) => row.id));
+  filtered.forEach((row) => stationIds.add(row.station));
+  if (station) stationIds.add(station);
+
+  const grouped: KdsTicketGroup[] = [...stationIds].map((groupStation) => ({
+    station: groupStation,
     items: filtered
       .filter((row) => row.station === groupStation)
       .sort((a, b) => a.orderCreatedAt.localeCompare(b.orderCreatedAt))
