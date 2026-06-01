@@ -1,4 +1,5 @@
 import { getCurrentBranchId } from '../config/branch';
+import { isConfiguredPrepStation, normalizePrepStationId } from '../config/posSettings';
 import {
   createCategory,
   createItem,
@@ -29,7 +30,7 @@ export interface ItemInput {
   name: string;
   description?: string;
   price: number;
-  prepStation?: 'kitchen' | 'bar';
+  prepStation?: string;
   taxMode?: 'taxable' | 'tax_exempt';
   taxRate?: number;
   inventoryItemId?: string;
@@ -48,8 +49,11 @@ function createId(prefix: string): string {
   return `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
-function assertValidStation(station: string | undefined): asserts station is 'kitchen' | 'bar' | undefined {
-  if (station !== undefined && station !== 'kitchen' && station !== 'bar') throw new Error('prepStation must be kitchen or bar.');
+function normalizeValidStation(station: string | undefined): string | undefined {
+  if (station === undefined || station === '') return undefined;
+  const normalized = normalizePrepStationId(station);
+  if (!isConfiguredPrepStation(normalized)) throw new Error(`prepStation must be one of the configured prep stations.`);
+  return normalized;
 }
 
 function assertValidTaxMetadata(taxMode: string | undefined, taxRate: number | undefined): void {
@@ -125,7 +129,7 @@ export async function adminCreateItem(input: ItemInput): Promise<MenuItemRecord>
 
   const name = assertName(input.name, 'Item');
   assertValidPrice(input.price);
-  assertValidStation(input.prepStation);
+  const prepStation = normalizeValidStation(input.prepStation);
   assertValidTaxMetadata(input.taxMode, input.taxRate);
 
   const duplicate = await getItemByNameInCategory(input.categoryId, name);
@@ -139,7 +143,7 @@ export async function adminCreateItem(input: ItemInput): Promise<MenuItemRecord>
     name,
     description: input.description?.trim() || undefined,
     price: Math.round(input.price * 100) / 100,
-    prepStation: input.prepStation,
+    prepStation,
     taxMode: input.taxMode ?? 'taxable',
     taxRate: input.taxRate !== undefined ? Math.round(input.taxRate * 100) / 100 : 0,
     inventoryItemId: input.inventoryItemId,
@@ -164,7 +168,7 @@ export async function adminUpdateItem(id: string, input: Partial<ItemInput>) {
   if (typeof input.price === 'number') {
     assertValidPrice(input.price);
   }
-  assertValidStation(input.prepStation);
+  if (input.prepStation !== undefined) input.prepStation = normalizeValidStation(input.prepStation);
   assertValidTaxMetadata(input.taxMode, input.taxRate);
 
   if (input.name) {

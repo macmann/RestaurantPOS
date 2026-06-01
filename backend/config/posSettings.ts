@@ -16,11 +16,16 @@ export interface PrinterDeviceConfig {
   displayName: string;
 }
 
-export interface PrinterSettings {
-  receipt: PrinterDeviceConfig;
-  kitchen: PrinterDeviceConfig;
-  bar: PrinterDeviceConfig;
+export interface PrepStationConfig {
+  id: string;
+  displayName: string;
+  enabled: boolean;
+  sortOrder: number;
 }
+
+export type PrinterSettings = Record<string, PrinterDeviceConfig> & {
+  receipt: PrinterDeviceConfig;
+};
 
 export interface LocalizationSettings {
   defaultLocale: SupportedLocale;
@@ -29,6 +34,7 @@ export interface LocalizationSettings {
 
 export interface PosOperationalSettings {
   restaurantBillInfo: RestaurantBillInfo;
+  prepStations: PrepStationConfig[];
   printers: PrinterSettings;
   localization: LocalizationSettings;
 }
@@ -37,8 +43,30 @@ function envValue(key: string): string | undefined {
   return process.env[key]?.trim() || undefined;
 }
 
+function slugifyStationId(value: unknown): string {
+  return String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48);
+}
+
+function defaultStationPrinter(stationId: string, displayName: string): PrinterDeviceConfig {
+  const envPrefix = stationId.toUpperCase().replace(/[^A-Z0-9]+/g, '_');
+  return {
+    enabled: envValue(`POS_${envPrefix}_PRINTER_ENABLED`) !== 'false',
+    printerId: envValue(`POS_${envPrefix}_PRINTER_ID`) ?? `${stationId}-printer`,
+    displayName: envValue(`POS_${envPrefix}_PRINTER_NAME`) ?? `${displayName} printer`,
+  };
+}
+
 function defaultSettings(): PosOperationalSettings {
   const runtime = getRuntimeSettings();
+  const prepStations: PrepStationConfig[] = [
+    { id: 'kitchen', displayName: 'Kitchen', enabled: true, sortOrder: 10 },
+    { id: 'bar', displayName: 'Bar', enabled: true, sortOrder: 20 },
+  ];
   return {
     restaurantBillInfo: {
       restaurantName: envValue('POS_RESTAURANT_NAME') ?? runtime.branch.branchName,
@@ -47,6 +75,7 @@ function defaultSettings(): PosOperationalSettings {
       taxId: envValue('POS_RESTAURANT_TAX_ID'),
       receiptFooter: envValue('POS_RECEIPT_FOOTER') ?? 'Thank you. Please visit again.',
     },
+    prepStations,
     printers: {
       receipt: { enabled: envValue('POS_RECEIPT_PRINTER_ENABLED') !== 'false', printerId: envValue('POS_RECEIPT_PRINTER_ID') ?? 'receipt-counter', displayName: envValue('POS_RECEIPT_PRINTER_NAME') ?? 'Receipt printer' },
       kitchen: { enabled: envValue('POS_KITCHEN_PRINTER_ENABLED') !== 'false', printerId: envValue('POS_KITCHEN_PRINTER_ID') ?? 'kitchen-hotline', displayName: envValue('POS_KITCHEN_PRINTER_NAME') ?? 'Kitchen printer' },
@@ -93,8 +122,54 @@ function normalizePrinter(input: Partial<PrinterDeviceConfig> | undefined, fallb
   };
 }
 
+function normalizePrepStations(input: unknown, fallback: PrepStationConfig[]): PrepStationConfig[] {
+  const source = Array.isArray(input) ? input : fallback;
+  const byId = new Map<string, PrepStationConfig>();
+  source.forEach((station, index) => {
+    const raw = station as Partial<PrepStationConfig> & { name?: string };
+    const id = slugifyStationId(raw.id ?? raw.name ?? raw.displayName);
+    if (!id || id === 'receipt') return;
+    const existing = fallback.find((row) => row.id === id);
+    const displayName = cleanText(raw.displayName ?? raw.name, existing?.displayName ?? id.replace(/-/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase()));
+    byId.set(id, {
+      id,
+      displayName,
+      enabled: typeof raw.enabled === 'boolean' ? raw.enabled : existing?.enabled ?? true,
+      sortOrder: Number.isFinite(raw.sortOrder) ? Number(raw.sortOrder) : existing?.sortOrder ?? (index + 1) * 10,
+    });
+  });
+  if (!byId.size) fallback.forEach((station) => byId.set(station.id, station));
+  return [...byId.values()].sort((a, b) => a.sortOrder - b.sortOrder || a.displayName.localeCompare(b.displayName));
+}
+
+function normalizePrinters(input: Partial<PrinterSettings> | undefined, stations: PrepStationConfig[], fallback: PrinterSettings): PrinterSettings {
+  const printers: PrinterSettings = {
+    receipt: normalizePrinter(input?.receipt, fallback.receipt),
+  };
+  for (const station of stations) {
+    const fallbackPrinter = fallback[station.id] ?? defaultStationPrinter(station.id, station.displayName);
+    printers[station.id] = normalizePrinter(input?.[station.id], fallbackPrinter);
+  }
+  return printers;
+}
+
 export function getPosOperationalSettings(): PosOperationalSettings {
   return structuredClone(currentSettings);
+}
+
+export function listPrepStations(includeDisabled = false): PrepStationConfig[] {
+  return getPosOperationalSettings().prepStations.filter((station) => includeDisabled || station.enabled);
+}
+
+export function isConfiguredPrepStation(station: string | undefined, includeDisabled = false): boolean {
+  if (!station) return false;
+  return listPrepStations(includeDisabled).some((row) => row.id === station);
+}
+
+export function normalizePrepStationId(value: unknown): string {
+  const station = slugifyStationId(value);
+  if (!station) throw new Error('prepStation is required.');
+  return station;
 }
 
 type PosOperationalSettingsInput = Partial<Omit<PosOperationalSettings, 'localization'>> & {
@@ -102,6 +177,7 @@ type PosOperationalSettingsInput = Partial<Omit<PosOperationalSettings, 'localiz
 };
 
 export function updatePosOperationalSettings(input: PosOperationalSettingsInput): PosOperationalSettings {
+  const prepStations = normalizePrepStations(input.prepStations, currentSettings.prepStations);
   currentSettings = {
     restaurantBillInfo: {
       restaurantName: cleanText(input.restaurantBillInfo?.restaurantName, currentSettings.restaurantBillInfo.restaurantName),
@@ -110,11 +186,8 @@ export function updatePosOperationalSettings(input: PosOperationalSettingsInput)
       taxId: String(input.restaurantBillInfo?.taxId ?? currentSettings.restaurantBillInfo.taxId ?? '').trim() || undefined,
       receiptFooter: String(input.restaurantBillInfo?.receiptFooter ?? currentSettings.restaurantBillInfo.receiptFooter ?? '').trim() || undefined,
     },
-    printers: {
-      receipt: normalizePrinter(input.printers?.receipt, currentSettings.printers.receipt),
-      kitchen: normalizePrinter(input.printers?.kitchen, currentSettings.printers.kitchen),
-      bar: normalizePrinter(input.printers?.bar, currentSettings.printers.bar),
-    },
+    prepStations,
+    printers: normalizePrinters(input.printers, prepStations, currentSettings.printers),
     localization: normalizeLocalization(input.localization, currentSettings.localization),
   };
   return getPosOperationalSettings();

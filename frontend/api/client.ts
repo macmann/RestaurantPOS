@@ -196,7 +196,7 @@ async function requestInProcess<T>(path: string, method: string, body: unknown, 
       const printer = await backendModule<any>('../../backend/hardware/orderPrinter.js');
       const order = await service.getOrder(parts[2]);
       if (!order) throw new ApiClientError('Order not found.', 404);
-      const printed = (await Promise.all([printer.getOrderPrinterAdapter().printOrder(order, 'kitchen'), printer.getOrderPrinterAdapter().printOrder(order, 'bar')])).filter(Boolean);
+      const printed = await printer.getOrderPrinterAdapter().printOrderForConfiguredStations(order);
       return { orderId: order.id, printed } as T;
     }
   }
@@ -515,11 +515,11 @@ export class RestaurantApiClient {
     return this.request('/api/menu/categories', { method: 'POST', body: input });
   }
 
-  createMenuItem(input: { categoryId: string; name: string; description?: string; price: number; prepStation?: 'kitchen' | 'bar'; isAvailable?: boolean; isPromotional?: boolean }) {
+  createMenuItem(input: { categoryId: string; name: string; description?: string; price: number; prepStation?: string; isAvailable?: boolean; isPromotional?: boolean }) {
     return this.request('/api/menu/items', { method: 'POST', body: input });
   }
 
-  updateMenuItem(itemId: string, input: { categoryId?: string; name?: string; description?: string; price?: number; prepStation?: 'kitchen' | 'bar'; isAvailable?: boolean; isPromotional?: boolean }) {
+  updateMenuItem(itemId: string, input: { categoryId?: string; name?: string; description?: string; price?: number; prepStation?: string; isAvailable?: boolean; isPromotional?: boolean }) {
     return this.request(`/api/menu/items/${encodeURIComponent(itemId)}`, { method: 'PATCH', body: input });
   }
 

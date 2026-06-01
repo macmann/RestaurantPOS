@@ -11,7 +11,7 @@ export interface MenuCategoryRecord {
   updatedAt: string;
 }
 
-export type MenuPrepStation = 'kitchen' | 'bar';
+export type MenuPrepStation = string;
 export type MenuTaxMode = 'taxable' | 'tax_exempt';
 
 export interface MenuItemRecord {
