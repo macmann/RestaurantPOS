@@ -6,7 +6,7 @@ import { saveUser } from '../backend/users/repository';
 import { createInventoryMasterItem, saveMenuInventoryRecipe } from '../backend/inventory/service';
 import { adminCreateCategory, adminCreateItem } from '../backend/menu/service';
 import { createTable, openTableSession } from '../backend/tables/service';
-import { appRoutes, canAccessRoute, visibleRoutes } from '../frontend/auth/navigation';
+import { appRoutes, canAccessRoute, superadminSettingsRoutes, visibleRoutes } from '../frontend/auth/navigation';
 import { loadCashierTableFloor } from '../frontend/cashier/table-floor';
 import { startDineInOrder, advanceOrderStatus, loadOrderForScreen } from '../frontend/orders/order-screen';
 import { loadKitchenQueue, setKitchenItemProgress } from '../frontend/kds/kitchen-screen';
@@ -55,10 +55,17 @@ async function runBrowserScreenE2e(): Promise<void> {
   assert(canAccessRoute(appRoutes.find((route) => route.path === '#/audit')!, permissionsFor('manager') as any), 'Manager browser navigation should expose audit route.');
 
   const superadminRoutes = visibleRoutes(permissionsFor('superadmin') as any);
-  assert(superadminRoutes.some((route) => route.path === '#/localization'), 'Superadmin browser navigation should expose localization route.');
-  assert(canAccessRoute(appRoutes.find((route) => route.path === '#/localization')!, permissionsFor('superadmin') as any), 'Superadmin browser navigation should allow localization route.');
-  assert(visibleRoutes(permissionsFor('superadmin') as any).length === appRoutes.length, 'Superadmin browser navigation should expose every POS route.');
+  const superadminSettings = superadminSettingsRoutes(permissionsFor('superadmin') as any);
+  assert(!superadminRoutes.some((route) => route.path === '#/localization'), 'Superadmin side navigation should not duplicate localization route from the settings menu.');
+  assert(!superadminRoutes.some((route) => route.path === '#/bill-settings'), 'Superadmin side navigation should not duplicate bill settings route from the settings menu.');
+  assert(!superadminRoutes.some((route) => route.path === '#/staff-settings'), 'Superadmin side navigation should not duplicate staff settings already in the super admin panel.');
+  assert(superadminSettings.some((route) => route.path === '#/localization'), 'Superadmin settings menu should expose localization route.');
+  assert(superadminSettings.some((route) => route.path === '#/bill-settings'), 'Superadmin settings menu should expose bill and printer settings route.');
+  assert(canAccessRoute(appRoutes.find((route) => route.path === '#/localization')!, permissionsFor('superadmin') as any), 'Superadmin browser routing should allow localization route.');
+  assert(canAccessRoute(appRoutes.find((route) => route.path === '#/bill-settings')!, permissionsFor('superadmin') as any), 'Superadmin browser routing should allow bill and printer settings route.');
+  assert(visibleRoutes(permissionsFor('manager') as any).some((route) => route.path === '#/staff-settings'), 'Manager side navigation should still expose staff settings outside the super admin panel.');
   assert(!visibleRoutes(permissionsFor('manager') as any).some((route) => route.path === '#/bill-settings'), 'Manager browser navigation should keep prep station and printer settings superadmin-only.');
+  assert(!superadminSettingsRoutes(permissionsFor('manager') as any).some((route) => route.path === '#/bill-settings'), 'Manager settings menu should not expose superadmin-only bill settings.');
 
   const tableFloor = await loadCashierTableFloor(branchId, 'en');
   assert(tableFloor.tables.some((row) => row.table.id === table.id && row.status === 'occupied'), 'Cashier table-floor screen should render the occupied session.');

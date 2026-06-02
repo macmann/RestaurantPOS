@@ -5,6 +5,13 @@ export interface AppRoute {
   label: string;
   section: 'operations' | 'admin';
   requiredPermissions?: Action[];
+  /**
+   * Routes marked as superadmin_settings stay directly addressable, but are
+   * launched from the Super admin panel instead of the global side/mobile nav.
+   */
+  navigationScope?: 'primary' | 'superadmin_settings';
+  /** Hide a primary route from users with these permissions when a higher-level workspace already contains it. */
+  hideFromPrimaryWhenPermissions?: Action[];
 }
 
 export const appRoutes: AppRoute[] = [
@@ -23,17 +30,28 @@ export const appRoutes: AppRoute[] = [
   { path: '#/reports', label: 'Reports', section: 'admin', requiredPermissions: [Actions.ViewReports] },
   { path: '#/audit', label: 'Audit', section: 'admin', requiredPermissions: [Actions.ViewAudit] },
   { path: '#/superadmin', label: 'Super admin panel', section: 'admin', requiredPermissions: [Actions.ManageSystem] },
-  { path: '#/localization', label: 'Localization', section: 'admin', requiredPermissions: [Actions.ManageSystem] },
-  { path: '#/bill-settings', label: 'Bill & printer settings', section: 'admin', requiredPermissions: [Actions.ManageSystem] },
-  { path: '#/staff-settings', label: 'Staff & settings', section: 'admin', requiredPermissions: [Actions.ManageStaff] },
+  { path: '#/localization', label: 'Localization', section: 'admin', requiredPermissions: [Actions.ManageSystem], navigationScope: 'superadmin_settings' },
+  { path: '#/bill-settings', label: 'Bill & printer settings', section: 'admin', requiredPermissions: [Actions.ManageSystem], navigationScope: 'superadmin_settings' },
+  { path: '#/staff-settings', label: 'Staff & settings', section: 'admin', requiredPermissions: [Actions.ManageStaff], hideFromPrimaryWhenPermissions: [Actions.ManageSystem] },
 ];
 
 export function canAccessRoute(route: AppRoute, permissions: Action[]): boolean {
   return !route.requiredPermissions?.length || route.requiredPermissions.some((permission) => permissions.includes(permission));
 }
 
-export function visibleRoutes(permissions: Action[]): AppRoute[] {
+export function accessibleRoutes(permissions: Action[]): AppRoute[] {
   return appRoutes.filter((route) => canAccessRoute(route, permissions));
+}
+
+export function visibleRoutes(permissions: Action[]): AppRoute[] {
+  return accessibleRoutes(permissions).filter((route) => {
+    if (route.navigationScope === 'superadmin_settings') return false;
+    return !route.hideFromPrimaryWhenPermissions?.some((permission) => permissions.includes(permission));
+  });
+}
+
+export function superadminSettingsRoutes(permissions: Action[]): AppRoute[] {
+  return accessibleRoutes(permissions).filter((route) => route.navigationScope === 'superadmin_settings');
 }
 
 export function defaultRoute(_permissions: Action[]): AppRoute {
