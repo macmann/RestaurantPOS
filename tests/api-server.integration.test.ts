@@ -36,6 +36,36 @@ async function runApiIntegration(): Promise<void> {
     assert(manager.permissions.includes('menu:manage'), 'Manager login should return real RBAC permissions.');
     assert(cashier.permissions.includes('orders:transition_status'), 'Cashier login should include order transition permission for checkout table close flows.');
 
+    const managerSettingsUpdate = await apiRequest(server.baseUrl, '/api/settings', {
+      method: 'PUT',
+      token: manager.token,
+      body: { pos: { prepStations: [{ id: 'salad-bar', displayName: 'Salad bar', enabled: true, sortOrder: 30 }] } },
+    });
+    assert(managerSettingsUpdate.status === 403, `Manager should not update superadmin-only prep station settings, got ${managerSettingsUpdate.status}.`);
+
+    const superadminSettingsUpdate = await apiRequest<{ data: { pos: { prepStations: Array<{ id: string }>; printers: Record<string, { printerId: string }> } } }>(server.baseUrl, '/api/settings', {
+      method: 'PUT',
+      token: superadmin.token,
+      body: {
+        pos: {
+          prepStations: [
+            { id: 'kitchen', displayName: 'Kitchen', enabled: true, sortOrder: 10 },
+            { id: 'bar', displayName: 'Bar', enabled: true, sortOrder: 20 },
+            { id: 'salad-bar', displayName: 'Salad bar', enabled: true, sortOrder: 30 },
+          ],
+          printers: {
+            receipt: { enabled: true, printerId: 'receipt-counter', displayName: 'Receipt printer' },
+            kitchen: { enabled: true, printerId: 'kitchen-hotline', displayName: 'Kitchen printer' },
+            bar: { enabled: true, printerId: 'bar-service', displayName: 'Bar printer' },
+            'salad-bar': { enabled: true, printerId: 'salad-bar-printer', displayName: 'Salad bar printer' },
+          },
+        },
+      },
+    });
+    assert(superadminSettingsUpdate.status === 200, `Superadmin should update prep station/printer settings over HTTP, got ${superadminSettingsUpdate.status}.`);
+    assert(superadminSettingsUpdate.body.data.pos.prepStations.some((station) => station.id === 'salad-bar'), 'Superadmin settings update should persist the new prep station.');
+    assert(superadminSettingsUpdate.body.data.pos.printers['salad-bar'].printerId === 'salad-bar-printer', 'New prep station should create a matching station printer configuration.');
+
     const superadminMenuItem = await apiRequest<{ data: { id: string; name: string } }>(server.baseUrl, '/api/menu/items', {
       method: 'POST',
       token: superadmin.token,
