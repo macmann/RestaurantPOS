@@ -56,6 +56,9 @@ async function runBrowserScreenE2e(): Promise<void> {
 
   const superadminRoutes = visibleRoutes(permissionsFor('superadmin') as any);
   const superadminSettings = superadminSettingsRoutes(permissionsFor('superadmin') as any);
+  assert(superadminRoutes.some((route) => route.path === '#/prep-stations'), 'Superadmin side navigation should expose the single prep boards route.');
+  assert(!superadminRoutes.some((route) => route.path === '#/kitchen'), 'Superadmin side navigation should not expose a separate kitchen KDS route.');
+  assert(!superadminRoutes.some((route) => route.path === '#/bar'), 'Superadmin side navigation should not expose a separate bar KDS route.');
   assert(!superadminRoutes.some((route) => route.path === '#/localization'), 'Superadmin side navigation should not duplicate localization route from the settings menu.');
   assert(!superadminRoutes.some((route) => route.path === '#/bill-settings'), 'Superadmin side navigation should not duplicate bill settings route from the settings menu.');
   assert(!superadminRoutes.some((route) => route.path === '#/staff-settings'), 'Superadmin side navigation should not duplicate staff settings already in the super admin panel.');
