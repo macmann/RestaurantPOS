@@ -438,29 +438,37 @@ function superadminLocalizationCard(defaultLocale: SupportedLocale, englishToMya
       <div>
         <p class="eyebrow">Localization</p>
         <h3>Restaurant language & Myanmar labels</h3>
-        <p class="muted">Choose the default UI, report, and receipt language for this branch, then edit the English → Burmese label map used for Myanmar receipts and localized views.</p>
+        <p class="muted">Choose the default UI, report, and receipt language for this branch, then edit the English → Myanmar label map used for Myanmar receipts and localized views.</p>
       </div>
       <form class="staff-form localization-form">
-        <label>${switchState.label}
-          <select name="defaultLocale">${localeOptionsHtml(defaultLocale)}</select>
-        </label>
-        <div class="locale-preview" style="font-family: ${resource.fontStack}; direction: ${resource.direction};">
-          <strong>${resource.nativeName}</strong>
-          <span>${resource.screens.billing} · ${resource.common.receipt} · ${resource.common.total_due}</span>
-          <small>${unicode.sample}</small>
-        </div>
-        <p class="muted">Receipt font stack: ${unicode.recommendedFonts.join(', ')}</p>
-        <div class="translation-map">
-          <div class="translation-map__header"><span>English label</span><span>Burmese label</span></div>
-          ${entries.map((entry, index) => `
-            <label class="translation-row">
-              <span><small>${entry.namespace}.${entry.key}</small><strong>${escapeHtml(entry.english)}</strong></span>
-              <input name="${translationInputName(index)}" value="${escapeHtml(entry.myanmar)}" lang="my" />
+        <div class="localization-form__layout">
+          <section class="localization-form__settings" aria-label="Language settings">
+            <label>${switchState.label}
+              <select name="defaultLocale">${localeOptionsHtml(defaultLocale)}</select>
             </label>
-          `).join('')}
+            <div class="locale-preview" style="font-family: ${resource.fontStack}; direction: ${resource.direction};">
+              <strong>${resource.nativeName}</strong>
+              <span>${resource.screens.billing} · ${resource.common.receipt} · ${resource.common.total_due}</span>
+              <small>${unicode.sample}</small>
+            </div>
+            <p class="muted localization-form__fonts">Receipt font stack: ${unicode.recommendedFonts.join(', ')}</p>
+          </section>
+          <section class="localization-form__editor" aria-label="Myanmar label editor">
+            <div class="translation-map">
+              <div class="translation-map__header"><span>English label</span><span>Myanmar label</span></div>
+              ${entries.map((entry, index) => `
+                <label class="translation-row">
+                  <span><small>${entry.namespace}.${entry.key}</small><strong>${escapeHtml(entry.english)}</strong></span>
+                  <input name="${translationInputName(index)}" value="${escapeHtml(entry.myanmar)}" lang="my" />
+                </label>
+              `).join('')}
+            </div>
+          </section>
         </div>
-        <button type="submit">Save localization</button>
-        <p class="form-error" hidden></p>
+        <div class="localization-form__actions">
+          <p class="form-error" hidden></p>
+          <button type="submit">Save localization</button>
+        </div>
       </form>
     </article>
   `;
