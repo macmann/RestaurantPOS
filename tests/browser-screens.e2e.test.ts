@@ -57,6 +57,8 @@ async function runBrowserScreenE2e(): Promise<void> {
   const superadminRoutes = visibleRoutes(permissionsFor('superadmin') as any);
   assert(superadminRoutes.some((route) => route.path === '#/localization'), 'Superadmin browser navigation should expose localization route.');
   assert(canAccessRoute(appRoutes.find((route) => route.path === '#/localization')!, permissionsFor('superadmin') as any), 'Superadmin browser navigation should allow localization route.');
+  assert(visibleRoutes(permissionsFor('superadmin') as any).length === appRoutes.length, 'Superadmin browser navigation should expose every POS route.');
+  assert(!visibleRoutes(permissionsFor('manager') as any).some((route) => route.path === '#/bill-settings'), 'Manager browser navigation should keep prep station and printer settings superadmin-only.');
 
   const tableFloor = await loadCashierTableFloor(branchId, 'en');
   assert(tableFloor.tables.some((row) => row.table.id === table.id && row.status === 'occupied'), 'Cashier table-floor screen should render the occupied session.');

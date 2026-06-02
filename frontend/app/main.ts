@@ -789,6 +789,20 @@ async function renderStaffSettings(isSuperadminPanel = false): Promise<HTMLEleme
           ${settings.prepStations.map((station) => printerStatusCard(station.displayName, settings.printers[station.id])).join('')}
         </div>
       </article>
+      <article class="card admin-card settings-card superadmin-station-card">
+        <div>
+          <p class="eyebrow">Prep routing</p>
+          <h3>Add station, KDS board & printer</h3>
+          <p class="muted">Stations are separate from menu categories. Add a station here, then route menu items to it from Menu admin.</p>
+        </div>
+        <form class="station-quick-add-form">
+          <label>Station name<input name="stationName" required placeholder="Salad bar" /></label>
+          <label>Printer ID<input name="printerId" placeholder="salad-bar-printer" /></label>
+          <button type="submit">Add station</button>
+          <p class="form-error" hidden></p>
+        </form>
+        <a class="secondary-link" href="#/bill-settings">Open full bill & printer settings</a>
+      </article>
       ${superadminLocalizationCard(settings.localization.defaultLocale, settings.localization.englishToMyanmar)}
     ` : `
       <article class="card admin-card">
@@ -800,14 +814,13 @@ async function renderStaffSettings(isSuperadminPanel = false): Promise<HTMLEleme
 
   if (isSuperadminPanel) {
     const launchpad = el('section', 'admin-launchpad');
-    launchpad.innerHTML = `
-      <button type="button" data-target="#/localization">Localization</button>
-      <button type="button" data-target="#/bill-settings">Bill & printer setup</button>
-      <button type="button" data-target="#/menu-admin">Menu setup</button>
-      <button type="button" data-target="#/table-admin">Table layout</button>
-      <button type="button" data-target="#/sales-history">Sales history</button>
-      <button type="button" data-target="#/reports">Reports</button>
-    `;
+    const superadminRoutes = visibleRoutes(session?.permissions ?? []).filter((item) => item.path !== '#/dashboard');
+    launchpad.innerHTML = superadminRoutes.map((item) => `
+      <button type="button" data-target="${escapeHtml(item.path)}">
+        <span>${escapeHtml(item.label)}</span>
+        <small>${item.section === 'operations' ? 'Operations menu' : 'Administration menu'}</small>
+      </button>
+    `).join('');
     launchpad.querySelectorAll<HTMLButtonElement>('button').forEach((button) => button.addEventListener('click', () => navigate(button.dataset.target!)));
     section.append(launchpad);
   }
@@ -848,6 +861,46 @@ async function renderStaffSettings(isSuperadminPanel = false): Promise<HTMLEleme
   section.append(panel);
 
   attachLocalizationForm(panel, settings);
+
+  panel.querySelector<HTMLFormElement>('.station-quick-add-form')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget as HTMLFormElement;
+    const data = new FormData(form);
+    const stationName = String(data.get('stationName') ?? '').trim();
+    const stationId = normalizeStationId(stationName);
+    const error = form.querySelector<HTMLParagraphElement>('.form-error');
+    if (!stationId) {
+      if (error) {
+        error.hidden = false;
+        error.textContent = 'Station name is required.';
+      }
+      return;
+    }
+    const prepStations = settings.prepStations.filter((station) => station.id !== stationId);
+    const printers: Record<string, SuperadminPrinterSettings> = { ...settings.printers };
+    prepStations.push({ id: stationId, displayName: stationName, enabled: true, sortOrder: (prepStations.length + 1) * 10 });
+    printers[stationId] = {
+      enabled: true,
+      printerId: String(data.get('printerId') ?? '').trim() || `${stationId}-printer`,
+      displayName: `${stationName} printer`,
+    };
+    try {
+      await apiClient.updateSettings({
+        pos: {
+          restaurantBillInfo: settings.restaurantBillInfo,
+          prepStations,
+          printers,
+          localization: settings.localization,
+        },
+      });
+      render();
+    } catch (caught) {
+      if (error) {
+        error.hidden = false;
+        error.textContent = caught instanceof Error ? caught.message : 'Unable to add station.';
+      }
+    }
+  });
 
   panel.querySelector<HTMLFormElement>('.staff-form')?.addEventListener('submit', async (event) => {
     event.preventDefault();
