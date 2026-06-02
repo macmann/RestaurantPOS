@@ -298,14 +298,67 @@ button { min-height: var(--tap); touch-action: manipulation; }
 .admin-launchpad-heading { grid-column: 1 / -1; padding: 0.2rem 0.1rem; }
 .admin-launchpad-heading h3 { margin: 0.1rem 0 0.2rem; font-size: clamp(1.2rem, 2vw, 1.55rem); }
 .admin-launchpad-heading p { margin: 0; }
-.bill-settings-panel { grid-template-columns: minmax(min(100%, 34rem), 1.3fr) minmax(min(100%, 18rem), 0.7fr); align-items: start; }
-.bill-settings-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr)); gap: 1rem; }
-.bill-settings-form > button, .bill-settings-form > .form-error { grid-column: 1 / -1; }
-.settings-card { display: grid; gap: 0.75rem; }
-.settings-card textarea { min-height: 5rem; resize: vertical; }
+.bill-settings-panel { grid-template-columns: minmax(min(100%, 48rem), 1fr) minmax(min(100%, 20rem), 0.36fr); align-items: start; gap: 1.2rem; }
+.bill-settings-form { display: grid; gap: 1rem; min-width: 0; }
+.bill-settings-form input[readonly] { background: #f1f5f9; color: var(--muted); cursor: not-allowed; }
+.settings-overview-card { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr)); gap: 0.75rem; }
+.settings-overview-card__item { display: grid; gap: 0.22rem; min-width: 0; padding: 1rem; border: 1px solid rgb(15 118 110 / 14%); border-radius: var(--radius-md); background: linear-gradient(145deg, #fff, #f0fdfa); box-shadow: var(--shadow-sm); }
+.settings-overview-card__item span, .settings-section-heading .eyebrow, .receipt-preview-card .eyebrow, .settings-card--add-station .eyebrow { color: var(--primary); font-size: 0.72rem; font-weight: 950; letter-spacing: 0.1em; text-transform: uppercase; }
+.settings-overview-card__item strong { overflow: hidden; color: var(--ink); font-size: clamp(1.2rem, 3vw, 1.75rem); line-height: 1.05; letter-spacing: -0.045em; text-overflow: ellipsis; white-space: nowrap; }
+.settings-overview-card__item small { overflow: hidden; color: var(--muted); font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
+.settings-section-heading { display: flex; align-items: end; justify-content: space-between; gap: 1rem; margin-top: 0.45rem; padding: 0 0.15rem; }
+.settings-section-heading h3, .settings-card--add-station h3 { margin: 0.1rem 0 0; letter-spacing: -0.04em; }
+.settings-section-heading p:not(.eyebrow), .settings-card--add-station p { max-width: 34rem; margin: 0; color: var(--muted); line-height: 1.45; }
+.settings-card { display: grid; gap: 0.85rem; padding: clamp(1rem, 2.5vw, 1.25rem); border: 1px solid rgb(219 230 243 / 90%); border-radius: var(--radius-lg); background: rgb(255 255 255 / 92%); box-shadow: var(--shadow-sm); }
+.settings-card textarea { min-height: 5.8rem; resize: vertical; }
+.settings-field-grid { display: grid; gap: 0.85rem; }
+.settings-field-grid--bill { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.settings-field-grid--printer { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.settings-field-grid--station { grid-template-columns: minmax(8rem, 0.75fr) minmax(12rem, 1.2fr) minmax(7rem, 0.6fr) minmax(10rem, 1fr) minmax(12rem, 1.2fr); }
+.settings-field-grid__wide { grid-column: 1 / -1; }
+.settings-card label, .station-settings-card label { display: grid; gap: 0.4rem; color: #334155; font-weight: 850; }
+.settings-card input, .settings-card textarea, .station-settings-card input { min-width: 0; min-height: var(--tap); border: 1px solid var(--line); border-radius: 0.9rem; padding: 0.78rem 0.9rem; background: #fff; color: var(--ink); box-shadow: 0 1px 0 rgb(15 23 42 / 3%); }
+.settings-card--receipt-printer { grid-template-columns: minmax(12rem, 0.25fr) 1fr; align-items: end; }
+.settings-card--stations { gap: 0; padding: 0; overflow: hidden; }
+.station-settings-card { display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(11rem, auto); gap: 1rem; align-items: center; padding: 1rem; border-bottom: 1px solid var(--line); background: #fff; }
+.station-settings-card:last-child { border-bottom: 0; }
+.station-settings-card__order { display: grid; place-items: center; width: 2.35rem; height: 2.35rem; border-radius: 999px; background: #ccfbf1; color: var(--primary-dark); font-weight: 950; }
+.station-settings-card__main { display: grid; gap: 0.75rem; min-width: 0; }
+.station-settings-card__heading { display: flex; align-items: start; justify-content: space-between; gap: 0.75rem; }
+.station-settings-card__heading h4 { margin: 0; font-size: 1.08rem; letter-spacing: -0.03em; }
+.station-settings-card__heading small { display: block; margin-top: 0.12rem; color: var(--muted); font-weight: 850; }
+.station-settings-card__toggles { display: grid; gap: 0.5rem; padding: 0.7rem; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface-soft); }
+.settings-card--add-station { grid-template-columns: minmax(14rem, 0.7fr) minmax(18rem, 1fr); align-items: end; }
+.settings-save-bar { position: sticky; bottom: 0.75rem; z-index: 4; display: flex; justify-content: flex-end; gap: 1rem; align-items: center; margin-top: 0.2rem; padding: 0.75rem; border: 1px solid rgb(219 230 243 / 88%); border-radius: var(--radius-lg); background: rgb(255 255 255 / 88%); box-shadow: var(--shadow-md); backdrop-filter: blur(16px); }
+.settings-save-bar .form-error { flex: 1 1 auto; margin: 0; }
+.settings-save-bar button { min-width: min(100%, 12rem); }
 .checkbox-row { display: flex !important; grid-template-columns: auto 1fr; align-items: center; gap: 0.5rem; font-weight: 900; color: var(--ink) !important; }
-.checkbox-row input { width: 1.2rem; height: 1.2rem; }
-.receipt-preview-card { position: sticky; top: 1rem; }
+.checkbox-row input { width: 1.2rem; height: 1.2rem; min-height: auto; padding: 0; box-shadow: none; }
+.settings-toggle { min-height: var(--tap); padding: 0.8rem 0.9rem; border: 1px solid var(--line); border-radius: 0.9rem; background: var(--surface-soft); }
+.settings-sidebar { position: sticky; top: 1rem; display: grid; gap: 1rem; min-width: 0; }
+.receipt-preview-card, .settings-help-card { position: static; }
+.receipt-preview-paper { display: grid; gap: 0.35rem; padding: 1rem; border: 1px dashed #94a3b8; border-radius: var(--radius-sm); background: linear-gradient(180deg, #fff, #f8fafc); color: #334155; text-align: center; }
+.receipt-preview-paper strong { color: var(--ink); font-size: 1.1rem; }
+.receipt-preview-paper span, .receipt-preview-paper em { color: var(--muted); font-size: 0.88rem; line-height: 1.35; }
+.receipt-preview-paper hr { width: 100%; border: 0; border-top: 1px dashed #cbd5e1; }
+.receipt-preview-paper__line { padding: 0.45rem; border-radius: 0.55rem; background: var(--surface-soft); }
+.settings-help-card ol { margin: 0; padding-left: 1.15rem; color: var(--muted); line-height: 1.55; }
+
+
+@media (max-width: 1200px) {
+  .bill-settings-panel { grid-template-columns: 1fr; }
+  .settings-sidebar { position: static; grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr)); }
+  .settings-field-grid--station { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 760px) {
+  .settings-section-heading, .settings-save-bar, .station-settings-card__heading { align-items: stretch; flex-direction: column; }
+  .settings-field-grid--bill, .settings-field-grid--printer, .settings-field-grid--station, .settings-card--receipt-printer, .settings-card--add-station { grid-template-columns: 1fr; }
+  .station-settings-card { grid-template-columns: 1fr; align-items: stretch; }
+  .station-settings-card__order { width: 2rem; height: 2rem; }
+  .settings-save-bar { bottom: 0.4rem; }
+  .settings-save-bar button { width: 100%; }
+}
 
 .sales-history-panel { gap: 1rem; }
 .sales-history-tabs { display: flex; flex-wrap: wrap; gap: 0.5rem; }

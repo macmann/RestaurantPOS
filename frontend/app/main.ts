@@ -1224,48 +1224,121 @@ async function renderBillSettings(): Promise<HTMLElement> {
   const section = page('Bill, prep station & printer settings', 'Configure receipt details and add any prep board such as salad bar, helper counter, kitchen, or bar.', ['Receipt header', 'Prep stations', 'Station printers']);
   const settings = normalizeOperationalSettings(await apiClient.getSettings());
   const info = settings.restaurantBillInfo;
+  const enabledStations = settings.prepStations.filter((station) => station.enabled).length;
+  const enabledStationPrinters = settings.prepStations.filter((station) => settings.printers[station.id]?.enabled).length;
   const panel = el('section', 'admin-panel bill-settings-panel');
-  const form = el('form', 'staff-form bill-settings-form');
-  const stationRows = settings.prepStations.map((station) => {
+  const form = el('form', 'bill-settings-form');
+  const stationRows = settings.prepStations.map((station, index) => {
     const printer = settings.printers[station.id];
     return `
-      <article class="card admin-card settings-card station-settings-card" data-station-id="${escapeHtml(station.id)}">
-        <h3>${escapeHtml(station.displayName)} prep station</h3>
-        <label>Station ID<input name="stationId" value="${escapeHtml(station.id)}" readonly /></label>
-        <label>Display name<input name="stationDisplayName" value="${escapeHtml(station.displayName)}" required /></label>
-        <label>Sort order<input name="stationSortOrder" type="number" value="${station.sortOrder}" /></label>
-        <label class="checkbox-row"><input type="checkbox" name="stationEnabled" ${station.enabled ? 'checked' : ''} /> Board enabled</label>
-        <label class="checkbox-row"><input type="checkbox" name="stationPrinterEnabled" ${printer.enabled ? 'checked' : ''} /> Printer enabled</label>
-        <label>Printer ID<input name="stationPrinterId" value="${escapeHtml(printer.printerId)}" required /></label>
-        <label>Printer display name<input name="stationPrinterDisplayName" value="${escapeHtml(printer.displayName)}" required /></label>
-        <a class="secondary-link" href="#/prep-stations?station=${encodeURIComponent(station.id)}">Open ${escapeHtml(station.displayName)} board</a>
+      <article class="station-settings-card" data-station-id="${escapeHtml(station.id)}">
+        <div class="station-settings-card__order" aria-label="Station number">${index + 1}</div>
+        <div class="station-settings-card__main">
+          <div class="station-settings-card__heading">
+            <div>
+              <h4>${escapeHtml(station.displayName)}</h4>
+              <small>${escapeHtml(station.id)}</small>
+            </div>
+            <a class="secondary-link" href="#/prep-stations?station=${encodeURIComponent(station.id)}">Open board</a>
+          </div>
+          <div class="settings-field-grid settings-field-grid--station">
+            <label>Station ID<input name="stationId" value="${escapeHtml(station.id)}" readonly /></label>
+            <label>Display name<input name="stationDisplayName" value="${escapeHtml(station.displayName)}" required /></label>
+            <label>Sort order<input name="stationSortOrder" type="number" value="${station.sortOrder}" /></label>
+            <label>Printer ID<input name="stationPrinterId" value="${escapeHtml(printer.printerId)}" required /></label>
+            <label>Printer display name<input name="stationPrinterDisplayName" value="${escapeHtml(printer.displayName)}" required /></label>
+          </div>
+        </div>
+        <div class="station-settings-card__toggles">
+          <label class="checkbox-row"><input type="checkbox" name="stationEnabled" ${station.enabled ? 'checked' : ''} /> Board enabled</label>
+          <label class="checkbox-row"><input type="checkbox" name="stationPrinterEnabled" ${printer.enabled ? 'checked' : ''} /> Printer enabled</label>
+        </div>
       </article>
     `;
   }).join('');
   form.innerHTML = `
-    <article class="card admin-card settings-card">
-      <h3>Restaurant bill information</h3>
-      <label>Restaurant name<input name="restaurantName" value="${escapeHtml(info.restaurantName)}" required /></label>
-      <label>Address<textarea name="address" rows="3" required>${escapeHtml(info.address)}</textarea></label>
-      <label>Contact<input name="contact" value="${escapeHtml(info.contact)}" required /></label>
-      <label>Tax / registration ID<input name="taxId" value="${escapeHtml(info.taxId ?? '')}" /></label>
-      <label>Receipt footer<input name="receiptFooter" value="${escapeHtml(info.receiptFooter ?? '')}" /></label>
-    </article>
-    <article class="card admin-card settings-card">
-      <h3>Receipt printer</h3>
-      <label class="checkbox-row"><input type="checkbox" name="receiptEnabled" ${settings.printers.receipt.enabled ? 'checked' : ''} /> Enabled</label>
-      <label>Printer ID<input name="receiptPrinterId" value="${escapeHtml(settings.printers.receipt.printerId)}" required /></label>
-      <label>Display name<input name="receiptDisplayName" value="${escapeHtml(settings.printers.receipt.displayName)}" required /></label>
-    </article>
-    ${stationRows}
-    <article class="card admin-card settings-card">
-      <h3>Add prep station</h3>
-      <p class="muted">Add boards like Salad bar, Helper counter, Dessert, Coffee, or Pastry. A printer setting is created for each station.</p>
-      <label>New station name<input name="newStationName" placeholder="Salad bar" /></label>
-      <label>Printer ID<input name="newStationPrinterId" placeholder="salad-bar-printer" /></label>
-    </article>
-    <button type="submit">Save bill, prep station & printer settings</button>
-    <p class="form-error" hidden></p>
+    <section class="settings-overview-card" aria-label="Settings overview">
+      <article class="settings-overview-card__item">
+        <span>Receipt profile</span>
+        <strong>${escapeHtml(info.restaurantName)}</strong>
+        <small>${escapeHtml(info.contact)}</small>
+      </article>
+      <article class="settings-overview-card__item">
+        <span>Prep boards</span>
+        <strong>${enabledStations}/${settings.prepStations.length}</strong>
+        <small>enabled stations</small>
+      </article>
+      <article class="settings-overview-card__item">
+        <span>Station printers</span>
+        <strong>${enabledStationPrinters}/${settings.prepStations.length}</strong>
+        <small>enabled printer routes</small>
+      </article>
+      <article class="settings-overview-card__item">
+        <span>Receipt printer</span>
+        <strong>${settings.printers.receipt.enabled ? 'On' : 'Off'}</strong>
+        <small>${escapeHtml(settings.printers.receipt.displayName)}</small>
+      </article>
+    </section>
+
+    <div class="settings-section-heading">
+      <div>
+        <p class="eyebrow">Step 1</p>
+        <h3>Receipt identity</h3>
+      </div>
+      <p>These details appear on every customer bill and receipt.</p>
+    </div>
+    <section class="settings-card settings-card--wide">
+      <div class="settings-field-grid settings-field-grid--bill">
+        <label>Restaurant name<input name="restaurantName" value="${escapeHtml(info.restaurantName)}" required /></label>
+        <label>Contact<input name="contact" value="${escapeHtml(info.contact)}" required /></label>
+        <label>Tax / registration ID<input name="taxId" value="${escapeHtml(info.taxId ?? '')}" /></label>
+        <label class="settings-field-grid__wide">Address<textarea name="address" rows="3" required>${escapeHtml(info.address)}</textarea></label>
+        <label class="settings-field-grid__wide">Receipt footer<input name="receiptFooter" value="${escapeHtml(info.receiptFooter ?? '')}" /></label>
+      </div>
+    </section>
+
+    <div class="settings-section-heading">
+      <div>
+        <p class="eyebrow">Step 2</p>
+        <h3>Receipt printer</h3>
+      </div>
+      <p>Controls the device used for final receipts after payment.</p>
+    </div>
+    <section class="settings-card settings-card--receipt-printer">
+      <label class="checkbox-row settings-toggle"><input type="checkbox" name="receiptEnabled" ${settings.printers.receipt.enabled ? 'checked' : ''} /> Enabled</label>
+      <div class="settings-field-grid settings-field-grid--printer">
+        <label>Printer ID<input name="receiptPrinterId" value="${escapeHtml(settings.printers.receipt.printerId)}" required /></label>
+        <label>Display name<input name="receiptDisplayName" value="${escapeHtml(settings.printers.receipt.displayName)}" required /></label>
+      </div>
+    </section>
+
+    <div class="settings-section-heading">
+      <div>
+        <p class="eyebrow">Step 3</p>
+        <h3>Prep stations & printer routes</h3>
+      </div>
+      <p>Each prep board can have its own ticket printer. Disable a board or printer without deleting its settings.</p>
+    </div>
+    <section class="settings-card settings-card--stations" aria-label="Prep station settings">
+      ${stationRows || '<p class="empty-state">No prep stations are configured yet.</p>'}
+    </section>
+
+    <section class="settings-card settings-card--add-station">
+      <div>
+        <p class="eyebrow">Add station</p>
+        <h3>New prep station</h3>
+        <p class="muted">Add boards like Salad bar, Helper counter, Dessert, Coffee, or Pastry. A printer setting is created for each station.</p>
+      </div>
+      <div class="settings-field-grid settings-field-grid--printer">
+        <label>New station name<input name="newStationName" placeholder="Salad bar" /></label>
+        <label>Printer ID<input name="newStationPrinterId" placeholder="salad-bar-printer" /></label>
+      </div>
+    </section>
+
+    <div class="settings-save-bar">
+      <p class="form-error" hidden></p>
+      <button type="submit">Save settings</button>
+    </div>
   `;
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -1329,13 +1402,35 @@ async function renderBillSettings(): Promise<HTMLElement> {
       }
     }
   });
-  const preview = el('article', 'card admin-card receipt-preview-card');
-  preview.innerHTML = `<h3>Receipt preview header</h3><p><strong>${escapeHtml(info.restaurantName)}</strong><br>${escapeHtml(info.address)}<br>${escapeHtml(info.contact)}</p><small>${escapeHtml(info.receiptFooter ?? '')}</small>`;
+  const preview = el('aside', 'settings-sidebar');
+  preview.innerHTML = `
+    <article class="card admin-card receipt-preview-card">
+      <p class="eyebrow">Live receipt reference</p>
+      <h3>Receipt preview</h3>
+      <div class="receipt-preview-paper">
+        <strong>${escapeHtml(info.restaurantName)}</strong>
+        <span>${escapeHtml(info.address)}</span>
+        <span>${escapeHtml(info.contact)}</span>
+        ${info.taxId ? `<span>Tax ID: ${escapeHtml(info.taxId)}</span>` : ''}
+        <hr>
+        <span>Table 01 · Bill #0001</span>
+        <span class="receipt-preview-paper__line">Items and totals print below</span>
+        ${info.receiptFooter ? `<em>${escapeHtml(info.receiptFooter)}</em>` : ''}
+      </div>
+    </article>
+    <article class="card admin-card settings-help-card">
+      <h3>Setup checklist</h3>
+      <ol>
+        <li>Confirm the restaurant profile for receipt headers.</li>
+        <li>Set the cashier receipt printer.</li>
+        <li>Route each prep station to its own ticket printer.</li>
+      </ol>
+    </article>
+  `;
   panel.append(form, preview);
   section.append(panel);
   return section;
 }
-
 
 type SalesHistoryPeriod = 'day' | 'week' | 'month';
 type SalesHistoryTab = 'items' | 'invoices' | 'summary';
