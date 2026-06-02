@@ -812,6 +812,14 @@ async function renderStaffSettings(isSuperadminPanel = false): Promise<HTMLEleme
     section.append(launchpad);
   }
 
+  const staffListCard = el('article', 'card admin-card staff-list-card');
+  staffListCard.innerHTML = `
+    <div>
+      <p class="eyebrow">Access roster</p>
+      <h3>Staff directory</h3>
+    </div>
+  `;
+  const staffTableWrap = el('div', 'staff-table-wrap');
   const table = el('table', 'staff-table');
   table.innerHTML = '<thead><tr><th>Staff</th><th>Role</th><th>Branch</th><th>Status</th><th>Update role/password</th><th>Access</th></tr></thead>';
   const body = el('tbody');
@@ -834,7 +842,9 @@ async function renderStaffSettings(isSuperadminPanel = false): Promise<HTMLEleme
     body.append(row);
   }
   table.append(body);
-  panel.append(table);
+  staffTableWrap.append(table);
+  staffListCard.append(staffTableWrap);
+  panel.append(staffListCard);
   section.append(panel);
 
   attachLocalizationForm(panel, settings);
