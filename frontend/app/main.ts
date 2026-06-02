@@ -240,31 +240,9 @@ function startHealthChecks(): void {
   }, 5_000);
 }
 
-function prepStationShellRoutes(permissions: Action[]): AppRoute[] {
-  if (!permissions.includes(Actions.TransitionOrderStatus)) return [];
-  return cachedPrepStations
-    .filter((station) => station.enabled)
-    .map((station) => ({
-      path: `#/prep-stations?station=${encodeURIComponent(station.id)}`,
-      label: `${station.displayName} KDS`,
-      section: 'operations',
-      requiredPermissions: [Actions.TransitionOrderStatus],
-    }));
-}
-
 function shellRoutes(permissions: Action[]): AppRoute[] {
-  const primaryRoutes = visibleRoutes(permissions);
-  const dynamicPrepRoutes = prepStationShellRoutes(permissions);
-  if (!dynamicPrepRoutes.length) return primaryRoutes;
-
-  const routes: AppRoute[] = [];
-  for (const item of primaryRoutes) {
-    routes.push(item);
-    if (item.path === '#/prep-stations') routes.push(...dynamicPrepRoutes);
-  }
-  return routes;
+  return visibleRoutes(permissions);
 }
-
 
 function shellRouteMatches(item: AppRoute, currentHash: string, current: AppRoute): boolean {
   if (item.path === currentHash) return true;
@@ -480,15 +458,13 @@ function dashboardProfileForCurrentUser(): DashboardProfile {
   }
 
   if (isPrepOnly) {
-    const prepPath = roles.includes('bar') ? '#/bar' : roles.includes('kitchen') ? '#/kitchen' : '#/prep-stations';
     return {
       title: roles.includes('bar') ? 'Bar dashboard' : roles.includes('kitchen') ? 'Kitchen dashboard' : 'Prep dashboard',
       subtitle: 'Stay on active tickets, start preparation quickly, and mark items ready for service.',
       focus: 'Prep ticket flow',
       tone: 'prep',
       actions: [
-        { label: roles.includes('bar') ? 'Bar KDS' : roles.includes('kitchen') ? 'Kitchen KDS' : 'Prep boards', description: 'Work the active prep queue.', path: prepPath, permission: Actions.TransitionOrderStatus },
-        { label: 'All prep boards', description: 'Switch between configured prep stations.', path: '#/prep-stations', permission: Actions.TransitionOrderStatus },
+        { label: 'Prep boards', description: 'Work the active prep queue and switch between configured stations.', path: '#/prep-stations', permission: Actions.TransitionOrderStatus },
       ],
     };
   }
@@ -515,31 +491,10 @@ function dashboardActionCard(action: DashboardAction): HTMLElement {
   return card;
 }
 
-function prepStationDashboardActions(stations: SuperadminPrepStation[]): DashboardAction[] {
-  return stations
-    .filter((station) => station.enabled)
-    .map((station) => ({
-      label: `${station.displayName} KDS`,
-      description: `Open the live ${station.displayName} prep board.`,
-      path: `#/prep-stations?station=${encodeURIComponent(station.id)}`,
-      permission: Actions.TransitionOrderStatus,
-    }));
-}
-
 async function renderDashboard(): Promise<HTMLElement> {
   const permissions = session?.permissions ?? [];
   const profile = dashboardProfileForCurrentUser();
-  let accessibleActions = profile.actions.filter((action) => !action.permission || permissions.includes(action.permission));
-  if (permissions.includes(Actions.TransitionOrderStatus)) {
-    try {
-      const settings = normalizeOperationalSettings(await apiClient.getSettings());
-      const stationActions = prepStationDashboardActions(settings.prepStations);
-      const existingPaths = new Set(accessibleActions.map((action) => action.path));
-      accessibleActions = [...accessibleActions, ...stationActions.filter((action) => !existingPaths.has(action.path))];
-    } catch {
-      // Keep the dashboard usable even if settings are temporarily unavailable.
-    }
-  }
+  const accessibleActions = profile.actions.filter((action) => !action.permission || permissions.includes(action.permission));
   const primaryAction = firstAccessibleDashboardAction(accessibleActions, permissions);
   const section = page(profile.title, profile.subtitle);
   section.classList.add('dashboard-page', `dashboard-page--${profile.tone}`);

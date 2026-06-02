@@ -6,10 +6,11 @@ export interface AppRoute {
   section: 'operations' | 'admin';
   requiredPermissions?: Action[];
   /**
-   * Routes marked as superadmin_settings stay directly addressable, but are
-   * launched from the Super admin panel instead of the global side/mobile nav.
+   * Scoped routes stay directly addressable, but are not always shown in the
+   * global side/mobile nav. Superadmin settings launch from the Super admin panel;
+   * hidden routes are legacy/deep-link routes behind a consolidated primary nav item.
    */
-  navigationScope?: 'primary' | 'superadmin_settings';
+  navigationScope?: 'primary' | 'superadmin_settings' | 'hidden';
   /** Hide a primary route from users with these permissions when a higher-level workspace already contains it. */
   hideFromPrimaryWhenPermissions?: Action[];
 }
@@ -20,8 +21,8 @@ export const appRoutes: AppRoute[] = [
   { path: '#/orders', label: 'Order', section: 'operations', requiredPermissions: [Actions.CreateOrder] },
   { path: '#/billing', label: 'Billing', section: 'operations', requiredPermissions: [Actions.ViewBill, Actions.CloseBill] },
   { path: '#/sales-history', label: 'Sales history', section: 'operations', requiredPermissions: [Actions.ViewSalesHistory] },
-  { path: '#/kitchen', label: 'Kitchen KDS', section: 'operations', requiredPermissions: [Actions.TransitionOrderStatus] },
-  { path: '#/bar', label: 'Bar KDS', section: 'operations', requiredPermissions: [Actions.TransitionOrderStatus] },
+  { path: '#/kitchen', label: 'Kitchen KDS', section: 'operations', requiredPermissions: [Actions.TransitionOrderStatus], navigationScope: 'hidden' },
+  { path: '#/bar', label: 'Bar KDS', section: 'operations', requiredPermissions: [Actions.TransitionOrderStatus], navigationScope: 'hidden' },
   { path: '#/prep-stations', label: 'Prep boards', section: 'operations', requiredPermissions: [Actions.TransitionOrderStatus] },
   { path: '#/waiter-progress', label: 'Waiter progress', section: 'operations', requiredPermissions: [Actions.TransitionOrderStatus] },
   { path: '#/menu-admin', label: 'Menu admin', section: 'admin', requiredPermissions: [Actions.ManageMenu] },
@@ -45,7 +46,7 @@ export function accessibleRoutes(permissions: Action[]): AppRoute[] {
 
 export function visibleRoutes(permissions: Action[]): AppRoute[] {
   return accessibleRoutes(permissions).filter((route) => {
-    if (route.navigationScope === 'superadmin_settings') return false;
+    if (route.navigationScope === 'superadmin_settings' || route.navigationScope === 'hidden') return false;
     return !route.hideFromPrimaryWhenPermissions?.some((permission) => permissions.includes(permission));
   });
 }
