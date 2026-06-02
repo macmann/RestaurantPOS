@@ -10,6 +10,11 @@ export interface OrderPrintResult {
   renderedText: string;
 }
 
+function orderDestinationLine(order: OrderRecord): string {
+  if (order.serviceMode === 'dine_in') return `Table: ${order.tableName ?? order.tableId ?? order.tableSessionId ?? 'Unassigned table'}`;
+  return order.takeoutName?.trim() ? `Takeout: ${order.takeoutName.trim()}` : 'Takeout: Guest';
+}
+
 export class SimulatorOrderPrinterAdapter {
   readonly jobs: OrderPrintResult[] = [];
 
@@ -20,8 +25,10 @@ export class SimulatorOrderPrinterAdapter {
     if (!printer?.enabled || !items.length) return null;
     const printedAt = new Date().toISOString();
     const renderedText = [
-      `${station.toUpperCase()} ORDER ${order.id}`,
-      order.tableSessionId ? `Table session: ${order.tableSessionId}` : `Takeout: ${order.takeoutName ?? 'Guest'}`,
+      `${station.toUpperCase()} ORDER SLIP`,
+      `Order: ${order.id}`,
+      orderDestinationLine(order),
+      ...(order.tableSessionId ? [`Table session: ${order.tableSessionId}`] : []),
       ...items.map((item) => `${item.quantity} x ${item.name}${item.note ? ` — ${item.note}` : ''}`),
     ].join('\n');
     const result = { printJobId: `order_print_${this.jobs.length + 1}`, printerId: printer.printerId, station, printedAt, renderedText };

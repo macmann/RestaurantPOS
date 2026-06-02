@@ -14,6 +14,7 @@ import {
 } from '../inventory/service';
 import { syncOrderIntoKds } from '../kds/service';
 import { getCategoryById, getItemById, type MenuItemRecord } from '../menu/repository';
+import { getTableById } from '../tables/repository';
 import { requireOpenTableSession } from '../tables/service';
 import {
   createOrder,
@@ -165,6 +166,7 @@ export async function createOrderDraft(user: AuthenticatedUser, input: CreateOrd
   if (input.serviceMode === 'takeout' && !input.takeoutName?.trim()) throw new Error('takeoutName is required for takeout orders.');
 
   const session = input.serviceMode === 'dine_in' ? await requireOpenTableSession(input.tableSessionId!) : undefined;
+  const table = session ? await getTableById(session.tableId) : undefined;
   const branchId = session?.branchId ?? input.branchId ?? user.branchId ?? getCurrentBranchId();
   assertBranchMatch(user, branchId);
 
@@ -176,6 +178,7 @@ export async function createOrderDraft(user: AuthenticatedUser, input: CreateOrd
     branchId,
     serviceMode: input.serviceMode,
     tableId: session?.tableId ?? input.tableId,
+    tableName: table?.name,
     tableSessionId: session?.id,
     takeoutName: input.takeoutName?.trim(),
     status: 'pending',

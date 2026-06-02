@@ -977,6 +977,12 @@ function badge(value: string, tone = ''): HTMLElement {
   return el('span', `badge ${tone}`.trim(), value.replace(/_/g, ' '));
 }
 
+
+function kdsDestinationLabel(item: { serviceMode?: string; tableName?: string; tableId?: string; tableSessionId?: string; takeoutName?: string }): string {
+  if (item.serviceMode === 'takeout') return item.takeoutName?.trim() ? `Takeout: ${item.takeoutName.trim()}` : 'Takeout: Guest';
+  return `Table: ${item.tableName ?? item.tableId ?? item.tableSessionId ?? 'Unassigned table'}`;
+}
+
 function formatElapsed(seconds: number): string {
   const minutes = Math.floor(seconds / 60);
   return minutes > 0 ? `${minutes}m ${seconds % 60}s` : `${seconds}s`;
@@ -1005,7 +1011,7 @@ async function renderKdsStation(station: string, stationLabel?: string): Promise
     const ticket = el('article', `kds-ticket ${item.progress}`);
     ticket.innerHTML = `
       <div class="ticket-head"><strong>${item.quantity}× ${escapeHtml(item.itemName)}</strong><span>${formatElapsed(item.elapsedSeconds)}</span></div>
-      <p>Order ${item.orderId.slice(-8)}${item.note ? ` · ${escapeHtml(item.note)}` : ''}</p>
+      <p>Order ${item.orderId.slice(-8)} · ${escapeHtml(kdsDestinationLabel(item))}${item.note ? ` · ${escapeHtml(item.note)}` : ''}</p>
       <div class="ticket-actions"></div>
     `;
     ticket.querySelector('.ticket-head')?.append(badge(item.progress, item.progress));
@@ -1055,7 +1061,7 @@ async function renderWaiterProgress(): Promise<HTMLElement> {
     if (!group.items.length) lane.append(emptyState('No active items.'));
     for (const item of group.items) {
       const row = el('div', 'progress-row');
-      row.innerHTML = `<strong>${escapeHtml(item.itemName)}</strong><span>${item.quantity}× · ${escapeHtml(item.progress)}</span><small>Order ${item.orderId.slice(-8)}</small>`;
+      row.innerHTML = `<strong>${escapeHtml(item.itemName)}</strong><span>${item.quantity}× · ${escapeHtml(item.progress)}</span><small>Order ${item.orderId.slice(-8)} · ${escapeHtml(kdsDestinationLabel(item))}</small>`;
       lane.append(row);
     }
     lanes.append(lane);

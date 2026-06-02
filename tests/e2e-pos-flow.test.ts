@@ -3,6 +3,7 @@ declare const process: { exitCode?: number };
 import { AdminAuditApi } from '../backend/audit/controller';
 import type { AuthenticatedUser } from '../backend/auth/policies';
 import { recordSplitPayment } from '../backend/billing/service';
+import { resetOrderPrinterAdapter } from '../backend/hardware/orderPrinter';
 import { createInventoryMasterItem, listInventoryWithBalances, saveMenuInventoryRecipe } from '../backend/inventory/service';
 import { getKdsSnapshot, updateKdsItemProgress } from '../backend/kds/service';
 import { adminCreateCategory, adminCreateItem } from '../backend/menu/service';
@@ -134,6 +135,7 @@ async function runEndToEndPosFlow(): Promise<void> {
     items: [{ menuItemId: menuItem.id, quantity: 2, note: 'Less oil', modifiers: ['less oil'] }],
   });
   assertEqual(order.subtotal, 15, 'Order subtotal should reflect seeded cart items');
+  assertEqual(order.tableName, table.name, 'Dine-in orders should carry the table name for prep and printer routing.');
   await assertRejects(() => closeTableSession(cashier, tableSession.id), 'Cannot close table session while order');
 
   order = await editOrderBeforePayment(waiter, order.id, {
@@ -151,6 +153,13 @@ async function runEndToEndPosFlow(): Promise<void> {
   const kitchenQueue = await getKdsSnapshot('kitchen');
   const kitchenTicket = kitchenQueue.groups.flatMap((group) => group.items).find((item) => item.orderId === order.id);
   assert(kitchenTicket, 'KDS should receive the order item for kitchen preparation.');
+  assertEqual(kitchenTicket.tableName, table.name, 'KDS prep items should show the dine-in table name.');
+  const orderPrinter = resetOrderPrinterAdapter();
+  const printedTickets = await orderPrinter.printOrderForConfiguredStations(order);
+  const kitchenSlip = printedTickets.find((ticket) => ticket.station === 'kitchen');
+  assert(kitchenSlip, 'Kitchen print slip should be generated for kitchen order items.');
+  assert(kitchenSlip.renderedText.includes(`Order: ${order.id}`), 'Kitchen print slip should include the order number.');
+  assert(kitchenSlip.renderedText.includes(`Table: ${table.name}`), 'Kitchen print slip should include the table name.');
   await updateKdsItemProgress(kitchen, order.id, kitchenTicket.orderItemId, 'ready');
   const activeKitchenQueue = await getKdsSnapshot('kitchen', 'active');
   const kitchenHistory = await getKdsSnapshot('kitchen', 'history');
