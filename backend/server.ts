@@ -365,7 +365,7 @@ function mapErrorToHttp(error: unknown): { statusCode: number; message: string; 
   if (/authentication required|invalid credentials/i.test(message)) return { statusCode: 401, message };
   if (/forbidden|cannot .* permission|missing permission/i.test(message)) return { statusCode: 403, message };
   if (/not found|not exist/i.test(message)) return { statusCode: 404, message };
-  if (/version conflict|already exists|already cancelled|already closed|active session already exists|cannot be modified|cannot be cancelled|cannot be voided|cannot close|cannot delete/i.test(message)) return { statusCode: 409, message };
+  if (/version conflict|already exists|already cancelled|already closed|active session already exists|cannot be modified|cannot be cancelled|cannot be voided|cannot close|cannot delete|missing inventory recipe mapping|insufficient stock/i.test(message)) return { statusCode: 409, message };
   if (/invalid|required|must be|use a, b, or c|greater than zero|non-negative|non-zero/i.test(message)) return { statusCode: 400, message };
   return { statusCode: 500, message };
 }

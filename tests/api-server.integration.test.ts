@@ -21,6 +21,7 @@ async function runApiIntegration(): Promise<void> {
   const category = await adminCreateCategory({ branchId, name: 'API Specials', sortOrder: 1 });
   const menuItem = await adminCreateItem({ branchId, categoryId: category.id, name: 'API Tea Rice', price: 11, prepStation: 'kitchen', isAvailable: true });
   await saveMenuInventoryRecipe({ branchId, menuItemId: menuItem.id, inventoryItemId: rice.id, quantityPerUnit: 1 });
+  const unmappedMenuItem = await adminCreateItem({ branchId, categoryId: category.id, name: 'API Unmapped Rice', price: 9, prepStation: 'kitchen', isAvailable: true });
   const table = await createTable({ id: 'API-T1', branchId, name: 'API Table 1', capacity: 4 });
 
   const server = await startTestServer();
@@ -42,6 +43,20 @@ async function runApiIntegration(): Promise<void> {
       body: { pos: { prepStations: [{ id: 'salad-bar', displayName: 'Salad bar', enabled: true, sortOrder: 30 }] } },
     });
     assert(managerSettingsUpdate.status === 403, `Manager should not update superadmin-only prep station settings, got ${managerSettingsUpdate.status}.`);
+
+    const unmappedOrderResponse = await apiRequest<{ data: { id: string; version: number } }>(server.baseUrl, '/api/orders', {
+      method: 'POST',
+      token: waiter.token,
+      body: { branchId, serviceMode: 'takeout', takeoutName: 'Unmapped API Guest', items: [{ menuItemId: unmappedMenuItem.id, quantity: 1 }] },
+    });
+    assert(unmappedOrderResponse.status === 201, `Creating an unmapped inventory order should return 201, got ${unmappedOrderResponse.status}.`);
+    const unmappedStatusResponse = await apiRequest(server.baseUrl, `/api/orders/${unmappedOrderResponse.body.data.id}/status`, {
+      method: 'POST',
+      token: cashier.token,
+      body: { expectedVersion: unmappedOrderResponse.body.data.version, nextStatus: 'in_preparation' },
+    });
+    assert(unmappedStatusResponse.status === 409, `Inventory recipe mapping failures should return 409 instead of retryable 500, got ${unmappedStatusResponse.status}.`);
+    assert(String(unmappedStatusResponse.body.error).includes('Missing inventory recipe mapping'), 'Inventory mapping conflict should explain the missing recipe.');
 
     const superadminSettingsUpdate = await apiRequest<{ data: { pos: { prepStations: Array<{ id: string }>; printers: Record<string, { printerId: string }> } } }>(server.baseUrl, '/api/settings', {
       method: 'PUT',
