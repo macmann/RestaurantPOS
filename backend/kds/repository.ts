@@ -9,6 +9,11 @@ export interface KdsItemState {
   orderId: string;
   orderItemId: string;
   orderCreatedAt: string;
+  serviceMode?: 'dine_in' | 'takeout';
+  tableId?: string;
+  tableName?: string;
+  tableSessionId?: string;
+  takeoutName?: string;
   station: Station;
   itemName: string;
   quantity: number;
