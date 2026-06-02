@@ -295,6 +295,9 @@ button { min-height: var(--tap); touch-action: manipulation; }
 
 .admin-launchpad { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr)); gap: 0.85rem; margin: 1rem 0; }
 .admin-launchpad button { border: 0; border-radius: var(--radius-md); padding: 1rem; background: linear-gradient(135deg, var(--primary), var(--accent)); color: #fff; font-weight: 950; box-shadow: var(--shadow-sm); cursor: pointer; }
+.admin-launchpad-heading { grid-column: 1 / -1; padding: 0.2rem 0.1rem; }
+.admin-launchpad-heading h3 { margin: 0.1rem 0 0.2rem; font-size: clamp(1.2rem, 2vw, 1.55rem); }
+.admin-launchpad-heading p { margin: 0; }
 .bill-settings-panel { grid-template-columns: minmax(min(100%, 34rem), 1.3fr) minmax(min(100%, 18rem), 0.7fr); align-items: start; }
 .bill-settings-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr)); gap: 1rem; }
 .bill-settings-form > button, .bill-settings-form > .form-error { grid-column: 1 / -1; }
@@ -354,6 +357,7 @@ button { min-height: var(--tap); touch-action: manipulation; }
 .translation-row strong { font-size: 0.9rem; overflow-wrap: anywhere; }
 .translation-row input { min-width: 0; font-family: 'Noto Sans Myanmar', 'Padauk', 'Myanmar Text', 'Pyidaungsu', sans-serif; }
 .superadmin-page .admin-launchpad { margin-top: 0; }
+.superadmin-page .superadmin-settings-launchpad { grid-template-columns: minmax(100%, 1fr); }
 .superadmin-page .admin-launchpad button { display: grid; gap: 0.35rem; min-height: 7.5rem; text-align: left; background: linear-gradient(135deg, #0f766e, #2563eb); transition: transform 140ms ease, box-shadow 140ms ease; }
 .superadmin-page .admin-launchpad button:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); }
 .superadmin-page .admin-launchpad button span { font-size: 1rem; }

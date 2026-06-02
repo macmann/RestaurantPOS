@@ -1,5 +1,5 @@
 import { getStoredSession, login, logout, type BrowserSession } from '../auth/session';
-import { appRoutes, canAccessRoute, defaultRoute, visibleRoutes, type AppRoute } from '../auth/navigation';
+import { appRoutes, canAccessRoute, defaultRoute, superadminSettingsRoutes, visibleRoutes, type AppRoute } from '../auth/navigation';
 import type { AuthenticatedUser } from '../../backend/auth/policies';
 import { Actions, RolePermissions, type Action } from '../../backend/auth/permissions';
 import { loadOrderProgressForWaiter } from '../waiter/order-progress';
@@ -373,8 +373,7 @@ function dashboardProfileForCurrentUser(): DashboardProfile {
       focus: 'System control center',
       tone: 'admin',
       actions: [
-        { label: 'Super admin panel', description: 'Manage staff, roles, and account access.', path: '#/superadmin', permission: Actions.ManageSystem },
-        { label: 'Bill & printer settings', description: 'Configure receipt details, printers, and prep stations.', path: '#/bill-settings', permission: Actions.ManageSystem },
+        { label: 'Super admin panel', description: 'Manage staff, roles, account access, localization, bill details, printers, and prep stations.', path: '#/superadmin', permission: Actions.ManageSystem },
         { label: 'Reports', description: 'Review performance and finance summaries.', path: '#/reports', permission: Actions.ViewReports },
         { label: 'Live operations', description: 'Jump into the restaurant floor.', path: '#/tables', permission: Actions.CreateOrder },
       ],
@@ -813,14 +812,21 @@ async function renderStaffSettings(isSuperadminPanel = false): Promise<HTMLEleme
   `;
 
   if (isSuperadminPanel) {
-    const launchpad = el('section', 'admin-launchpad');
-    const superadminRoutes = visibleRoutes(session?.permissions ?? []).filter((item) => item.path !== '#/dashboard');
-    launchpad.innerHTML = superadminRoutes.map((item) => `
-      <button type="button" data-target="${escapeHtml(item.path)}">
-        <span>${escapeHtml(item.label)}</span>
-        <small>${item.section === 'operations' ? 'Operations menu' : 'Administration menu'}</small>
-      </button>
-    `).join('');
+    const launchpad = el('section', 'admin-launchpad superadmin-settings-launchpad');
+    const settingsRoutes = superadminSettingsRoutes(session?.permissions ?? []);
+    launchpad.innerHTML = `
+      <div class="admin-launchpad-heading">
+        <p class="eyebrow">Superadmin-only settings</p>
+        <h3>Settings menu</h3>
+        <p class="muted">System-only configuration lives here so the left navigation stays focused on primary workspaces.</p>
+      </div>
+      ${settingsRoutes.map((item) => `
+        <button type="button" data-target="${escapeHtml(item.path)}">
+          <span>${escapeHtml(item.label)}</span>
+          <small>${item.path === '#/bill-settings' ? 'Receipt identity, prep stations, and printers' : 'Default language and English–Myanmar labels'}</small>
+        </button>
+      `).join('')}
+    `;
     launchpad.querySelectorAll<HTMLButtonElement>('button').forEach((button) => button.addEventListener('click', () => navigate(button.dataset.target!)));
     section.append(launchpad);
   }
