@@ -76,6 +76,7 @@ let selectedTableId: string | undefined;
 let selectedSplitCount = 1;
 let activeUiLocale: SupportedLocale = normalizeLocale();
 let englishToMyanmarUiLabels: Record<string, string> = buildEnglishMyanmarLocalizationMap();
+let cachedPrepStations: SuperadminPrepStation[] = normalizePrepStations(undefined);
 
 apiClient.onNetworkStatus((status, detail) => {
   apiStatus = status;
@@ -239,11 +240,52 @@ function startHealthChecks(): void {
   }, 5_000);
 }
 
+function prepStationShellRoutes(permissions: Action[]): AppRoute[] {
+  if (!permissions.includes(Actions.TransitionOrderStatus)) return [];
+  return cachedPrepStations
+    .filter((station) => station.enabled)
+    .map((station) => ({
+      path: `#/prep-stations?station=${encodeURIComponent(station.id)}`,
+      label: `${station.displayName} KDS`,
+      section: 'operations',
+      requiredPermissions: [Actions.TransitionOrderStatus],
+    }));
+}
+
+function shellRoutes(permissions: Action[]): AppRoute[] {
+  const primaryRoutes = visibleRoutes(permissions);
+  const dynamicPrepRoutes = prepStationShellRoutes(permissions);
+  if (!dynamicPrepRoutes.length) return primaryRoutes;
+
+  const routes: AppRoute[] = [];
+  for (const item of primaryRoutes) {
+    routes.push(item);
+    if (item.path === '#/prep-stations') routes.push(...dynamicPrepRoutes);
+  }
+  return routes;
+}
+
+
+function shellRouteMatches(item: AppRoute, currentHash: string, current: AppRoute): boolean {
+  if (item.path === currentHash) return true;
+  if (!item.path.includes('?')) {
+    const currentStation = new URLSearchParams(currentHash.split('?')[1] ?? '').get('station');
+    return item.path === current.path && !(item.path === '#/prep-stations' && currentStation);
+  }
+  const [itemPath, itemQuery = ''] = item.path.split('?');
+  const [currentPath, currentQuery = ''] = currentHash.split('?');
+  if (itemPath !== currentPath) return false;
+  const itemStation = new URLSearchParams(itemQuery).get('station');
+  const currentStation = new URLSearchParams(currentQuery).get('station');
+  return Boolean(itemStation && itemStation === currentStation);
+}
+
 function renderShell(content: HTMLElement): void {
   if (!session) return renderLogin();
 
-  const available = visibleRoutes(session.permissions);
+  const available = shellRoutes(session.permissions);
   const current = activeRoute();
+  const currentHash = route || current.path;
   if (!canAccessRoute(current, session.permissions)) {
     navigate(defaultRoute(session.permissions).path);
     return;
@@ -266,7 +308,7 @@ function renderShell(content: HTMLElement): void {
   for (const item of available) {
     const option = el('option', '', translateUiText(item.label));
     option.value = item.path;
-    option.selected = item.path === current.path;
+    option.selected = shellRouteMatches(item, currentHash, current);
     routeSelect.append(option);
   }
   routeSelect.addEventListener('change', () => navigate(routeSelect.value));
@@ -278,7 +320,7 @@ function renderShell(content: HTMLElement): void {
     const heading = el('h2', '', translateUiText(section === 'operations' ? 'Operations' : 'Administration'));
     const nav = el('nav');
     for (const item of groupRoutes) {
-      const link = el('a', item.path === current.path ? 'active' : '', translateUiText(item.label));
+      const link = el('a', shellRouteMatches(item, currentHash, current) ? 'active' : '', translateUiText(item.label));
       link.href = item.path;
       nav.append(link);
     }
@@ -473,10 +515,31 @@ function dashboardActionCard(action: DashboardAction): HTMLElement {
   return card;
 }
 
+function prepStationDashboardActions(stations: SuperadminPrepStation[]): DashboardAction[] {
+  return stations
+    .filter((station) => station.enabled)
+    .map((station) => ({
+      label: `${station.displayName} KDS`,
+      description: `Open the live ${station.displayName} prep board.`,
+      path: `#/prep-stations?station=${encodeURIComponent(station.id)}`,
+      permission: Actions.TransitionOrderStatus,
+    }));
+}
+
 async function renderDashboard(): Promise<HTMLElement> {
   const permissions = session?.permissions ?? [];
   const profile = dashboardProfileForCurrentUser();
-  const accessibleActions = profile.actions.filter((action) => !action.permission || permissions.includes(action.permission));
+  let accessibleActions = profile.actions.filter((action) => !action.permission || permissions.includes(action.permission));
+  if (permissions.includes(Actions.TransitionOrderStatus)) {
+    try {
+      const settings = normalizeOperationalSettings(await apiClient.getSettings());
+      const stationActions = prepStationDashboardActions(settings.prepStations);
+      const existingPaths = new Set(accessibleActions.map((action) => action.path));
+      accessibleActions = [...accessibleActions, ...stationActions.filter((action) => !existingPaths.has(action.path))];
+    } catch {
+      // Keep the dashboard usable even if settings are temporarily unavailable.
+    }
+  }
   const primaryAction = firstAccessibleDashboardAction(accessibleActions, permissions);
   const section = page(profile.title, profile.subtitle);
   section.classList.add('dashboard-page', `dashboard-page--${profile.tone}`);
@@ -613,6 +676,8 @@ function normalizeOperationalSettings(response: unknown): SuperadminOperationalS
   const prepStations = normalizePrepStations((posSettings as any).prepStations);
   const printers = { receipt: normalizePrinterSettings('Receipt', posSettings.printers?.receipt) } as SuperadminOperationalSettings['printers'];
   for (const station of prepStations) printers[station.id] = normalizePrinterSettings(station.displayName, posSettings.printers?.[station.id]);
+
+  cachedPrepStations = prepStations;
 
   return {
     restaurantBillInfo: {
