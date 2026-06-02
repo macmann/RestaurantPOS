@@ -8,6 +8,7 @@ export interface AppRoute {
 }
 
 export const appRoutes: AppRoute[] = [
+  { path: '#/dashboard', label: 'Dashboard', section: 'operations' },
   { path: '#/tables', label: 'Table floor', section: 'operations', requiredPermissions: [Actions.CreateOrder] },
   { path: '#/orders', label: 'Order', section: 'operations', requiredPermissions: [Actions.CreateOrder] },
   { path: '#/billing', label: 'Billing', section: 'operations', requiredPermissions: [Actions.ViewBill, Actions.CloseBill] },
@@ -35,9 +36,6 @@ export function visibleRoutes(permissions: Action[]): AppRoute[] {
   return appRoutes.filter((route) => canAccessRoute(route, permissions));
 }
 
-export function defaultRoute(permissions: Action[]): AppRoute {
-  if (permissions.includes(Actions.ManageSystem)) return appRoutes.find((route) => route.path === '#/superadmin') ?? appRoutes[0];
-  if (permissions.includes(Actions.CloseBill)) return appRoutes.find((route) => route.path === '#/billing') ?? visibleRoutes(permissions)[0] ?? appRoutes[0];
-  if (permissions.includes(Actions.CreateOrder)) return appRoutes.find((route) => route.path === '#/orders') ?? visibleRoutes(permissions)[0] ?? appRoutes[0];
-  return visibleRoutes(permissions)[0] ?? appRoutes[0];
+export function defaultRoute(_permissions: Action[]): AppRoute {
+  return appRoutes.find((route) => route.path === '#/dashboard') ?? appRoutes[0];
 }
