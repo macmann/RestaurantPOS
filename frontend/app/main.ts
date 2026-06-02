@@ -1,7 +1,7 @@
 import { getStoredSession, login, logout, type BrowserSession } from '../auth/session';
 import { appRoutes, canAccessRoute, defaultRoute, visibleRoutes, type AppRoute } from '../auth/navigation';
 import type { AuthenticatedUser } from '../../backend/auth/policies';
-import { Actions, RolePermissions } from '../../backend/auth/permissions';
+import { Actions, RolePermissions, type Action } from '../../backend/auth/permissions';
 import { loadOrderProgressForWaiter } from '../waiter/order-progress';
 import { loadAdminMenuDashboard } from '../admin/menu-management';
 import { loadAdminAuditViewer } from '../admin/audit-viewer';
@@ -316,6 +316,230 @@ function page(title: string, subtitle: string, actions: string[] = []): HTMLElem
     grid.append(card);
   }
   section.append(header, grid);
+  return section;
+}
+
+
+type DashboardTone = 'service' | 'cashier' | 'prep' | 'admin' | 'inventory' | 'management';
+
+interface DashboardMetric {
+  label: string;
+  value: string;
+  detail: string;
+  tone?: string;
+}
+
+interface DashboardAction {
+  label: string;
+  description: string;
+  path: string;
+  permission?: Action;
+}
+
+interface DashboardProfile {
+  title: string;
+  subtitle: string;
+  focus: string;
+  tone: DashboardTone;
+  actions: DashboardAction[];
+}
+
+function userRoles(user: AuthenticatedUser): string[] {
+  return Array.isArray(user.role) ? user.role : [user.role];
+}
+
+function hasAnyPermission(permissions: Action[], actions: Action[]): boolean {
+  return actions.some((action) => permissions.includes(action));
+}
+
+function firstAccessibleDashboardAction(actions: DashboardAction[], permissions: Action[]): DashboardAction | undefined {
+  return actions.find((action) => !action.permission || permissions.includes(action.permission));
+}
+
+function dashboardProfileForCurrentUser(): DashboardProfile {
+  const permissions = session?.permissions ?? [];
+  const roles = session ? userRoles(session.user) : [];
+  const isSuperadmin = roles.includes('superadmin') || permissions.includes(Actions.ManageSystem);
+  const isManager = roles.some((roleName) => ['manager', 'admin', 'shift_lead'].includes(roleName));
+  const isCashier = roles.includes('cashier') || permissions.includes(Actions.CloseBill);
+  const isWaitstaff = roles.includes('waitstaff') || (permissions.includes(Actions.CreateOrder) && !isCashier && !isManager && !isSuperadmin);
+  const isInventory = roles.includes('inventory_clerk') || (permissions.includes(Actions.AdjustStock) && !hasAnyPermission(permissions, [Actions.CreateOrder, Actions.CloseBill, Actions.TransitionOrderStatus]));
+  const isPrepOnly = roles.some((roleName) => ['kitchen', 'bar'].includes(roleName)) || (permissions.includes(Actions.TransitionOrderStatus) && !hasAnyPermission(permissions, [Actions.CreateOrder, Actions.CloseBill, Actions.AdjustStock, Actions.ManageMenu]));
+
+  if (isSuperadmin) {
+    return {
+      title: 'Superadmin dashboard',
+      subtitle: 'System setup, staff controls, billing configuration, and all live operations are one click away.',
+      focus: 'System control center',
+      tone: 'admin',
+      actions: [
+        { label: 'Super admin panel', description: 'Manage staff, roles, and account access.', path: '#/superadmin', permission: Actions.ManageSystem },
+        { label: 'Bill & printer settings', description: 'Configure receipt details, printers, and prep stations.', path: '#/bill-settings', permission: Actions.ManageSystem },
+        { label: 'Reports', description: 'Review performance and finance summaries.', path: '#/reports', permission: Actions.ViewReports },
+        { label: 'Live operations', description: 'Jump into the restaurant floor.', path: '#/tables', permission: Actions.CreateOrder },
+      ],
+    };
+  }
+
+  if (isManager) {
+    return {
+      title: 'Manager dashboard',
+      subtitle: 'Balance floor activity, reporting, staff setup, menu control, and inventory follow-up.',
+      focus: 'Operations oversight',
+      tone: 'management',
+      actions: [
+        { label: 'Reports', description: 'Review sales, inventory usage, and financial summary.', path: '#/reports', permission: Actions.ViewReports },
+        { label: 'Table floor', description: 'See active tables and service bottlenecks.', path: '#/tables', permission: Actions.CreateOrder },
+        { label: 'Inventory alerts', description: 'Act on low-stock and critical stock cards.', path: '#/inventory-alerts', permission: Actions.AdjustStock },
+        { label: 'Menu admin', description: 'Update availability, routing, and promotions.', path: '#/menu-admin', permission: Actions.ManageMenu },
+      ],
+    };
+  }
+
+  if (isCashier) {
+    return {
+      title: 'Cashier dashboard',
+      subtitle: 'Prioritize open bills, payments, daily sales, and handoff status for the counter.',
+      focus: 'Billing and reports',
+      tone: 'cashier',
+      actions: [
+        { label: 'Billing desk', description: 'Create bills, split payments, print receipts, and close paid tables.', path: '#/billing', permission: Actions.ViewBill },
+        { label: 'Sales history', description: 'Check today’s invoice and payment history.', path: '#/sales-history', permission: Actions.ViewSalesHistory },
+        { label: 'Table floor', description: 'Find occupied tables waiting for checkout.', path: '#/tables', permission: Actions.CreateOrder },
+        { label: 'Kitchen status', description: 'Confirm order readiness before checkout.', path: '#/waiter-progress', permission: Actions.TransitionOrderStatus },
+      ],
+    };
+  }
+
+  if (isWaitstaff) {
+    return {
+      title: 'Waiter dashboard',
+      subtitle: 'Focus on tables, orders, and item readiness so guests move smoothly from seating to service.',
+      focus: 'Tables and orders',
+      tone: 'service',
+      actions: [
+        { label: 'Table floor', description: 'Open tables and view active guest sessions.', path: '#/tables', permission: Actions.CreateOrder },
+        { label: 'Order entry', description: 'Add items and send tickets to prep stations.', path: '#/orders', permission: Actions.CreateOrder },
+        { label: 'Waiter progress', description: 'Track kitchen and bar readiness by station.', path: '#/waiter-progress', permission: Actions.TransitionOrderStatus },
+        { label: 'Billing preview', description: 'Review bills before handing off payment.', path: '#/billing', permission: Actions.ViewBill },
+      ],
+    };
+  }
+
+  if (isInventory) {
+    return {
+      title: 'Inventory dashboard',
+      subtitle: 'Start with low-stock alerts and stock movements that keep service supplied.',
+      focus: 'Stock health',
+      tone: 'inventory',
+      actions: [
+        { label: 'Inventory alerts', description: 'Review critical and warning stock levels.', path: '#/inventory-alerts', permission: Actions.AdjustStock },
+      ],
+    };
+  }
+
+  if (isPrepOnly) {
+    const prepPath = roles.includes('bar') ? '#/bar' : roles.includes('kitchen') ? '#/kitchen' : '#/prep-stations';
+    return {
+      title: roles.includes('bar') ? 'Bar dashboard' : roles.includes('kitchen') ? 'Kitchen dashboard' : 'Prep dashboard',
+      subtitle: 'Stay on active tickets, start preparation quickly, and mark items ready for service.',
+      focus: 'Prep ticket flow',
+      tone: 'prep',
+      actions: [
+        { label: roles.includes('bar') ? 'Bar KDS' : roles.includes('kitchen') ? 'Kitchen KDS' : 'Prep boards', description: 'Work the active prep queue.', path: prepPath, permission: Actions.TransitionOrderStatus },
+        { label: 'All prep boards', description: 'Switch between configured prep stations.', path: '#/prep-stations', permission: Actions.TransitionOrderStatus },
+      ],
+    };
+  }
+
+  return {
+    title: 'Dashboard',
+    subtitle: 'Your role-specific workspace is ready. Use the shortcuts below to continue.',
+    focus: 'Role workspace',
+    tone: 'management',
+    actions: visibleRoutes(permissions).filter((item) => item.path !== '#/dashboard').slice(0, 4).map((item) => ({ label: item.label, description: 'Open this permitted POS workspace.', path: item.path })),
+  };
+}
+
+function dashboardMetricCard(metric: DashboardMetric): HTMLElement {
+  const card = el('article', `card dashboard-metric ${metric.tone ?? ''}`.trim());
+  card.innerHTML = `<span>${translateUiHtml(metric.label)}</span><strong>${escapeHtml(metric.value)}</strong><p>${translateUiHtml(metric.detail)}</p>`;
+  return card;
+}
+
+function dashboardActionCard(action: DashboardAction): HTMLElement {
+  const card = el('article', 'card dashboard-action');
+  card.innerHTML = `<h3>${translateUiHtml(action.label)}</h3><p>${translateUiHtml(action.description)}</p><button type="button">${translateUiHtml('Open')}</button>`;
+  card.querySelector('button')?.addEventListener('click', () => navigate(action.path));
+  return card;
+}
+
+async function renderDashboard(): Promise<HTMLElement> {
+  const permissions = session?.permissions ?? [];
+  const profile = dashboardProfileForCurrentUser();
+  const accessibleActions = profile.actions.filter((action) => !action.permission || permissions.includes(action.permission));
+  const primaryAction = firstAccessibleDashboardAction(accessibleActions, permissions);
+  const section = page(profile.title, profile.subtitle);
+  section.classList.add('dashboard-page', `dashboard-page--${profile.tone}`);
+
+  const hero = el('section', 'dashboard-hero');
+  hero.innerHTML = `
+    <div>
+      <p class="eyebrow">${translateUiHtml(profile.focus)}</p>
+      <h3>${translateUiHtml(`Welcome, ${session?.user.username ?? session?.user.id ?? 'team member'}`)}</h3>
+      <p>${translateUiHtml('This landing page adapts to your role and highlights the work that matters first.')}</p>
+    </div>
+  `;
+  if (primaryAction) {
+    const button = el('button', '', translateUiText(primaryAction.label));
+    button.type = 'button';
+    button.addEventListener('click', () => navigate(primaryAction.path));
+    hero.append(button);
+  }
+
+  const metrics: DashboardMetric[] = [];
+  const metricLoaders: Promise<void>[] = [];
+
+  if (permissions.includes(Actions.CreateOrder) || permissions.includes(Actions.ViewBill) || permissions.includes(Actions.CloseBill)) {
+    metricLoaders.push(apiClient.listTableFloor(session?.user.branchId).then((floor) => {
+      const occupied = floor.filter((row) => row.status === 'occupied').length;
+      const available = floor.filter((row) => row.status === 'available').length;
+      metrics.push({ label: 'Tables in service', value: String(occupied), detail: `${available} available · ${floor.length} total`, tone: occupied ? 'warning' : 'ready' });
+    }).catch(() => { metrics.push({ label: 'Tables in service', value: '—', detail: 'Table floor unavailable right now.', tone: 'warning' }); }));
+  }
+
+  if (permissions.includes(Actions.CreateOrder) || permissions.includes(Actions.TransitionOrderStatus)) {
+    metricLoaders.push(apiClient.getKdsSnapshot(undefined, 'active').then((snapshot) => {
+      const activeItems = snapshot.groups.reduce((sum, group) => sum + group.items.length, 0);
+      const preparing = snapshot.groups.flatMap((group) => group.items).filter((item) => item.progress === 'preparing').length;
+      metrics.push({ label: 'Active prep items', value: String(activeItems), detail: `${preparing} preparing across ${snapshot.groups.length} stations`, tone: activeItems ? 'queued' : 'ready' });
+    }).catch(() => { metrics.push({ label: 'Active prep items', value: '—', detail: 'Prep queue unavailable right now.', tone: 'warning' }); }));
+  }
+
+  if (permissions.includes(Actions.ViewSalesHistory) || permissions.includes(Actions.ViewReports)) {
+    metricLoaders.push(apiClient.getSalesReport('day').then((sales) => {
+      metrics.push({ label: 'Today’s sales', value: money(sales.summary.revenue), detail: `${sales.summary.orderCount} orders · ${sales.summary.invoiceCount} invoices`, tone: 'ready' });
+    }).catch(() => { metrics.push({ label: 'Today’s sales', value: '—', detail: 'Sales summary unavailable right now.', tone: 'warning' }); }));
+  }
+
+  if (permissions.includes(Actions.AdjustStock)) {
+    metricLoaders.push(apiClient.getInventoryAlerts().then((alerts) => {
+      const critical = alerts.filter((alert) => alert.severity === 'critical').length;
+      metrics.push({ label: 'Stock alerts', value: String(alerts.length), detail: `${critical} critical items need attention`, tone: critical ? 'critical' : alerts.length ? 'warning' : 'ready' });
+    }).catch(() => { metrics.push({ label: 'Stock alerts', value: '—', detail: 'Inventory alerts unavailable right now.', tone: 'warning' }); }));
+  }
+
+  await Promise.all(metricLoaders);
+  if (!metrics.length) metrics.push({ label: 'Available sections', value: String(visibleRoutes(permissions).length), detail: 'Navigation is filtered by your permissions.', tone: 'ready' });
+
+  const metricGrid = el('div', 'dashboard-metrics');
+  for (const metric of metrics) metricGrid.append(dashboardMetricCard(metric));
+
+  const actionGrid = el('div', 'dashboard-actions');
+  if (!accessibleActions.length) actionGrid.append(emptyState('No additional workspaces are assigned to this role yet.'));
+  for (const action of accessibleActions) actionGrid.append(dashboardActionCard(action));
+
+  section.append(hero, metricGrid, el('h3', 'dashboard-section-title', translateUiText('Quick actions')), actionGrid);
   return section;
 }
 
@@ -2253,6 +2477,9 @@ async function renderRoute(): Promise<void> {
   let content: HTMLElement;
 
   switch (current.path) {
+    case '#/dashboard':
+      content = await renderDashboard();
+      break;
     case '#/tables':
       content = await renderTableFloor();
       break;
