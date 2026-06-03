@@ -2,7 +2,8 @@ import type { AuthenticatedUser } from '../../backend/auth/policies';
 import { buildLocaleSwitchState, getLocaleResource } from '../i18n/locale-switcher';
 import type { EditOrderInput, OrderMenuItemInput } from '../../backend/orders/service';
 import { apiClient } from '../api/client';
-import type { OrderStatus } from '../../backend/orders/repository';
+import type { KdsSnapshot } from '../../backend/kds/service';
+import type { OrderRecord, OrderStatus } from '../../backend/orders/repository';
 
 export type OrderScreenItemSelection = Pick<OrderMenuItemInput, 'menuItemId' | 'quantity' | 'note' | 'modifiers' | 'allowUnavailableOverride' | 'overrideReason'>;
 
@@ -20,6 +21,11 @@ export async function updateOrderCart(user: AuthenticatedUser, orderId: string, 
 
 export async function advanceOrderStatus(user: AuthenticatedUser, orderId: string, expectedVersion: number, nextStatus: OrderStatus) {
   return apiClient.transitionOrderStatus(user.id, orderId, expectedVersion, nextStatus);
+}
+
+export function orderItemPreparationStatus(order: Pick<OrderRecord, 'id' | 'status'>, orderItemId: string, snapshot?: KdsSnapshot): string {
+  const kdsItem = snapshot?.groups.flatMap((group) => group.items).find((item) => item.orderId === order.id && item.orderItemId === orderItemId);
+  return (kdsItem?.progress ?? order.status).replace(/_/g, ' ');
 }
 
 export async function loadOrderForScreen(orderId: string, locale?: string) {

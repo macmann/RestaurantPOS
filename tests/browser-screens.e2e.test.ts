@@ -8,7 +8,7 @@ import { adminCreateCategory, adminCreateItem } from '../backend/menu/service';
 import { createTable, openTableSession } from '../backend/tables/service';
 import { appRoutes, canAccessRoute, superadminSettingsRoutes, visibleRoutes } from '../frontend/auth/navigation';
 import { loadCashierTableFloor } from '../frontend/cashier/table-floor';
-import { startDineInOrder, advanceOrderStatus, loadOrderForScreen } from '../frontend/orders/order-screen';
+import { startDineInOrder, advanceOrderStatus, loadOrderForScreen, orderItemPreparationStatus } from '../frontend/orders/order-screen';
 import { loadKitchenQueue, setKitchenItemProgress } from '../frontend/kds/kitchen-screen';
 import { loadBarQueue } from '../frontend/kds/bar-screen';
 import { closePaidTableFromBillingScreen, startBillForBillingScreen, openBillingScreen } from '../frontend/billing/billing-screen';
@@ -83,6 +83,7 @@ async function runBrowserScreenE2e(): Promise<void> {
   const refreshedKitchenQueue = await loadKitchenQueue('en');
   assert(!refreshedKitchenQueue.queue.groups.flatMap((group) => group.items).some((item) => item.orderId === order.id), 'Ready kitchen KDS item should leave the active tab.');
   assert(refreshedKitchenQueue.history.groups.flatMap((group) => group.items).some((item) => item.orderId === order.id), 'Ready kitchen KDS item should appear in the history tab.');
+  assert(orderItemPreparationStatus(order, kitchenTicket.orderItemId, refreshedKitchenQueue.history) === 'ready', 'Order and billing item rows should show item-level KDS readiness instead of the broader order status.');
 
   const barQueue = await loadBarQueue('en');
   assert(barQueue.queue.groups.some((group) => group.station === 'bar' && group.items.some((item) => item.orderId === order.id)), 'Bar browser screen should render bar KDS items.');
