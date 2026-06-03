@@ -298,17 +298,29 @@ function deductionTriggerForStatus(nextStatus: OrderStatus): string | null {
 }
 
 
+async function getInventoryRequirementsForOrderItem(item: OrderItem): Promise<Array<{ inventoryItemId: string; quantity: number }>> {
+  const recipeRows = await listRecipeForMenuItem(item.menuItemId);
+  if (recipeRows.length > 0) {
+    return recipeRows.map((recipe) => ({
+      inventoryItemId: recipe.inventoryItemId,
+      quantity: Math.abs(item.quantity * recipe.quantityPerUnit),
+    }));
+  }
+
+  if (item.inventoryItemId) {
+    return [{ inventoryItemId: item.inventoryItemId, quantity: Math.abs(item.quantity) }];
+  }
+
+  throw new Error(`Missing inventory recipe mapping for menu item ${item.menuItemId}.`);
+}
+
 async function assertInventoryDeductionCanComplete(order: OrderRecord, trigger: string): Promise<void> {
   const requiredByInventoryItem = new Map<string, number>();
   for (const item of order.items) {
     if (await getCompletedInventoryDeduction(item.id, trigger)) continue;
 
-    const recipeRows = await listRecipeForMenuItem(item.menuItemId);
-    if (recipeRows.length === 0) throw new Error(`Missing inventory recipe mapping for menu item ${item.menuItemId}.`);
-
-    for (const recipe of recipeRows) {
-      const required = Math.abs(item.quantity * recipe.quantityPerUnit);
-      requiredByInventoryItem.set(recipe.inventoryItemId, (requiredByInventoryItem.get(recipe.inventoryItemId) ?? 0) + required);
+    for (const requirement of await getInventoryRequirementsForOrderItem(item)) {
+      requiredByInventoryItem.set(requirement.inventoryItemId, (requiredByInventoryItem.get(requirement.inventoryItemId) ?? 0) + requirement.quantity);
     }
   }
 
@@ -326,19 +338,16 @@ async function deductInventoryForOrder(order: OrderRecord, trigger: string, acto
     const existingDeduction = await getCompletedInventoryDeduction(item.id, trigger);
     if (existingDeduction) continue;
 
-    const recipeRows = await listRecipeForMenuItem(item.menuItemId);
-    if (recipeRows.length === 0) throw new Error(`Missing inventory recipe mapping for menu item ${item.menuItemId}.`);
-
-    for (const recipe of recipeRows) {
+    for (const requirement of await getInventoryRequirementsForOrderItem(item)) {
       await appendStockMovement(
         {
           branchId: order.branchId,
-          itemId: recipe.inventoryItemId,
+          itemId: requirement.inventoryItemId,
           movementType: 'sale_deduction',
-          quantityDelta: -Math.abs(item.quantity * recipe.quantityPerUnit),
+          quantityDelta: -requirement.quantity,
           reason: `Auto deduction for order ${order.id}, order item ${item.id}`,
           referenceId: order.id,
-          idempotencyKey: `${order.id}:${item.id}:${trigger}:${recipe.inventoryItemId}`,
+          idempotencyKey: `${order.id}:${item.id}:${trigger}:${requirement.inventoryItemId}`,
         },
         actorUserId,
       );
