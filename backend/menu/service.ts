@@ -1,4 +1,5 @@
 import { getCurrentBranchId } from '../config/branch';
+import { createInventoryMasterItem } from '../inventory/service';
 import { isConfiguredPrepStation, normalizePrepStationId } from '../config/posSettings';
 import {
   createCategory,
@@ -34,6 +35,9 @@ export interface ItemInput {
   taxMode?: 'taxable' | 'tax_exempt';
   taxRate?: number;
   inventoryItemId?: string;
+  inventoryUnit?: string;
+  inventoryMinimumThreshold?: number;
+  inventoryCurrentStock?: number;
   isAvailable?: boolean;
   isActive?: boolean;
   isPromotional?: boolean;
@@ -72,6 +76,18 @@ function assertName(name: string, entity: 'Category' | 'Item'): string {
   const normalized = name.trim();
   if (!normalized) throw new Error(`${entity} name is required.`);
   return normalized;
+}
+
+async function createLinkedInventoryItemForMenuItem(menuItem: MenuItemRecord, input: ItemInput): Promise<string> {
+  const inventoryItem = await createInventoryMasterItem({
+    branchId: menuItem.branchId,
+    sku: `MENU-${menuItem.id}`,
+    name: menuItem.name,
+    unit: input.inventoryUnit?.trim() || 'each',
+    minimumThreshold: input.inventoryMinimumThreshold ?? 0,
+    currentStock: input.inventoryCurrentStock ?? 0,
+  });
+  return inventoryItem.id;
 }
 
 export async function adminListMenu() {
@@ -136,7 +152,7 @@ export async function adminCreateItem(input: ItemInput): Promise<MenuItemRecord>
   if (duplicate) throw new Error(`Item '${name}' already exists in this category.`);
 
   const now = nowIso();
-  return createItem({
+  const menuItem = await createItem({
     id: createId('item'),
     branchId: input.branchId ?? category.branchId ?? getCurrentBranchId(),
     categoryId: input.categoryId,
@@ -153,6 +169,13 @@ export async function adminCreateItem(input: ItemInput): Promise<MenuItemRecord>
     createdAt: now,
     updatedAt: now,
   });
+
+  if (menuItem.inventoryItemId) return menuItem;
+
+  const inventoryItemId = await createLinkedInventoryItemForMenuItem(menuItem, input);
+  const linkedMenuItem = await updateItem(menuItem.id, { inventoryItemId, updatedAt: nowIso() });
+  if (!linkedMenuItem) throw new Error('Menu item not found after linked inventory creation.');
+  return linkedMenuItem;
 }
 
 export async function adminUpdateItem(id: string, input: Partial<ItemInput>) {
@@ -178,8 +201,13 @@ export async function adminUpdateItem(id: string, input: Partial<ItemInput>) {
     input.name = name;
   }
 
+  const { inventoryUnit, inventoryMinimumThreshold, inventoryCurrentStock, ...menuPatch } = input;
+  void inventoryUnit;
+  void inventoryMinimumThreshold;
+  void inventoryCurrentStock;
+
   return updateItem(id, {
-    ...input,
+    ...menuPatch,
     description: input.description?.trim(),
     price: typeof input.price === 'number' ? Math.round(input.price * 100) / 100 : undefined,
     taxRate: typeof input.taxRate === 'number' ? Math.round(input.taxRate * 100) / 100 : undefined,

@@ -62,9 +62,12 @@ async function runEndToEndPosFlow(): Promise<void> {
   assertEqual(inventoryAfterMappedOrder.find((item) => item.id === rice.id)?.currentBalance, 19, 'Recipe mapping should deduct mapped rice quantity instead of menu item id');
   assertEqual(inventoryAfterMappedOrder.find((item) => item.id === broth.id)?.currentBalance, 9.5, 'Recipe mapping should deduct each mapped ingredient');
 
-  const unmappedItem = await adminCreateItem({ branchId, categoryId: category.id, name: 'Unmapped E2E', price: 5, prepStation: 'kitchen', isAvailable: true });
-  const unmappedOrder = await createOrderDraft(waiter, { branchId, serviceMode: 'takeout', takeoutName: 'Unmapped Guest', items: [{ menuItemId: unmappedItem.id, quantity: 1 }] });
-  await assertRejects(() => transitionOrderStatus(waiter, unmappedOrder.id, unmappedOrder.version, 'in_preparation'), 'Missing inventory recipe mapping');
+  const autoLinkedItem = await adminCreateItem({ branchId, categoryId: category.id, name: 'Auto Linked E2E', price: 5, prepStation: 'kitchen', inventoryCurrentStock: 2, isAvailable: true });
+  assert(autoLinkedItem.inventoryItemId, 'Menu item creation should auto-link a same-name inventory item.');
+  const autoLinkedOrder = await createOrderDraft(waiter, { branchId, serviceMode: 'takeout', takeoutName: 'Auto Linked Guest', items: [{ menuItemId: autoLinkedItem.id, quantity: 1 }] });
+  await transitionOrderStatus(waiter, autoLinkedOrder.id, autoLinkedOrder.version, 'in_preparation');
+  inventoryAfterMappedOrder = await listInventoryWithBalances();
+  assertEqual(inventoryAfterMappedOrder.find((item) => item.id === autoLinkedItem.inventoryItemId)?.currentBalance, 1, 'Auto-linked menu inventory should deduct one unit when the order enters preparation.');
 
   const scarce = await createInventoryMasterItem({ branchId, sku: 'SCARCE-E2E', name: 'Scarce ingredient', unit: 'portion', minimumThreshold: 1, currentStock: 1 });
   const scarceItem = await adminCreateItem({ branchId, categoryId: category.id, name: 'Scarce E2E', price: 5, prepStation: 'kitchen', isAvailable: true });
