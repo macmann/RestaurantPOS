@@ -3,6 +3,7 @@ import { appRoutes, canAccessRoute, defaultRoute, superadminSettingsRoutes, visi
 import type { AuthenticatedUser } from '../../backend/auth/policies';
 import { Actions, RolePermissions, type Action } from '../../backend/auth/permissions';
 import { loadOrderProgressForWaiter } from '../waiter/order-progress';
+import { orderItemPreparationStatus } from '../orders/order-screen';
 import { loadAdminMenuDashboard } from '../admin/menu-management';
 import { loadAdminAuditViewer } from '../admin/audit-viewer';
 import { ApiClientError, apiClient } from '../api/client';
@@ -2018,7 +2019,7 @@ function bindTableLayoutFlow(flow: HTMLElement, callbacks: TableLayoutFlowCallba
   });
 }
 
-function renderOrderedItemsReview(orders: OrderRecord[]): HTMLElement {
+function renderOrderedItemsReview(orders: OrderRecord[], snapshot?: KdsSnapshot): HTMLElement {
   const totalItems = orders.reduce((sum, order) => sum + order.items.reduce((itemSum, item) => itemSum + item.quantity, 0), 0);
   const review = el('section', 'ordered-items-review');
   const heading = el('div', 'ordered-items-review__heading');
@@ -2034,7 +2035,7 @@ function renderOrderedItemsReview(orders: OrderRecord[]): HTMLElement {
       const row = el('div', 'ordered-item-row');
       const detail = el('div');
       detail.append(el('strong', '', `${item.quantity}× ${item.name}`));
-      const itemMeta = [`${money(item.unitPrice)} each`, `Order ${order.id.slice(-8)}`, order.status.replace(/_/g, ' ')];
+      const itemMeta = [`${money(item.unitPrice)} each`, `Order ${order.id.slice(-8)}`, orderItemPreparationStatus(order, item.id, snapshot)];
       if (item.note) itemMeta.push(item.note);
       detail.append(el('small', '', itemMeta.join(' · ')));
       row.append(detail, el('strong', '', money(item.lineTotal)));
@@ -2122,9 +2123,9 @@ async function renderOrderEntry(): Promise<HTMLElement> {
     orderPanel.innerHTML = `<div class="pos-panel-heading"><h3>${selected.table.name} active order</h3><span>${selected.activeSession.guestCount} guests · send items from menu</span></div>`;
     const cart = el('div', 'cart-list');
     if (!activeOrder?.items.length) cart.append(el('p', 'muted', 'Tap menu items to start this table order.'));
-    const orderStatus = activeOrder?.status.replace(/_/g, ' ') ?? 'new';
     for (const item of activeOrder?.items ?? []) {
       const row = el('div', 'cart-row');
+      const orderStatus = activeOrder ? orderItemPreparationStatus(activeOrder, item.id, kdsSnapshot) : 'new';
       row.innerHTML = `<div><strong>${item.name}</strong><small>${money(item.unitPrice)} each · ${orderStatus}</small></div><div class="quantity-controls"><button type="button" data-delta="-1">−</button><span>${item.quantity}</span><button type="button" data-delta="1">+</button></div><strong>${money(item.lineTotal)}</strong>`;
       row.querySelectorAll<HTMLButtonElement>('button').forEach((button) => button.addEventListener('click', () => {
         void changeOrderItemQuantity(activeOrder!, item.id, item.quantity + Number(button.dataset.delta));
@@ -2183,9 +2184,10 @@ async function renderBillingDesk(): Promise<HTMLElement> {
 
   const cashierMode = canCloseBills();
 
-  const [floor, orders] = await Promise.all([
+  const [floor, orders, kdsSnapshot] = await Promise.all([
     loadCashierTableFloor(session!.user.branchId),
     apiClient.listOrders(),
+    apiClient.getKdsSnapshot(undefined, 'all'),
   ]);
   if (!selectedTableId || !floor.tables.some((row) => row.table.id === selectedTableId)) selectedTableId = floor.tables.find((row) => row.activeSession)?.table.id ?? floor.tables[0]?.table.id;
   const selected = floor.tables.find((row) => row.table.id === selectedTableId) ?? floor.tables[0];
@@ -2227,7 +2229,7 @@ async function renderBillingDesk(): Promise<HTMLElement> {
   }
 
   billPanel.replaceChildren();
-  if (linkedOrders.length && itemCount) billPanel.append(renderOrderedItemsReview(linkedOrders));
+  if (linkedOrders.length && itemCount) billPanel.append(renderOrderedItemsReview(linkedOrders, kdsSnapshot));
   const billHeading = el('div', 'pos-panel-heading');
   billHeading.innerHTML = `<h3>${selected.table.name} bill</h3><span>${selected.activeSession!.guestCount} guests · ${itemCount} items</span>`;
   billPanel.append(billHeading);
