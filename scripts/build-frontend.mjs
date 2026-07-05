@@ -1,15 +1,20 @@
 import { copyFileSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { extname, join, relative } from 'node:path';
+import { dirname, extname, join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
-const root = process.cwd();
+const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const outDir = join(root, 'dist', 'frontend');
 const assetsDir = join(outDir, 'assets');
 
 rmSync(outDir, { recursive: true, force: true });
 mkdirSync(assetsDir, { recursive: true });
 
-const tsc = spawnSync('tsc', ['-p', 'tsconfig.frontend.json'], { stdio: 'inherit' });
+const tscBin = join(root, 'node_modules', 'typescript', 'bin', 'tsc');
+const tsc = spawnSync(process.execPath, [tscBin, '-p', join(root, 'tsconfig.frontend.json')], {
+  cwd: root,
+  stdio: 'inherit',
+});
 if (tsc.status !== 0) process.exit(tsc.status ?? 1);
 
 function walk(dir) {
