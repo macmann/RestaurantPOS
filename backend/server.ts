@@ -1,6 +1,7 @@
 declare const process: { env: Record<string, string | undefined>; cwd(): string };
 declare const require: { main?: unknown };
 declare const module: unknown;
+declare const __dirname: string;
 import express, { type NextFunction, type Request, type Response, type Router } from 'express';
 import { createReadStream, existsSync, statSync } from 'node:fs';
 import { extname, join, normalize } from 'node:path';
@@ -383,10 +384,30 @@ const frontendContentTypes = new Map([
   ['.webp', 'image/webp'],
 ]);
 
+function findFrontendRoot(): string | undefined {
+  const candidates = [
+    join(process.cwd(), 'dist', 'frontend'),
+    join(__dirname, '..', 'frontend'),
+    join(__dirname, '..', 'dist', 'frontend'),
+  ];
+  const seen = new Set<string>();
+
+  for (const candidate of candidates) {
+    if (seen.has(candidate)) continue;
+    seen.add(candidate);
+    if (existsSync(join(candidate, 'index.html'))) return candidate;
+  }
+
+  return undefined;
+}
+
 function mountFrontendApp(app: ReturnType<typeof express>): void {
-  const frontendRoot = join(process.cwd(), 'dist', 'frontend');
+  const frontendRoot = findFrontendRoot();
+  if (!frontendRoot) {
+    console.warn('Frontend build not found. Run `npm run build` before starting the application.');
+    return;
+  }
   const indexPath = join(frontendRoot, 'index.html');
-  if (!existsSync(indexPath)) return;
 
   app.get('*', (req: Request, res: Response, next: NextFunction) => {
     const pathname = decodeURIComponent(new URL((req as any).url ?? '/', 'http://localhost').pathname);
