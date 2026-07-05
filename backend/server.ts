@@ -4,7 +4,7 @@ declare const module: unknown;
 declare const __dirname: string;
 import express, { type NextFunction, type Request, type Response, type Router } from 'express';
 import { createReadStream, existsSync, statSync } from 'node:fs';
-import { extname, join, normalize } from 'node:path';
+import { extname, join, normalize, resolve } from 'node:path';
 import { loadUser, requireActiveUser, requireAuth, authorize, authorizeAny } from './auth/middleware';
 import { Actions, RolePermissions } from './auth/permissions';
 import { getCurrentBranchId, getRuntimeSettings } from './config/branch';
@@ -385,10 +385,12 @@ const frontendContentTypes = new Map([
 ]);
 
 function findFrontendRoot(): string | undefined {
+  const cwd = process.cwd();
+  const compiledProjectRoot = resolve(__dirname, '..', '..');
   const candidates = [
-    join(process.cwd(), 'dist', 'frontend'),
+    join(cwd, 'dist', 'frontend'),
+    join(compiledProjectRoot, 'dist', 'frontend'),
     join(__dirname, '..', 'frontend'),
-    join(__dirname, '..', 'dist', 'frontend'),
   ];
   const seen = new Set<string>();
 
