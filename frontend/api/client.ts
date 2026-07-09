@@ -219,6 +219,8 @@ async function requestInProcess<T>(path: string, method: string, body: unknown, 
     if (parts[4] === 'breakdown') return billing.getBillCalculationBreakdown(tableSessionId) as Promise<T>;
     if (parts[4] === 'receipt') return billing.getPrintedReceiptPayload(tableSessionId, url.searchParams.get('locale') ?? undefined) as Promise<T>;
     if (parts[4] === 'tax') return billing.setBillTaxMode({ ...(body as object), tableSessionId, actorUserId: userId }) as Promise<T>;
+    if (parts[4] === 'splits') return billing.updateBillSplitItems({ ...(body as object), tableSessionId, actorUserId: userId }) as Promise<T>;
+    if (parts[4] === 'merge-splits') return billing.mergeBillSplits({ ...(body as object), tableSessionId, actorUserId: userId }) as Promise<T>;
     if (parts[4] === 'promotions') return billing.applyBillPromotions({ ...(body as object), tableSessionId, actorUserId: userId }) as Promise<T>;
     if (parts[4] === 'print') return billing.printBillReceipt({ ...(body as object), tableSessionId, actorUserId: userId }) as Promise<T>;
     if (parts[4] === 'payments') return billing.recordSplitPayment({ ...(body as object), tableSessionId, actorUserId: userId }) as Promise<T>;
@@ -497,6 +499,14 @@ export class RestaurantApiClient {
 
   setBillTaxMode(input: { tableSessionId: string; taxMode: BillPricingOptions['taxMode']; taxRate?: number }, userId?: string) {
     return this.request(`/api/billing/bills/${encodeURIComponent(input.tableSessionId)}/tax`, { method: 'PATCH', userId, body: input, operationKind: 'idempotent_write' });
+  }
+
+  updateBillSplitItems(input: { tableSessionId: string; itemsBySplit: Partial<Record<SplitLabel, TableOrderItem[]>> }, userId?: string) {
+    return this.request(`/api/billing/bills/${encodeURIComponent(input.tableSessionId)}/splits`, { method: 'PATCH', userId, body: input, operationKind: 'idempotent_write' });
+  }
+
+  mergeBillSplits(input: { tableSessionId: string; targetSplitLabel?: SplitLabel }, userId?: string) {
+    return this.request(`/api/billing/bills/${encodeURIComponent(input.tableSessionId)}/merge-splits`, { method: 'POST', userId, body: input, operationKind: 'idempotent_write' });
   }
 
   applyBillPromotions(input: { tableSessionId: string; billPromotions: BillPromotion[] }, userId?: string) {
