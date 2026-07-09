@@ -32,8 +32,14 @@ export interface LocalizationSettings {
   englishToMyanmar: Record<string, string>;
 }
 
+export interface TaxSettings {
+  enabled: boolean;
+  rate: number;
+}
+
 export interface PosOperationalSettings {
   restaurantBillInfo: RestaurantBillInfo;
+  tax: TaxSettings;
   prepStations: PrepStationConfig[];
   printers: PrinterSettings;
   localization: LocalizationSettings;
@@ -75,6 +81,10 @@ function defaultSettings(): PosOperationalSettings {
       taxId: envValue('POS_RESTAURANT_TAX_ID'),
       receiptFooter: envValue('POS_RECEIPT_FOOTER') ?? 'Thank you. Please visit again.',
     },
+    tax: {
+      enabled: envValue('POS_TAX_ENABLED') === 'true',
+      rate: Number(envValue('POS_TAX_RATE') ?? 0),
+    },
     prepStations,
     printers: {
       receipt: { enabled: envValue('POS_RECEIPT_PRINTER_ENABLED') !== 'false', printerId: envValue('POS_RECEIPT_PRINTER_ID') ?? 'receipt-counter', displayName: envValue('POS_RECEIPT_PRINTER_NAME') ?? 'Receipt printer' },
@@ -112,6 +122,12 @@ function normalizeLocalization(input: Partial<LocalizationSettings> | undefined,
     defaultLocale: normalizeLocale(input?.defaultLocale ?? fallback.defaultLocale),
     englishToMyanmar: normalizeEnglishMyanmarMapping(input?.englishToMyanmar, fallback.englishToMyanmar),
   };
+}
+
+function normalizeTax(input: Partial<TaxSettings> | undefined, fallback: TaxSettings): TaxSettings {
+  const rate = Number(input?.rate ?? fallback.rate);
+  if (!Number.isFinite(rate) || rate < 0) throw new Error('tax.rate must be a non-negative finite number.');
+  return { enabled: typeof input?.enabled === 'boolean' ? input.enabled : fallback.enabled, rate: Math.round((rate + Number.EPSILON) * 100) / 100 };
 }
 
 function normalizePrinter(input: Partial<PrinterDeviceConfig> | undefined, fallback: PrinterDeviceConfig): PrinterDeviceConfig {
@@ -186,6 +202,7 @@ export function updatePosOperationalSettings(input: PosOperationalSettingsInput)
       taxId: String(input.restaurantBillInfo?.taxId ?? currentSettings.restaurantBillInfo.taxId ?? '').trim() || undefined,
       receiptFooter: String(input.restaurantBillInfo?.receiptFooter ?? currentSettings.restaurantBillInfo.receiptFooter ?? '').trim() || undefined,
     },
+    tax: normalizeTax(input.tax, currentSettings.tax),
     prepStations,
     printers: normalizePrinters(input.printers, prepStations, currentSettings.printers),
     localization: normalizeLocalization(input.localization, currentSettings.localization),

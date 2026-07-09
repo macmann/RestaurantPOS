@@ -59,8 +59,9 @@ function getPaymentContribution(payment: BillPayment): number {
 }
 
 function normalizePricing(pricing?: Partial<BillPricingOptions>): BillPricingOptions {
-  const taxMode = pricing?.taxMode ?? DEFAULT_PRICING.taxMode;
-  const taxRate = pricing?.taxRate ?? DEFAULT_PRICING.taxRate;
+  const configuredTax = getPosOperationalSettings().tax;
+  const taxMode = pricing?.taxMode ?? (configuredTax.enabled ? 'taxable' : 'tax_exempt');
+  const taxRate = pricing?.taxRate ?? (configuredTax.enabled ? configuredTax.rate : DEFAULT_PRICING.taxRate);
   if (taxMode !== 'taxable' && taxMode !== 'tax_exempt') throw new Error('taxMode must be taxable or tax_exempt.');
   assertNonNegativeMoney(taxRate, 'taxRate');
 
@@ -501,6 +502,63 @@ export async function applyBillPromotions(input: {
   return saveBill(bill);
 }
 
+function assertEditableSplit(split: BillRecord['splits'][SplitLabel], label: SplitLabel): void {
+  if (split.payments.length > 0 || split.amountPaid > 0) throw new Error(`Split ${label} has payments and cannot be reassigned or merged.`);
+}
+
+export async function updateBillSplitItems(input: {
+  tableSessionId: string;
+  itemsBySplit: Partial<Record<SplitLabel, TableOrderItem[]>>;
+  actorUserId: string;
+}): Promise<BillRecord> {
+  const bill = await getBillByTableSessionId(input.tableSessionId);
+  if (!bill) throw new Error('Bill not found for table session.');
+  for (const label of SPLIT_LABELS) assertEditableSplit(bill.splits[label], label);
+  for (const item of Object.values(input.itemsBySplit).flat()) {
+    if (item.tableSessionId !== input.tableSessionId) throw new Error('Bill items must belong to the requested table session.');
+  }
+
+  for (const label of SPLIT_LABELS) {
+    bill.splits[label] = {
+      ...bill.splits[label],
+      lineItems: (input.itemsBySplit[label] ?? []).map((it) => calculateLineItem(it, true)),
+    };
+  }
+  updateBillStateAndBreakdown(bill);
+  await appendBillingAuditEntry({
+    id: createId('audit'),
+    branchId: bill.branchId,
+    tableSessionId: bill.tableSessionId,
+    splitLabel: 'A',
+    action: 'bill_split_items_updated',
+    actorUserId: input.actorUserId,
+    at: bill.updatedAt,
+    details: { splitItemCounts: Object.fromEntries(SPLIT_LABELS.map((x) => [x, bill.splits[x].lineItems.length])) },
+  });
+  return saveBill(bill);
+}
+
+export async function mergeBillSplits(input: { tableSessionId: string; actorUserId: string; targetSplitLabel?: SplitLabel }): Promise<BillRecord> {
+  const bill = await getBillByTableSessionId(input.tableSessionId);
+  if (!bill) throw new Error('Bill not found for table session.');
+  const target = input.targetSplitLabel ?? 'A';
+  if (!SPLIT_LABELS.includes(target)) throw new Error('Invalid target split label. Use A, B, or C.');
+  for (const label of SPLIT_LABELS) assertEditableSplit(bill.splits[label], label);
+  const merged = SPLIT_LABELS.flatMap((label) => bill.splits[label].lineItems);
+  for (const label of SPLIT_LABELS) bill.splits[label] = { ...bill.splits[label], lineItems: label === target ? merged : [] };
+  updateBillStateAndBreakdown(bill);
+  await appendBillingAuditEntry({
+    id: createId('audit'),
+    branchId: bill.branchId,
+    tableSessionId: bill.tableSessionId,
+    splitLabel: target,
+    action: 'bill_splits_merged',
+    actorUserId: input.actorUserId,
+    at: bill.updatedAt,
+    details: { targetSplitLabel: target, mergedLineCount: merged.length },
+  });
+  return saveBill(bill);
+}
 
 export async function voidBill(input: {
   tableSessionId: string;

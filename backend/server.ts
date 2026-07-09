@@ -23,6 +23,8 @@ import {
   generateBillFromSessionItems,
   setBillTaxMode,
   applyBillPromotions,
+  updateBillSplitItems,
+  mergeBillSplits,
   voidBill,
   getBillCalculationBreakdown,
   getPrintedReceiptPayload,
@@ -295,6 +297,8 @@ function buildBillingRouter(): Router {
     return generateBillFromSessionItems(requiredString(body.tableSessionId, 'tableSessionId'), (body.itemsBySplit ?? {}) as any, req.user!.id, body.pricing as any, optionalString(body.branchId) ?? getCurrentBranchId());
   }, 201));
   router.patch('/bills/:tableSessionId/tax', authorize(Actions.CloseBill), send((req) => setBillTaxMode({ ...bodyObject(req), tableSessionId: stringParam(req, 'tableSessionId'), actorUserId: req.user!.id } as any)));
+  router.patch('/bills/:tableSessionId/splits', authorize(Actions.CloseBill), send((req) => updateBillSplitItems({ ...(bodyObject(req) as any), tableSessionId: stringParam(req, 'tableSessionId'), actorUserId: req.user!.id })));
+  router.post('/bills/:tableSessionId/merge-splits', authorize(Actions.CloseBill), send((req) => mergeBillSplits({ ...(bodyObject(req) as any), tableSessionId: stringParam(req, 'tableSessionId'), actorUserId: req.user!.id })));
   router.patch('/bills/:tableSessionId/promotions', authorize(Actions.CloseBill), send((req) => applyBillPromotions({ ...bodyObject(req), tableSessionId: stringParam(req, 'tableSessionId'), actorUserId: req.user!.id } as any)));
   router.post('/bills/:tableSessionId/void', authorize(Actions.CloseBill), send((req) => voidBill({ ...bodyObject(req), tableSessionId: stringParam(req, 'tableSessionId'), actorUserId: req.user!.id } as any)));
   router.get('/bills/:tableSessionId/breakdown', authorize(Actions.ViewBill), send((req) => getBillCalculationBreakdown(stringParam(req, 'tableSessionId'))));

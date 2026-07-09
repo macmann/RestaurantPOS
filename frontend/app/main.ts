@@ -45,6 +45,10 @@ interface SuperadminOperationalSettings {
   printers: Record<string, SuperadminPrinterSettings> & {
     receipt: SuperadminPrinterSettings;
   };
+  tax: {
+    enabled: boolean;
+    rate: number;
+  };
   localization: {
     defaultLocale: SupportedLocale;
     englishToMyanmar: Record<string, string>;
@@ -75,6 +79,8 @@ let loginNotice: string | undefined;
 let healthTimer: number | undefined;
 let selectedTableId: string | undefined;
 let selectedSplitCount = 1;
+let splitDraftSelections: Record<string, Partial<Record<SplitLabel, TableOrderItem[]>>> = {};
+let pendingPrintPreview: { tableSessionId: string; receipt: ReceiptPayload } | undefined;
 let activeUiLocale: SupportedLocale = normalizeLocale();
 let englishToMyanmarUiLabels: Record<string, string> = buildEnglishMyanmarLocalizationMap();
 let cachedPrepStations: SuperadminPrepStation[] = normalizePrepStations(undefined);
@@ -642,6 +648,10 @@ function normalizeOperationalSettings(response: unknown): SuperadminOperationalS
       contact: billInfo.contact?.trim() || branch.contactNumber?.trim() || 'Contact not configured',
       taxId: billInfo.taxId?.trim() || undefined,
       receiptFooter: billInfo.receiptFooter?.trim() || undefined,
+    },
+    tax: {
+      enabled: typeof (posSettings as any).tax?.enabled === 'boolean' ? (posSettings as any).tax.enabled : false,
+      rate: Number.isFinite(Number((posSettings as any).tax?.rate)) ? Number((posSettings as any).tax.rate) : 0,
     },
     prepStations,
     printers,
@@ -2060,9 +2070,42 @@ async function createBillForSession(tableSessionId: string): Promise<void> {
   if (!linkedOrders.length || !linkedOrders.some((order) => order.items.length)) throw new Error('Add menu items before preparing the bill.');
   await apiClient.createBill({
     tableSessionId,
-    itemsBySplit: orderItemsForBill(orders, tableSessionId, selectedSplitCount),
-    pricing: { taxMode: 'taxable', taxRate: 0 },
+    itemsBySplit: splitDraftSelections[tableSessionId] ?? orderItemsForBill(orders, tableSessionId, selectedSplitCount),
   }, session.user.id);
+}
+
+function renderSplitItemAssignment(tableSessionId: string, orders: OrderRecord[], existing?: ReceiptPayload): HTMLElement {
+  const labels = ['A', 'B', 'C'] as SplitLabel[];
+  const source = existing
+    ? existing.splits.flatMap((split) => split.lines.map((line) => ({ id: line.orderItemId, orderId: 'existing', tableSessionId, name: line.name, quantity: line.quantity, unitPrice: line.unitPrice, itemDiscount: line.discounts.itemLevel, comboDiscount: line.discounts.combo, happyHourDiscount: line.discounts.happyHour } as TableOrderItem & { currentSplit?: SplitLabel })).map((item) => ({ ...item, currentSplit: existing.splits.find((split) => split.lines.some((line) => line.orderItemId === item.id))?.label ?? 'A' })))
+    : orderItemsForBill(orders, tableSessionId, selectedSplitCount);
+  const current = splitDraftSelections[tableSessionId] ?? (existing ? labels.reduce((acc, label) => ({ ...acc, [label]: (source as (TableOrderItem & { currentSplit?: SplitLabel })[]).filter((item) => item.currentSplit === label) }), {} as Partial<Record<SplitLabel, TableOrderItem[]>>) : source as Partial<Record<SplitLabel, TableOrderItem[]>>);
+  splitDraftSelections[tableSessionId] = current;
+  const allItems = labels.flatMap((label) => (current[label] ?? []).map((item) => ({ ...item, assignedSplit: label })));
+  const box = el('div', 'split-assignment-panel');
+  box.innerHTML = `<h4>Assign specific menu items to split bills</h4><p class="muted">Change quantities or move items between splits. Use Back/other navigation freely; this draft is preserved until you prepare or update the bill.</p>`;
+  for (const item of allItems) {
+    const row = el('div', 'bill-line-row');
+    row.innerHTML = `<label><input type="checkbox" checked> ${item.name}</label><input name="qty" type="number" min="0.01" step="0.01" value="${item.quantity}" aria-label="Quantity for ${item.name}"><select>${labels.slice(0, selectedSplitCount).map((label) => `<option value="${label}" ${label === item.assignedSplit ? 'selected' : ''}>Split ${label}</option>`).join('')}</select>`;
+    const saveDraft = () => {
+      const checked = row.querySelector<HTMLInputElement>('input[type=checkbox]')!.checked;
+      const qty = Number(row.querySelector<HTMLInputElement>('input[name=qty]')!.value);
+      const nextLabel = row.querySelector<HTMLSelectElement>('select')!.value as SplitLabel;
+      for (const label of labels) current[label] = (current[label] ?? []).filter((x) => x.id !== item.id);
+      if (checked && Number.isFinite(qty) && qty > 0) current[nextLabel] = [...(current[nextLabel] ?? []), { ...item, quantity: qty }];
+    };
+    row.querySelectorAll('input,select').forEach((control) => control.addEventListener('change', saveDraft));
+    box.append(row);
+  }
+  return box;
+}
+
+function renderPrintPreview(tableSessionId: string, receipt: ReceiptPayload): HTMLElement {
+  const panel = el('section', 'pos-panel print-preview-panel');
+  panel.innerHTML = `<div class="pos-panel-heading"><h3>Print preview</h3><span>Confirm before printing</span></div><div class="receipt-preview-paper"><strong>${receipt.restaurant.restaurantName}</strong><span>Table ${receipt.tableSessionId}</span>${receipt.calculationBreakdown.lines.map((line) => `<div class="receipt-preview-paper__line">${line.quantity}× ${line.name} — ${money(line.lineTotal)}</div>`).join('')}<hr><span>Subtotal ${money(receipt.calculationBreakdown.subtotal)}</span><span>Discount ${money(receipt.calculationBreakdown.discounts.total)}</span><span>Tax ${money(receipt.calculationBreakdown.taxTotal)}</span><strong>Total ${money(receipt.calculationBreakdown.totalDue)}</strong></div><div class="billing-actions"><button type="button" class="secondary cancel-print">Cancel</button><button type="button" class="billing-action confirm-print">Confirm print</button></div>`;
+  panel.querySelector<HTMLButtonElement>('.cancel-print')?.addEventListener('click', () => { pendingPrintPreview = undefined; render(); });
+  panel.querySelector<HTMLButtonElement>('.confirm-print')?.addEventListener('click', async () => { await apiClient.printReceipt(tableSessionId, { copies: 1 }, session!.user.id); pendingPrintPreview = undefined; render(); });
+  return panel;
 }
 
 async function renderOrderEntry(): Promise<HTMLElement> {
@@ -2253,6 +2296,7 @@ async function renderBillingDesk(): Promise<HTMLElement> {
       selectedSplitCount = Number((event.currentTarget as HTMLSelectElement).value);
       render();
     });
+    draft.append(renderSplitItemAssignment(selectedSessionId, orders));
     draft.querySelector<HTMLButtonElement>('.billing-action')?.addEventListener('click', async () => {
       try {
         await createBillForSession(selectedSessionId);
@@ -2314,15 +2358,40 @@ async function renderBillingDesk(): Promise<HTMLElement> {
     }
     billPanel.append(splits);
 
+    billPanel.append(renderSplitItemAssignment(selectedSessionId, orders, receipt));
+
     const billActions = el('div', 'billing-actions');
     billActions.innerHTML = `
+      <button type="button" class="secondary back-split">Back</button>
+      <button type="button" class="secondary update-splits" ${cashierMode ? '' : 'disabled'}>Update split items</button>
+      <button type="button" class="secondary merge-splits" ${cashierMode ? '' : 'disabled'}>Merge splits</button>
       <button type="button" class="secondary tax-toggle" ${cashierMode ? '' : 'disabled'}>${receipt.calculationBreakdown.taxMode === 'taxable' ? 'Mark tax exempt' : 'Enable tax'}</button>
       <button type="button" class="secondary print-receipt" ${cashierMode ? '' : 'disabled'}>Print receipt</button>
       <button type="button" class="billing-action close-table" ${receipt.balanceDue > 0 || !cashierMode ? 'disabled' : ''}>${cashierMode ? 'Close paid table' : 'Cashier closes table'}</button>
     `;
+    billActions.querySelector<HTMLButtonElement>('.back-split')?.addEventListener('click', () => { window.history.back(); });
+    billActions.querySelector<HTMLButtonElement>('.update-splits')?.addEventListener('click', async () => {
+      try {
+        await apiClient.updateBillSplitItems({ tableSessionId: selectedSessionId, itemsBySplit: splitDraftSelections[selectedSessionId] ?? {} }, session!.user.id);
+        render();
+      } catch (caught) {
+        status.hidden = false;
+        status.textContent = caught instanceof Error ? caught.message : 'Unable to update split items.';
+      }
+    });
+    billActions.querySelector<HTMLButtonElement>('.merge-splits')?.addEventListener('click', async () => {
+      try {
+        await apiClient.mergeBillSplits({ tableSessionId: selectedSessionId, targetSplitLabel: 'A' }, session!.user.id);
+        splitDraftSelections[selectedSessionId] = {};
+        render();
+      } catch (caught) {
+        status.hidden = false;
+        status.textContent = caught instanceof Error ? caught.message : 'Unable to merge split bills.';
+      }
+    });
     billActions.querySelector<HTMLButtonElement>('.tax-toggle')?.addEventListener('click', async () => {
       try {
-        await apiClient.setBillTaxMode({ tableSessionId: selectedSessionId, taxMode: receipt!.calculationBreakdown.taxMode === 'taxable' ? 'tax_exempt' : 'taxable', taxRate: 0 }, session!.user.id);
+        await apiClient.setBillTaxMode({ tableSessionId: selectedSessionId, taxMode: receipt!.calculationBreakdown.taxMode === 'taxable' ? 'tax_exempt' : 'taxable' }, session!.user.id);
         render();
       } catch (caught) {
         status.hidden = false;
@@ -2331,9 +2400,8 @@ async function renderBillingDesk(): Promise<HTMLElement> {
     });
     billActions.querySelector<HTMLButtonElement>('.print-receipt')?.addEventListener('click', async () => {
       try {
-        await apiClient.printReceipt(selectedSessionId, { copies: 1 }, session!.user.id);
-        status.hidden = false;
-        status.textContent = 'Receipt sent to configured receipt printer.';
+        pendingPrintPreview = { tableSessionId: selectedSessionId, receipt: await apiClient.getReceipt(selectedSessionId) };
+        render();
       } catch (caught) {
         status.hidden = false;
         status.textContent = caught instanceof Error ? caught.message : 'Unable to print receipt.';
@@ -2357,6 +2425,7 @@ async function renderBillingDesk(): Promise<HTMLElement> {
       }
     });
     billPanel.append(billActions);
+    if (pendingPrintPreview?.tableSessionId === selectedSessionId) billPanel.append(renderPrintPreview(selectedSessionId, pendingPrintPreview.receipt));
   }
 
   workspace.append(tablePanel, billPanel);
