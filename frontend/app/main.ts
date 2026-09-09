@@ -2246,10 +2246,14 @@ async function renderOrderEntry(): Promise<HTMLElement> {
   ]);
   if (!selectedTableId) selectedTableId = floor.tables.find((row) => row.status !== 'inactive')?.table.id;
   const selected = floor.tables.find((row) => row.table.id === selectedTableId) ?? floor.tables[0];
-  const activeOrder = selected?.activeSession ? findOpenOrder(orders, selected.activeSession.id) : undefined;
+  // Only pending orders are editable drafts. Once a waiter submits a round, the
+  // next menu tap starts a clean order instead of adding to the submitted round.
+  const activeOrder = selected?.activeSession
+    ? orders.filter((order) => order.tableSessionId === selected.activeSession!.id && order.status === 'pending').at(-1)
+    : undefined;
 
   const floorPanel = el('section', 'pos-panel table-panel');
-  floorPanel.innerHTML = `<div class="pos-panel-heading"><h3>Tables for ordering</h3><span>${floor.counts.available} available · ${floor.counts.occupied} occupied</span></div>`;
+  floorPanel.innerHTML = `<div class="pos-panel-heading"><div><h3>${selected ? `Ordering for ${escapeHtml(selected.table.name)}` : 'Tables for ordering'}</h3><span>${floor.counts.available} available · ${floor.counts.occupied} occupied</span></div>${selected ? '<button type="button" class="secondary change-order-table" aria-expanded="false">Change table</button>' : ''}</div>`;
   const tableList = el('div', 'table-grid order-table-list');
   floor.tables.forEach((row) => {
     const button = el('button', `table-tile ${row.status} ${row.table.id === selected?.table.id ? 'selected' : ''}`);
@@ -2263,6 +2267,16 @@ async function renderOrderEntry(): Promise<HTMLElement> {
   });
   if (!floor.tables.length) tableList.append(emptyState('No tables configured.'));
   floorPanel.append(tableList);
+  if (selected) {
+    floorPanel.classList.add('table-panel--collapsed');
+    workspace.classList.add('table-selection-collapsed');
+    const changeTableButton = floorPanel.querySelector<HTMLButtonElement>('.change-order-table')!;
+    changeTableButton.addEventListener('click', () => {
+      const expanded = floorPanel.classList.toggle('table-panel--expanded');
+      changeTableButton.setAttribute('aria-expanded', String(expanded));
+      changeTableButton.textContent = expanded ? 'Hide tables' : 'Change table';
+    });
+  }
 
   const orderPanel = el('section', 'pos-panel order-panel');
   if (!selected) {
@@ -2302,12 +2316,19 @@ async function renderOrderEntry(): Promise<HTMLElement> {
       <button type="button" class="save-order" ${activeOrder?.items.length ? '' : 'disabled'}>Save order & print tickets</button>
       <p class="muted">Save sends prep tickets to configured station printers. Billing and table closing stay with the cashier.</p>
     `;
-    orderSummary.querySelector<HTMLButtonElement>('.save-order')?.addEventListener('click', async () => {
+    orderSummary.querySelector<HTMLButtonElement>('.save-order')?.addEventListener('click', async (event) => {
+      const submitButton = event.currentTarget as HTMLButtonElement;
+      if (!window.confirm(`Submit ${activeOrder!.items.reduce((sum, item) => sum + item.quantity, 0)} item(s) for ${selected.table.name}?`)) return;
+      submitButton.disabled = true;
+      submitButton.textContent = 'Submitting order…';
       try {
         await apiClient.printOrderTickets(session!.user.id, activeOrder!.id);
-        status.hidden = false;
-        status.textContent = 'Order saved and sent to station printers.';
+        await apiClient.transitionOrderStatus(session!.user.id, activeOrder!.id, activeOrder!.version, 'in_preparation');
+        window.alert(`Order confirmed for ${selected.table.name}. The order entry is now clear.`);
+        await render();
       } catch (caught) {
+        submitButton.disabled = false;
+        submitButton.textContent = 'Save order & print tickets';
         status.hidden = false;
         status.textContent = caught instanceof Error ? caught.message : 'Unable to print order tickets.';
       }
