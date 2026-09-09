@@ -42,7 +42,10 @@ async function runHardwareBillingIntegration(): Promise<void> {
   const printer = resetReceiptPrinterAdapter();
   const orderPrinter = resetOrderPrinterAdapter();
 
-  updatePosOperationalSettings({ printers: { kitchen: { copies: 2, autoPrint: true } } });
+  updatePosOperationalSettings({
+    printers: { bbq: { enabled: true, printerId: 'bbq-printer', displayName: 'BBQ printer', connectionType: 'simulator', networkPort: 9100, copies: 2, autoPrint: true } },
+    printerAssignments: { kitchen: 'bbq' },
+  });
   const ticketOrder: OrderRecord = {
     id: 'ord-hardware-ticket', branchId: 'branch-hw', serviceMode: 'dine_in', tableId: 'table-7', tableName: 'Table 7', tableSessionId: 'session-7',
     status: 'pending', subtotal: 12, version: 1, createdBy: 'waiter-1', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), changeLog: [],
@@ -51,6 +54,7 @@ async function runHardwareBillingIntegration(): Promise<void> {
   const tickets = await orderPrinter.printOrderForConfiguredStations(ticketOrder, true);
   assertEqual(tickets.length, 1, 'Automatic order printing should route items only to their configured station');
   assertEqual(tickets[0].copyCount, 2, 'Station copy configuration should be honored');
+  assertEqual(tickets[0].printerId, 'bbq-printer', 'Kitchen printing should use the device assigned to that operation.');
   assert(tickets[0].renderedText.includes('Station: Kitchen'), 'Order ticket should identify the prep station.');
   assert(tickets[0].renderedText.includes('Table: Table 7'), 'Order ticket should identify the table to serve.');
 
