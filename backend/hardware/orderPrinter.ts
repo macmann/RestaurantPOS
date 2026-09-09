@@ -22,7 +22,8 @@ export class SimulatorOrderPrinterAdapter {
 
   async printOrder(order: OrderRecord, station: Station, automatic = false): Promise<OrderPrintResult | null> {
     const settings = getPosOperationalSettings();
-    const printer = settings.printers[station];
+    const printerKey = settings.printerAssignments[station];
+    const printer = settings.printers[printerKey];
     const items = order.items.filter((item) => (item.station ?? 'kitchen') === station);
     if (!printer?.enabled || (automatic && !printer.autoPrint) || !items.length) return null;
     const printedAt = new Date().toISOString();

@@ -626,8 +626,11 @@ export async function printBillReceipt(input: {
   const bill = await getBillByTableSessionId(input.tableSessionId);
   if (!bill) throw new Error('Bill not found for table session.');
   const payload = buildReceiptPayload(bill, input.locale);
-  const printerId = input.printerId ?? getPosOperationalSettings().printers.receipt.printerId;
-  const result = await getReceiptPrinterAdapter().printReceipt({ payload, copies: input.copies, printerId });
+  const settings = getPosOperationalSettings();
+  const assignedPrinter = settings.printers[settings.printerAssignments.receipt];
+  if (!input.printerId && !assignedPrinter?.enabled) throw new Error('The printer assigned to billing is disabled or unavailable.');
+  const printerId = input.printerId ?? assignedPrinter.printerId;
+  const result = await getReceiptPrinterAdapter().printReceipt({ payload, copies: input.copies ?? assignedPrinter.copies, printerId });
   bill.receiptPayload = payload;
   await saveBill(bill);
   await appendBillingAuditEntry({

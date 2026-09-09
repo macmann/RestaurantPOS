@@ -51,6 +51,7 @@ interface SuperadminOperationalSettings {
   printers: Record<string, SuperadminPrinterSettings> & {
     receipt: SuperadminPrinterSettings;
   };
+  printerAssignments: Record<string, string>;
   tax: {
     enabled: boolean;
     rate: number;
@@ -723,8 +724,17 @@ function normalizeOperationalSettings(response: unknown): SuperadminOperationalS
   const branch = runtimeSettings.branch ?? {};
   const localization = posSettings.localization ?? runtimeSettings.localization ?? {};
   const prepStations = normalizePrepStations((posSettings as any).prepStations);
-  const printers = { receipt: normalizePrinterSettings('Receipt', posSettings.printers?.receipt) } as SuperadminOperationalSettings['printers'];
-  for (const station of prepStations) printers[station.id] = normalizePrinterSettings(station.displayName, posSettings.printers?.[station.id]);
+  const rawPrinters = posSettings.printers ?? {};
+  const printers = {} as SuperadminOperationalSettings['printers'];
+  for (const [key, printer] of Object.entries(rawPrinters)) printers[key] = normalizePrinterSettings(fallbackStationName(key), printer);
+  if (!printers.receipt) printers.receipt = normalizePrinterSettings('Receipt');
+  for (const station of prepStations) if (!printers[station.id]) printers[station.id] = normalizePrinterSettings(station.displayName);
+  const rawAssignments = (posSettings as any).printerAssignments ?? {};
+  const printerAssignments: Record<string, string> = {};
+  for (const operation of ['receipt', ...prepStations.map((station) => station.id)]) {
+    const assigned = String(rawAssignments[operation] ?? operation);
+    printerAssignments[operation] = printers[assigned] ? assigned : 'receipt';
+  }
 
   cachedPrepStations = prepStations;
 
@@ -743,6 +753,7 @@ function normalizeOperationalSettings(response: unknown): SuperadminOperationalS
     },
     prepStations,
     printers,
+    printerAssignments,
     localization: {
       defaultLocale: normalizeLocale(localization.defaultLocale),
       englishToMyanmar: { ...settingsLocalizationMap(localization.englishToMyanmar) },
@@ -903,8 +914,8 @@ async function renderStaffSettings(isSuperadminPanel = false): Promise<HTMLEleme
           <div><strong>${roleCount}</strong><span>Roles in use</span></div>
         </div>
         <div class="superadmin-printers">
-          ${printerStatusCard('Receipts', settings.printers.receipt)}
-          ${settings.prepStations.map((station) => printerStatusCard(station.displayName, settings.printers[station.id])).join('')}
+          ${printerStatusCard('Receipts', settings.printers[settings.printerAssignments.receipt])}
+          ${settings.prepStations.map((station) => printerStatusCard(station.displayName, settings.printers[settings.printerAssignments[station.id]])).join('')}
         </div>
       </article>
       <article class="card admin-card settings-card superadmin-station-card">
@@ -1456,11 +1467,12 @@ async function renderBillSettings(): Promise<HTMLElement> {
   const settings = normalizeOperationalSettings(await apiClient.getSettings());
   const info = settings.restaurantBillInfo;
   const enabledStations = settings.prepStations.filter((station) => station.enabled).length;
-  const enabledStationPrinters = settings.prepStations.filter((station) => settings.printers[station.id]?.enabled).length;
+  const enabledStationPrinters = settings.prepStations.filter((station) => settings.printers[settings.printerAssignments[station.id]]?.enabled).length;
   const panel = el('section', 'admin-panel bill-settings-panel');
   const form = el('form', 'bill-settings-form');
   const stationRows = settings.prepStations.map((station, index) => {
-    const printer = settings.printers[station.id];
+    const assignedPrinter = settings.printerAssignments[station.id];
+    const printerOptions = Object.entries(settings.printers).map(([key, printer]) => `<option value="${escapeHtml(key)}" ${key === assignedPrinter ? 'selected' : ''}>${escapeHtml(printer.displayName)}</option>`).join('');
     return `
       <article class="station-settings-card" data-station-id="${escapeHtml(station.id)}">
         <div class="station-settings-card__order" aria-label="Station number">${index + 1}</div>
@@ -1476,22 +1488,32 @@ async function renderBillSettings(): Promise<HTMLElement> {
             <label>Station ID<input name="stationId" value="${escapeHtml(station.id)}" readonly /></label>
             <label>Display name<input name="stationDisplayName" value="${escapeHtml(station.displayName)}" required /></label>
             <label>Sort order<input name="stationSortOrder" type="number" value="${station.sortOrder}" /></label>
-            <label>Printer ID<input name="stationPrinterId" value="${escapeHtml(printer.printerId)}" required /></label>
-            <label>Printer display name<input name="stationPrinterDisplayName" value="${escapeHtml(printer.displayName)}" required /></label>
-            <label>Connection<select name="stationPrinterConnection"><option value="simulator" ${printer.connectionType === 'simulator' ? 'selected' : ''}>Simulator / test</option><option value="network" ${printer.connectionType === 'network' ? 'selected' : ''}>Wireless / LAN (TCP)</option></select></label>
-            <label>IP address / hostname<input name="stationPrinterAddress" value="${escapeHtml(printer.networkAddress ?? '')}" placeholder="192.168.1.50" /></label>
-            <label>Port<input name="stationPrinterPort" type="number" min="1" max="65535" value="${printer.networkPort}" /></label>
-            <label>Copies per order<input name="stationPrinterCopies" type="number" min="1" max="10" value="${printer.copies}" /></label>
+            <label>Send tickets to<select name="stationPrinterAssignment">${printerOptions}</select></label>
           </div>
         </div>
         <div class="station-settings-card__toggles">
           <label class="checkbox-row"><input type="checkbox" name="stationEnabled" ${station.enabled ? 'checked' : ''} /> Board enabled</label>
-          <label class="checkbox-row"><input type="checkbox" name="stationPrinterEnabled" ${printer.enabled ? 'checked' : ''} /> Printer enabled</label>
-          <label class="checkbox-row"><input type="checkbox" name="stationPrinterAutoPrint" ${printer.autoPrint ? 'checked' : ''} /> Print automatically</label>
         </div>
       </article>
     `;
   }).join('');
+  const printerRows = Object.entries(settings.printers).map(([key, printer]) => `
+    <article class="station-settings-card printer-device-card" data-printer-key="${escapeHtml(key)}">
+      <div class="station-settings-card__main">
+        <div class="station-settings-card__heading"><div><h4>${escapeHtml(printer.displayName)}</h4><small>Device ${escapeHtml(key)}</small></div></div>
+        <div class="settings-field-grid settings-field-grid--station">
+          <label>Device key<input name="printerKey" value="${escapeHtml(key)}" readonly /></label>
+          <label>Printer ID<input name="printerId" value="${escapeHtml(printer.printerId)}" required /></label>
+          <label>Display name<input name="printerDisplayName" value="${escapeHtml(printer.displayName)}" required /></label>
+          <label>Connection<select name="printerConnection"><option value="simulator" ${printer.connectionType === 'simulator' ? 'selected' : ''}>Simulator / test</option><option value="network" ${printer.connectionType === 'network' ? 'selected' : ''}>Wireless / LAN (TCP)</option></select></label>
+          <label>IP address / hostname<input name="printerAddress" value="${escapeHtml(printer.networkAddress ?? '')}" placeholder="192.168.1.50" /></label>
+          <label>Port<input name="printerPort" type="number" min="1" max="65535" value="${printer.networkPort}" /></label>
+          <label>Copies<input name="printerCopies" type="number" min="1" max="10" value="${printer.copies}" /></label>
+        </div>
+      </div>
+      <div class="station-settings-card__toggles"><label class="checkbox-row"><input type="checkbox" name="printerEnabled" ${printer.enabled ? 'checked' : ''} /> Enabled</label><label class="checkbox-row"><input type="checkbox" name="printerAutoPrint" ${printer.autoPrint ? 'checked' : ''} /> Automatic jobs</label></div>
+    </article>`).join('');
+  const receiptPrinterOptions = Object.entries(settings.printers).map(([key, printer]) => `<option value="${escapeHtml(key)}" ${key === settings.printerAssignments.receipt ? 'selected' : ''}>${escapeHtml(printer.displayName)}</option>`).join('');
   form.innerHTML = `
     <section class="settings-overview-card" aria-label="Settings overview">
       <article class="settings-overview-card__item">
@@ -1511,8 +1533,8 @@ async function renderBillSettings(): Promise<HTMLElement> {
       </article>
       <article class="settings-overview-card__item">
         <span>Receipt printer</span>
-        <strong>${settings.printers.receipt.enabled ? 'On' : 'Off'}</strong>
-        <small>${escapeHtml(settings.printers.receipt.displayName)}</small>
+        <strong>${Object.keys(settings.printers).length}</strong>
+        <small>configured devices</small>
       </article>
     </section>
 
@@ -1536,15 +1558,13 @@ async function renderBillSettings(): Promise<HTMLElement> {
     <div class="settings-section-heading">
       <div>
         <p class="eyebrow">Step 2</p>
-        <h3>Receipt printer</h3>
+        <h3>Printer assignments</h3>
       </div>
-      <p>Controls the device used for final receipts after payment.</p>
+      <p>Choose which physical printer handles billing and each preparation operation.</p>
     </div>
     <section class="settings-card settings-card--receipt-printer">
-      <label class="checkbox-row settings-toggle"><input type="checkbox" name="receiptEnabled" ${settings.printers.receipt.enabled ? 'checked' : ''} /> Enabled</label>
       <div class="settings-field-grid settings-field-grid--printer">
-        <label>Printer ID<input name="receiptPrinterId" value="${escapeHtml(settings.printers.receipt.printerId)}" required /></label>
-        <label>Display name<input name="receiptDisplayName" value="${escapeHtml(settings.printers.receipt.displayName)}" required /></label>
+        <label>Billing & receipts<select name="receiptPrinterAssignment">${receiptPrinterOptions}</select></label>
       </div>
     </section>
 
@@ -1559,15 +1579,18 @@ async function renderBillSettings(): Promise<HTMLElement> {
       ${stationRows || '<p class="empty-state">No prep stations are configured yet.</p>'}
     </section>
 
+    <div class="settings-section-heading"><div><p class="eyebrow">Step 4</p><h3>Printer devices</h3></div><p>Add any number of printers once, then assign each operation above.</p></div>
+    <section class="settings-card settings-card--stations" aria-label="Printer devices">${printerRows}</section>
+    <section class="settings-card settings-card--add-station"><div><p class="eyebrow">Add printer</p><h3>New printer device</h3></div><div class="settings-field-grid settings-field-grid--printer"><label>Device name<input name="newPrinterName" placeholder="BBQ printer" /></label><label>Printer ID<input name="newPrinterId" placeholder="bbq-printer" /></label></div></section>
+
     <section class="settings-card settings-card--add-station">
       <div>
         <p class="eyebrow">Add station</p>
         <h3>New prep station</h3>
-        <p class="muted">Add boards like Salad bar, Helper counter, Dessert, Coffee, or Pastry. A printer setting is created for each station.</p>
+        <p class="muted">Add boards like Salad bar, Helper counter, Dessert, Coffee, or Pastry. It will initially use the billing printer; you can change its assignment after saving.</p>
       </div>
       <div class="settings-field-grid settings-field-grid--printer">
         <label>New station name<input name="newStationName" placeholder="Salad bar" /></label>
-        <label>Printer ID<input name="newStationPrinterId" placeholder="salad-bar-printer" /></label>
       </div>
     </section>
 
@@ -1580,16 +1603,26 @@ async function renderBillSettings(): Promise<HTMLElement> {
     event.preventDefault();
     const data = new FormData(form);
     const prepStations: SuperadminPrepStation[] = [];
-    const printers: Record<string, SuperadminPrinterSettings> = {
-      receipt: {
-        enabled: data.get('receiptEnabled') === 'on',
-        printerId: String(data.get('receiptPrinterId') ?? ''),
-        displayName: String(data.get('receiptDisplayName') ?? ''),
-        connectionType: 'simulator', networkPort: 9100, copies: 1, autoPrint: false,
-      },
+    const printers: Record<string, SuperadminPrinterSettings> = {};
+    const printerAssignments: Record<string, string> = {
+      receipt: String(data.get('receiptPrinterAssignment') ?? 'receipt'),
     };
 
-    form.querySelectorAll<HTMLElement>('.station-settings-card').forEach((card) => {
+    form.querySelectorAll<HTMLElement>('.printer-device-card').forEach((card) => {
+      const key = card.dataset.printerKey ?? '';
+      printers[key] = {
+        enabled: card.querySelector<HTMLInputElement>('input[name="printerEnabled"]')?.checked ?? true,
+        printerId: card.querySelector<HTMLInputElement>('input[name="printerId"]')?.value ?? '',
+        displayName: card.querySelector<HTMLInputElement>('input[name="printerDisplayName"]')?.value ?? '',
+        connectionType: card.querySelector<HTMLSelectElement>('select[name="printerConnection"]')?.value === 'network' ? 'network' : 'simulator',
+        networkAddress: card.querySelector<HTMLInputElement>('input[name="printerAddress"]')?.value ?? '',
+        networkPort: Number(card.querySelector<HTMLInputElement>('input[name="printerPort"]')?.value ?? 9100),
+        copies: Number(card.querySelector<HTMLInputElement>('input[name="printerCopies"]')?.value ?? 1),
+        autoPrint: card.querySelector<HTMLInputElement>('input[name="printerAutoPrint"]')?.checked ?? false,
+      };
+    });
+
+    form.querySelectorAll<HTMLElement>('.station-settings-card[data-station-id]').forEach((card) => {
       const id = card.dataset.stationId ?? '';
       const station = {
         id,
@@ -1598,28 +1631,20 @@ async function renderBillSettings(): Promise<HTMLElement> {
         sortOrder: Number(card.querySelector<HTMLInputElement>('input[name="stationSortOrder"]')?.value ?? 0),
       };
       prepStations.push(station);
-      printers[id] = {
-        enabled: card.querySelector<HTMLInputElement>('input[name="stationPrinterEnabled"]')?.checked ?? true,
-        printerId: card.querySelector<HTMLInputElement>('input[name="stationPrinterId"]')?.value ?? '',
-        displayName: card.querySelector<HTMLInputElement>('input[name="stationPrinterDisplayName"]')?.value ?? '',
-        connectionType: card.querySelector<HTMLSelectElement>('select[name="stationPrinterConnection"]')?.value === 'network' ? 'network' : 'simulator',
-        networkAddress: card.querySelector<HTMLInputElement>('input[name="stationPrinterAddress"]')?.value ?? '',
-        networkPort: Number(card.querySelector<HTMLInputElement>('input[name="stationPrinterPort"]')?.value ?? 9100),
-        copies: Number(card.querySelector<HTMLInputElement>('input[name="stationPrinterCopies"]')?.value ?? 1),
-        autoPrint: card.querySelector<HTMLInputElement>('input[name="stationPrinterAutoPrint"]')?.checked ?? false,
-      };
+      printerAssignments[id] = card.querySelector<HTMLSelectElement>('select[name="stationPrinterAssignment"]')?.value ?? 'receipt';
     });
 
     const newStationName = String(data.get('newStationName') ?? '').trim();
     if (newStationName) {
       const id = normalizeStationId(newStationName);
       prepStations.push({ id, displayName: newStationName, enabled: true, sortOrder: (prepStations.length + 1) * 10 });
-      printers[id] = {
-        enabled: true,
-        printerId: String(data.get('newStationPrinterId') ?? '').trim() || `${id}-printer`,
-        displayName: `${newStationName} printer`,
-        connectionType: 'simulator', networkPort: 9100, copies: 1, autoPrint: true,
-      };
+      printerAssignments[id] = settings.printerAssignments.receipt;
+    }
+
+    const newPrinterName = String(data.get('newPrinterName') ?? '').trim();
+    if (newPrinterName) {
+      const key = normalizeStationId(newPrinterName);
+      printers[key] = { enabled: true, printerId: String(data.get('newPrinterId') ?? '').trim() || key, displayName: newPrinterName, connectionType: 'simulator', networkPort: 9100, copies: 1, autoPrint: true };
     }
 
     try {
@@ -1634,6 +1659,7 @@ async function renderBillSettings(): Promise<HTMLElement> {
           },
           prepStations,
           printers,
+          printerAssignments,
         },
       });
       render();

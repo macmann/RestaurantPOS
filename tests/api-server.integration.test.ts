@@ -60,7 +60,7 @@ async function runApiIntegration(): Promise<void> {
     });
     assert(autoLinkedStatusResponse.status === 200, `Auto-linked menu inventory deduction should return 200, got ${autoLinkedStatusResponse.status}.`);
 
-    const superadminSettingsUpdate = await apiRequest<{ data: { pos: { prepStations: Array<{ id: string }>; printers: Record<string, { printerId: string }> } } }>(server.baseUrl, '/api/settings', {
+    const superadminSettingsUpdate = await apiRequest<{ data: { pos: { prepStations: Array<{ id: string }>; printers: Record<string, { printerId: string }>; printerAssignments: Record<string, string> } } }>(server.baseUrl, '/api/settings', {
       method: 'PUT',
       token: superadmin.token,
       body: {
@@ -76,12 +76,14 @@ async function runApiIntegration(): Promise<void> {
             bar: { enabled: true, printerId: 'bar-service', displayName: 'Bar printer' },
             'salad-bar': { enabled: true, printerId: 'salad-bar-printer', displayName: 'Salad bar printer' },
           },
+          printerAssignments: { receipt: 'receipt', 'salad-bar': 'receipt' },
         },
       },
     });
     assert(superadminSettingsUpdate.status === 200, `Superadmin should update prep station/printer settings over HTTP, got ${superadminSettingsUpdate.status}.`);
     assert(superadminSettingsUpdate.body.data.pos.prepStations.some((station) => station.id === 'salad-bar'), 'Superadmin settings update should persist the new prep station.');
     assert(superadminSettingsUpdate.body.data.pos.printers['salad-bar'].printerId === 'salad-bar-printer', 'New prep station should create a matching station printer configuration.');
+    assert(superadminSettingsUpdate.body.data.pos.printerAssignments['salad-bar'] === 'receipt', 'Prep printing should be assignable to an independent configured printer.');
 
     const superadminMenuItem = await apiRequest<{ data: { id: string; name: string } }>(server.baseUrl, '/api/menu/items', {
       method: 'POST',

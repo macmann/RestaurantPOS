@@ -50,6 +50,8 @@ export interface PosOperationalSettings {
   tax: TaxSettings;
   prepStations: PrepStationConfig[];
   printers: PrinterSettings;
+  /** Maps each print operation (`receipt` or a prep-station id) to a configured printer. */
+  printerAssignments: Record<string, string>;
   localization: LocalizationSettings;
 }
 
@@ -105,6 +107,7 @@ function defaultSettings(): PosOperationalSettings {
       kitchen: defaultStationPrinter('kitchen', 'Kitchen'),
       bar: defaultStationPrinter('bar', 'Bar'),
     },
+    printerAssignments: { receipt: 'receipt', kitchen: 'kitchen', bar: 'bar' },
     localization: {
       defaultLocale: normalizeLocale(envValue('POS_DEFAULT_LOCALE') ?? envValue('DEFAULT_LOCALE') ?? DEFAULT_LOCALE),
       englishToMyanmar: buildEnglishMyanmarLocalizationMap(),
@@ -181,14 +184,32 @@ function normalizePrepStations(input: unknown, fallback: PrepStationConfig[]): P
 }
 
 function normalizePrinters(input: Partial<Record<string, Partial<PrinterDeviceConfig>>> | undefined, stations: PrepStationConfig[], fallback: PrinterSettings): PrinterSettings {
-  const printers: PrinterSettings = {
-    receipt: normalizePrinter(input?.receipt, fallback.receipt),
-  };
-  for (const station of stations) {
-    const fallbackPrinter = fallback[station.id] ?? defaultStationPrinter(station.id, station.displayName);
-    printers[station.id] = normalizePrinter(input?.[station.id], fallbackPrinter);
+  const source = input ?? {};
+  const printers = {} as PrinterSettings;
+  const keys = new Set([...Object.keys(fallback), ...Object.keys(source)]);
+  keys.add('receipt');
+  for (const key of keys) {
+    const station = stations.find((row) => row.id === key);
+    const fallbackPrinter = fallback[key] ?? (key === 'receipt'
+      ? defaultSettings().printers.receipt
+      : defaultStationPrinter(key, station?.displayName ?? key));
+    printers[key] = normalizePrinter(source[key], fallbackPrinter);
   }
   return printers;
+}
+
+function normalizePrinterAssignments(
+  input: Record<string, unknown> | undefined,
+  stations: PrepStationConfig[],
+  printers: PrinterSettings,
+  fallback: Record<string, string>,
+): Record<string, string> {
+  const assignments: Record<string, string> = {};
+  for (const operation of ['receipt', ...stations.map((station) => station.id)]) {
+    const requested = String(input?.[operation] ?? fallback[operation] ?? operation).trim();
+    assignments[operation] = printers[requested] ? requested : (printers[operation] ? operation : 'receipt');
+  }
+  return assignments;
 }
 
 export function getPosOperationalSettings(): PosOperationalSettings {
@@ -217,10 +238,12 @@ export function normalizePrepStationId(value: unknown): string {
 type PosOperationalSettingsInput = Partial<Omit<PosOperationalSettings, 'localization' | 'printers'>> & {
   localization?: Partial<LocalizationSettings>;
   printers?: Partial<Record<string, Partial<PrinterDeviceConfig>>>;
+  printerAssignments?: Record<string, unknown>;
 };
 
 export function updatePosOperationalSettings(input: PosOperationalSettingsInput): PosOperationalSettings {
   const prepStations = normalizePrepStations(input.prepStations, currentSettings.prepStations);
+  const printers = normalizePrinters(input.printers, prepStations, currentSettings.printers);
   currentSettings = {
     menuInventoryLinkEnabled: typeof input.menuInventoryLinkEnabled === 'boolean'
       ? input.menuInventoryLinkEnabled
@@ -234,7 +257,8 @@ export function updatePosOperationalSettings(input: PosOperationalSettingsInput)
     },
     tax: normalizeTax(input.tax, currentSettings.tax),
     prepStations,
-    printers: normalizePrinters(input.printers, prepStations, currentSettings.printers),
+    printers,
+    printerAssignments: normalizePrinterAssignments(input.printerAssignments, prepStations, printers, currentSettings.printerAssignments),
     localization: normalizeLocalization(input.localization, currentSettings.localization),
   };
   return getPosOperationalSettings();
