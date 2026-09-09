@@ -1,6 +1,7 @@
 declare const process: { exitCode?: number };
 
 import type { AuthenticatedUser } from '../backend/auth/policies';
+import { updatePosOperationalSettings } from '../backend/config/posSettings';
 import { Actions, RolePermissions } from '../backend/auth/permissions';
 import { saveUser } from '../backend/users/repository';
 import { createInventoryMasterItem, saveMenuInventoryRecipe } from '../backend/inventory/service';
@@ -24,6 +25,7 @@ function permissionsFor(role: string): string[] {
 }
 
 async function runBrowserScreenE2e(): Promise<void> {
+  updatePosOperationalSettings({ menuInventoryLinkEnabled: true });
   const branchId = 'main';
   const manager: AuthenticatedUser = { id: 'manager-browser', branchId, role: 'manager', status: 'active' };
   const waiter: AuthenticatedUser = { id: 'waiter-browser', branchId, role: 'waitstaff', status: 'active' };

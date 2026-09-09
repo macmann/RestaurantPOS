@@ -45,6 +45,7 @@ interface SuperadminPrepStation {
 }
 
 interface SuperadminOperationalSettings {
+  menuInventoryLinkEnabled: boolean;
   restaurantBillInfo: RestaurantBillInfo;
   prepStations: SuperadminPrepStation[];
   printers: Record<string, SuperadminPrinterSettings> & {
@@ -728,6 +729,7 @@ function normalizeOperationalSettings(response: unknown): SuperadminOperationalS
   cachedPrepStations = prepStations;
 
   return {
+    menuInventoryLinkEnabled: (posSettings as any).menuInventoryLinkEnabled === true,
     restaurantBillInfo: {
       restaurantName: billInfo.restaurantName?.trim() || branch.branchName?.trim() || APP_NAME,
       address: billInfo.address?.trim() || branch.address?.trim() || 'Address not configured',
@@ -919,6 +921,18 @@ async function renderStaffSettings(isSuperadminPanel = false): Promise<HTMLEleme
         </form>
         <a class="secondary-link" href="#/bill-settings">Open full bill & printer settings</a>
       </article>
+      <article class="card admin-card settings-card menu-inventory-link-card">
+        <div>
+          <p class="eyebrow">Inventory integration</p>
+          <h3>Link menu sales to inventory</h3>
+          <p class="muted">When off, menu items live independently: creating or selling them will not create, require, or deduct inventory records.</p>
+        </div>
+        <label class="checkbox-row settings-toggle">
+          <input type="checkbox" class="menu-inventory-link-toggle" ${settings.menuInventoryLinkEnabled ? 'checked' : ''} />
+          Enable menu–inventory linking
+        </label>
+        <p class="form-error menu-inventory-link-error" hidden></p>
+      </article>
       ${superadminLocalizationCard(settings.localization.defaultLocale, settings.localization.englishToMyanmar)}
     ` : `
       <article class="card admin-card">
@@ -929,6 +943,25 @@ async function renderStaffSettings(isSuperadminPanel = false): Promise<HTMLEleme
   `;
 
   if (isSuperadminPanel) {
+    const inventoryToggle = panel.querySelector<HTMLInputElement>('.menu-inventory-link-toggle');
+    const inventoryError = panel.querySelector<HTMLElement>('.menu-inventory-link-error');
+    inventoryToggle?.addEventListener('change', async () => {
+      const nextValue = inventoryToggle.checked;
+      inventoryToggle.disabled = true;
+      if (inventoryError) inventoryError.hidden = true;
+      try {
+        await apiClient.updateSettings({ pos: { menuInventoryLinkEnabled: nextValue } });
+      } catch (caught) {
+        inventoryToggle.checked = !nextValue;
+        if (inventoryError) {
+          inventoryError.textContent = caught instanceof Error ? caught.message : 'Unable to save inventory integration setting.';
+          inventoryError.hidden = false;
+        }
+      } finally {
+        inventoryToggle.disabled = false;
+      }
+    });
+
     const launchpad = el('section', 'admin-launchpad superadmin-settings-launchpad');
     const settingsRoutes = superadminSettingsRoutes(session?.permissions ?? []);
     launchpad.innerHTML = `
@@ -1008,6 +1041,7 @@ async function renderStaffSettings(isSuperadminPanel = false): Promise<HTMLEleme
       ['.staff-create-card', 'team'],
       ['.staff-list-card', 'team'],
       ['.superadmin-station-card', 'operations'],
+      ['.menu-inventory-link-card', 'settings'],
       ['.superadmin-localization-card', 'localization'],
       ['.superadmin-settings-launchpad', 'settings'],
     ];

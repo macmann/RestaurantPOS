@@ -2,6 +2,7 @@ import { recordAuditEvent } from '../audit/service';
 import { can, type AuthenticatedUser } from '../auth/policies';
 import { Actions } from '../auth/permissions';
 import { getCurrentBranchId } from '../config/branch';
+import { isMenuInventoryLinkEnabled } from '../config/posSettings';
 import { withTransaction } from '../db/client';
 import {
   appendStockMovement,
@@ -304,6 +305,8 @@ function deductionTriggerForStatus(nextStatus: OrderStatus): string | null {
 
 
 async function getInventoryRequirementsForOrderItem(item: OrderItem): Promise<Array<{ inventoryItemId: string; quantity: number }>> {
+  if (!isMenuInventoryLinkEnabled()) return [];
+
   const recipeRows = await listRecipeForMenuItem(item.menuItemId);
   if (recipeRows.length > 0) {
     return recipeRows.map((recipe) => ({
