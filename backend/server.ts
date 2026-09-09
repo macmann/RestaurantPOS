@@ -8,7 +8,7 @@ import { extname, join, normalize, resolve } from 'node:path';
 import { loadUser, requireActiveUser, requireAuth, authorize, authorizeAny } from './auth/middleware';
 import { Actions, RolePermissions } from './auth/permissions';
 import { getCurrentBranchId, getRuntimeSettings } from './config/branch';
-import { getPosOperationalSettings, updatePosOperationalSettings } from './config/posSettings';
+import { getPosOperationalSettings, initializePosOperationalSettings, savePosOperationalSettings } from './config/posSettings';
 import { getOrderPrinterAdapter } from './hardware/orderPrinter';
 import { listUsers } from './users/repository';
 import { ensureDefaultSuperadmin } from './users/bootstrap';
@@ -357,7 +357,7 @@ function buildUsersRouter(): Router {
 function buildSettingsRouter(): Router {
   const router = express.Router();
   router.get('/', send(() => ({ branch: getRuntimeSettings().branch, inventoryDeductionPolicy: InventoryAdminApi.getDeductionPolicy(), pos: getPosOperationalSettings() })));
-  router.put('/', authorize(Actions.ManageSystem), send((req) => ({ branch: getRuntimeSettings().branch, inventoryDeductionPolicy: InventoryAdminApi.getDeductionPolicy(), pos: updatePosOperationalSettings((bodyObject(req).pos as any) ?? (bodyObject(req) as any)) })));
+  router.put('/', authorize(Actions.ManageSystem), send(async (req) => ({ branch: getRuntimeSettings().branch, inventoryDeductionPolicy: InventoryAdminApi.getDeductionPolicy(), pos: await savePosOperationalSettings((bodyObject(req).pos as any) ?? (bodyObject(req) as any)) })));
   router.get('/branch', send(() => getRuntimeSettings().branch));
   router.get('/inventory/deduction-policy', authorize(Actions.AdjustStock), send(() => InventoryAdminApi.getDeductionPolicy()));
   router.put('/inventory/deduction-policy', authorize(Actions.AdjustStock), send((req) => InventoryAdminApi.setDeductionPolicy(requireUser(req), requiredString(bodyObject(req).policy, 'policy') as any)));
@@ -436,6 +436,7 @@ function errorHandler(error: unknown, _req: Request, res: Response, _next: NextF
 }
 
 export function createApp() {
+  const settingsReady = initializePosOperationalSettings();
   void (async () => {
     await ensureDefaultSuperadmin();
     await ensureStarterRestaurantData();
@@ -445,6 +446,10 @@ export function createApp() {
   const app = express();
   app.disable('x-powered-by');
   app.use(express.json({ limit: '1mb' }));
+  app.use(asyncRoute(async (_req, _res, next) => {
+    await settingsReady;
+    next();
+  }));
   app.use(asyncRoute(loadUser as AsyncHandler));
   app.get('/healthz', (_req: Request, res: Response) => res.json({ ok: true, at: new Date().toISOString() }));
   app.get('/api/health', (_req: Request, res: Response) => res.json({ data: { ok: true, status: 'healthy', at: new Date().toISOString() } }));

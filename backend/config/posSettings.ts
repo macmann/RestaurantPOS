@@ -1,6 +1,8 @@
 import { getRuntimeSettings } from './branch';
 import { buildEnglishMyanmarLocalizationMap, DEFAULT_LOCALE, type SupportedLocale } from '../i18n/resources';
 import { normalizeLocale } from '../i18n/service';
+import { isSqlRepositoryEnabled } from '../db/client';
+import { getRecord, putRecord } from '../db/repositoryStore';
 
 export interface RestaurantBillInfo {
   restaurantName: string;
@@ -111,6 +113,7 @@ function defaultSettings(): PosOperationalSettings {
 }
 
 let currentSettings: PosOperationalSettings = defaultSettings();
+let initialization: Promise<void> | null = null;
 
 function cleanText(value: unknown, fallback: string): string {
   const text = String(value ?? '').trim();
@@ -235,4 +238,31 @@ export function updatePosOperationalSettings(input: PosOperationalSettingsInput)
     localization: normalizeLocalization(input.localization, currentSettings.localization),
   };
   return getPosOperationalSettings();
+}
+
+/** Load the branch's operational settings before serving requests. */
+export function initializePosOperationalSettings(forceReload = false): Promise<void> {
+  if (!isSqlRepositoryEnabled()) return Promise.resolve();
+  if (initialization && !forceReload) return initialization;
+
+  initialization = (async () => {
+    const saved = await getRecord<PosOperationalSettings>('settings:pos', getRuntimeSettings().branch.branchId);
+    if (saved) updatePosOperationalSettings(saved);
+  })();
+  return initialization;
+}
+
+/** Update settings and durably save them for this branch when PostgreSQL is enabled. */
+export async function savePosOperationalSettings(input: PosOperationalSettingsInput): Promise<PosOperationalSettings> {
+  const previous = getPosOperationalSettings();
+  const updated = updatePosOperationalSettings(input);
+  if (!isSqlRepositoryEnabled()) return updated;
+
+  try {
+    await putRecord('settings:pos', getRuntimeSettings().branch.branchId, updated);
+    return updated;
+  } catch (error) {
+    currentSettings = previous;
+    throw error;
+  }
 }
