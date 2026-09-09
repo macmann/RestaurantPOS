@@ -13,6 +13,7 @@ import {
   markInventoryDeductionCompleted,
 } from '../inventory/service';
 import { syncOrderIntoKds } from '../kds/service';
+import { getOrderPrinterAdapter } from '../hardware/orderPrinter';
 import { getCategoryById, getItemById, type MenuItemRecord } from '../menu/repository';
 import { getTableById } from '../tables/repository';
 import { requireOpenTableSession } from '../tables/service';
@@ -192,6 +193,7 @@ export async function createOrderDraft(user: AuthenticatedUser, input: CreateOrd
   });
 
   await syncOrderIntoKds(order);
+  await getOrderPrinterAdapter().printOrderForConfiguredStations(order, true);
   return order;
 }
 
@@ -253,6 +255,9 @@ export async function editOrderBeforePayment(user: AuthenticatedUser, orderId: s
   });
 
   await syncOrderIntoKds(order);
+  if (itemsToAdd.length) {
+    await getOrderPrinterAdapter().printOrderForConfiguredStations({ ...order, items: itemsToAdd }, true);
+  }
   return order;
 }
 
