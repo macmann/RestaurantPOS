@@ -1,7 +1,7 @@
 import type { OrderRecord } from '../orders/repository';
 import { getPosOperationalSettings, listPrepStations } from '../config/posSettings';
 import type { Station } from '../kds/repository';
-import { createConnection } from 'node:net';
+import { sendToNetworkPrinter, sendToWindowsPrinter } from './printerTransport';
 
 export interface OrderPrintResult {
   printJobId: string;
@@ -38,6 +38,9 @@ export class SimulatorOrderPrinterAdapter {
     if (printer.connectionType === 'network') {
       if (!printer.networkAddress) throw new Error(`Network address is required for ${printer.displayName}.`);
       await sendToNetworkPrinter(printer.networkAddress, printer.networkPort, renderedText, printer.copies);
+    } else if (printer.connectionType === 'windows') {
+      if (!printer.windowsPrinterName) throw new Error(`Windows printer name is required for ${printer.displayName}.`);
+      await sendToWindowsPrinter(printer.windowsPrinterName, renderedText, printer.copies);
     }
     const result = { printJobId: `order_print_${this.jobs.length + 1}`, printerId: printer.printerId, station, printedAt, renderedText, copyCount: printer.copies };
     this.jobs.push(structuredClone(result));
@@ -48,21 +51,6 @@ export class SimulatorOrderPrinterAdapter {
     const results = await Promise.all(listPrepStations().map((station) => this.printOrder(order, station.id, automatic)));
     return results.filter((result): result is OrderPrintResult => Boolean(result));
   }
-}
-
-function sendToNetworkPrinter(host: string, port: number, text: string, copies: number): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const socket = createConnection({ host, port });
-    socket.setTimeout(5000);
-    socket.once('connect', () => {
-      const ticket = Buffer.from(`\x1b@${text}\n\n\n\x1dV\x00`, 'utf8');
-      for (let copy = 0; copy < copies; copy += 1) socket.write(ticket);
-      socket.end();
-    });
-    socket.once('timeout', () => socket.destroy(new Error(`Printer ${host}:${port} timed out.`)));
-    socket.once('error', reject);
-    socket.once('close', (hadError) => { if (!hadError) resolve(); });
-  });
 }
 
 let orderPrinterAdapter = new SimulatorOrderPrinterAdapter();
