@@ -10,6 +10,7 @@ import { createInventoryMasterItem, listInventoryWithBalances } from '../backend
 import { createTable, getTableSession, openTableSession } from '../backend/tables/service';
 import type { AuthenticatedUser } from '../backend/auth/policies';
 import { assert, assertEqual } from './helpers/assertions';
+import { getPosOperationalSettings, initializePosOperationalSettings, savePosOperationalSettings, updatePosOperationalSettings } from '../backend/config/posSettings';
 
 async function canLoadPg(): Promise<boolean> {
   try {
@@ -47,6 +48,19 @@ async function runDatabasePersistenceE2e(): Promise<void> {
   const migration = await query<{ exists: boolean }>('SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE id = $1) AS exists', [INITIAL_MIGRATION_ID]);
   assert(migration.rows[0]?.exists === true, 'Initial SYM POS SQL migration should be recorded as applied.');
   await clearRepositoryStore();
+
+  await savePosOperationalSettings({
+    prepStations: [
+      { id: 'kitchen', displayName: 'Kitchen', enabled: true, sortOrder: 10 },
+      { id: 'deployment-station', displayName: 'Deployment station', enabled: true, sortOrder: 20 },
+    ],
+  });
+  updatePosOperationalSettings({ prepStations: [{ id: 'kitchen', displayName: 'Kitchen', enabled: true, sortOrder: 10 }] });
+  await initializePosOperationalSettings(true);
+  assert(
+    getPosOperationalSettings().prepStations.some((station) => station.id === 'deployment-station'),
+    'Prep station settings should reload from PostgreSQL after an application restart.',
+  );
 
   const branchId = 'db-e2e-main';
   const cashier: AuthenticatedUser = { id: 'cashier-db-e2e', branchId, role: 'cashier', status: 'active' };
