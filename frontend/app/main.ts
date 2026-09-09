@@ -221,23 +221,56 @@ function brandLogo(extraClass = ''): string {
 
 function renderLogin(message = loginNotice): void {
   const shell = el('main', 'login-shell');
+  const welcome = el('section', 'login-welcome');
+  welcome.innerHTML = `
+    <div class="login-welcome__brand">${brandLogo('brand-logo--large')}<div><strong>${APP_NAME}</strong><span>Restaurant command center</span></div></div>
+    <div class="login-welcome__content">
+      <p class="eyebrow">Service, simplified</p>
+      <h1>Run every shift<br />with confidence.</h1>
+      <p>One secure workspace for your dining room, kitchen, billing, inventory, and team.</p>
+      <ul class="login-benefits">
+        <li><span aria-hidden="true">&#10003;</span> Live service and preparation status</li>
+        <li><span aria-hidden="true">&#10003;</span> Permission-aware staff workspaces</li>
+        <li><span aria-hidden="true">&#10003;</span> Reliable billing and operational insight</li>
+      </ul>
+    </div>
+    <p class="login-welcome__footer"><span class="status-dot"></span> Secure restaurant operations, all in one place</p>
+  `;
   const card = el('form', 'login-card');
   card.innerHTML = `
-    <div class="brand-heading">${brandLogo('brand-logo--large')}<p class="eyebrow">${APP_NAME}</p></div>
-    <h1>Sign in to ${APP_NAME}</h1>
-    <p>Enter your staff username or email and password. The browser stores only a revocable session token.</p>
-    <label>Username or email<input name="identifier" autocomplete="username" placeholder="manager-1" required /></label>
-    <label>Password<input name="password" type="password" autocomplete="current-password" required /></label>
-    <button type="submit">Start secure session</button>
-    <p class="form-error" ${message ? '' : 'hidden'}>${message ?? ''}</p>
+    <div class="login-card__heading">
+      <p class="eyebrow">Staff access</p>
+      <h2>Welcome back</h2>
+      <p>Sign in with your staff credentials to start your shift.</p>
+    </div>
+    <label class="login-field"><span>Username or email</span><span class="login-input"><span class="login-input__icon" aria-hidden="true">@</span><input name="identifier" autocomplete="username" placeholder="Enter your username" autofocus required /></span></label>
+    <label class="login-field"><span>Password</span><span class="login-input"><span class="login-input__icon login-input__icon--lock" aria-hidden="true"></span><input name="password" type="password" autocomplete="current-password" placeholder="Enter your password" required /><button class="password-toggle" type="button" aria-label="Show password" aria-pressed="false">Show</button></span></label>
+    <p class="form-error" role="alert" ${message ? '' : 'hidden'}>${message ?? ''}</p>
+    <button class="login-submit" type="submit"><span>Sign in securely</span><span aria-hidden="true">&#8594;</span></button>
+    <div class="login-security"><span aria-hidden="true">&#128274;</span><p><strong>Protected session</strong><br />Only a revocable session token is stored on this device.</p></div>
   `;
+  const passwordInput = card.querySelector<HTMLInputElement>('input[name="password"]');
+  const passwordToggle = card.querySelector<HTMLButtonElement>('.password-toggle');
+  passwordToggle?.addEventListener('click', () => {
+    if (!passwordInput || !passwordToggle) return;
+    const isVisible = passwordInput.type === 'text';
+    passwordInput.type = isVisible ? 'password' : 'text';
+    passwordToggle.textContent = isVisible ? 'Show' : 'Hide';
+    passwordToggle.setAttribute('aria-label', isVisible ? 'Show password' : 'Hide password');
+    passwordToggle.setAttribute('aria-pressed', String(!isVisible));
+  });
   card.addEventListener('submit', async (event) => {
     event.preventDefault();
     const form = new FormData(card);
     const input = form.get('identifier');
     const password = form.get('password');
     const error = card.querySelector<HTMLParagraphElement>('.form-error');
+    const submit = card.querySelector<HTMLButtonElement>('.login-submit');
     try {
+      if (submit) {
+        submit.disabled = true;
+        submit.querySelector('span')!.textContent = 'Signing in…';
+      }
       session = await login(String(input ?? ''), String(password ?? ''));
       loginNotice = undefined;
       navigate(landingRoute(session).path);
@@ -246,9 +279,14 @@ function renderLogin(message = loginNotice): void {
         error.hidden = false;
         error.textContent = caught instanceof Error ? caught.message : 'Unable to sign in.';
       }
+    } finally {
+      if (submit && document.body.contains(submit)) {
+        submit.disabled = false;
+        submit.querySelector('span')!.textContent = 'Sign in securely';
+      }
     }
   });
-  shell.append(card);
+  shell.append(welcome, card);
   root.replaceChildren(shell);
 }
 
