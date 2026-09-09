@@ -49,6 +49,11 @@ async function runBrowserScreenE2e(): Promise<void> {
   order = await advanceOrderStatus(waiter, order.id, order.version, 'in_preparation');
 
   const cashierRoutes = visibleRoutes(permissionsFor('cashier') as any);
+  assert(visibleRoutes(permissionsFor('waitstaff') as any).some((route) => route.path === '#/order-station'), 'Waitstaff browser navigation should expose the touch-friendly order station.');
+  assert(canAccessRoute(appRoutes.find((route) => route.path === '#/order-station')!, permissionsFor('waitstaff') as any), 'Waitstaff should be able to open the order station landing page.');
+  assert(visibleRoutes(permissionsFor('kitchen') as any).some((route) => route.path === '#/prep-stations'), 'Kitchen tablet navigation should expose its prep board.');
+  assert(visibleRoutes(permissionsFor('bar') as any).some((route) => route.path === '#/prep-stations'), 'Bar tablet navigation should expose its prep board.');
+  assert(visibleRoutes(permissionsFor('inventory_clerk') as any).some((route) => route.path === '#/inventory-alerts'), 'Inventory tablet navigation should expose stock alerts.');
   assert(cashierRoutes.some((route) => route.path === '#/tables'), 'Cashier browser navigation should expose the table floor route.');
   assert(cashierRoutes.some((route) => route.path === '#/billing'), 'Cashier browser navigation should expose billing route.');
   assert(!canAccessRoute(appRoutes.find((route) => route.path === '#/audit')!, permissionsFor('cashier') as any), 'Cashier browser navigation should hide audit route.');

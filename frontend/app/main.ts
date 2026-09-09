@@ -77,7 +77,22 @@ if (!rootElement) throw new Error('App root not found.');
 const root = rootElement;
 
 let session: BrowserSession | null = getStoredSession();
-let route = window.location.hash || defaultRoute(session?.permissions ?? []).path;
+
+function landingRoute(currentSession: BrowserSession | null): AppRoute {
+  if (currentSession) {
+    const roles = Array.isArray(currentSession.user.role) ? currentSession.user.role : [currentSession.user.role];
+    const preferredPath = roles.includes('waitstaff') ? '#/order-station'
+      : roles.includes('cashier') ? '#/billing'
+        : roles.some((role) => role === 'kitchen' || role === 'bar') ? '#/prep-stations'
+          : roles.includes('inventory_clerk') ? '#/inventory-alerts'
+            : undefined;
+    const preferred = preferredPath ? appRoutes.find((item) => item.path === preferredPath) : undefined;
+    if (preferred && canAccessRoute(preferred, currentSession.permissions)) return preferred;
+  }
+  return defaultRoute(currentSession?.permissions ?? []);
+}
+
+let route = window.location.hash || landingRoute(session).path;
 let apiStatus = apiClient.getNetworkStatus();
 let apiStatusMessage = 'API connection healthy.';
 let loginNotice: string | undefined;
@@ -110,7 +125,7 @@ window.addEventListener('offline', () => {
 });
 
 window.addEventListener('hashchange', () => {
-  route = window.location.hash || defaultRoute(session?.permissions ?? []).path;
+  route = window.location.hash || landingRoute(session).path;
   render();
 });
 
@@ -223,7 +238,7 @@ function renderLogin(message = loginNotice): void {
     try {
       session = await login(String(input ?? ''), String(password ?? ''));
       loginNotice = undefined;
-      navigate(defaultRoute(session.permissions).path);
+      navigate(landingRoute(session).path);
     } catch (caught) {
       if (error) {
         error.hidden = false;
@@ -277,11 +292,14 @@ function renderShell(content: HTMLElement): void {
   const current = activeRoute();
   const currentHash = route || current.path;
   if (!canAccessRoute(current, session.permissions)) {
-    navigate(defaultRoute(session.permissions).path);
+    navigate(landingRoute(session).path);
     return;
   }
 
-  const layout = el('div', 'app-shell');
+  const roles = userRoles(session.user);
+  const usesDesktopShell = roles.some((roleName) => ['superadmin', 'admin', 'manager', 'shift_lead'].includes(roleName));
+  const shellRole = roles[0]?.replace(/[^a-z0-9_-]/gi, '-') ?? 'staff';
+  const layout = el('div', `app-shell ${usesDesktopShell ? 'desktop-role-shell' : 'responsive-role-shell'} role-${shellRole}`);
   const sidebar = el('aside', 'sidebar');
   const roleLabel = Array.isArray(session.user.role) ? session.user.role.join(', ') : session.user.role;
   sidebar.innerHTML = `
@@ -303,6 +321,14 @@ function renderShell(content: HTMLElement): void {
   }
   routeSelect.addEventListener('change', () => navigate(routeSelect.value));
   mobileNav.append(routeSelect);
+
+  const tabletNav = el('nav', 'tablet-role-nav');
+  tabletNav.setAttribute('aria-label', translateUiText('Role shortcuts'));
+  for (const item of available.slice(0, 5)) {
+    const link = el('a', shellRouteMatches(item, currentHash, current) ? 'active' : '', translateUiText(item.label));
+    link.href = item.path;
+    tabletNav.append(link);
+  }
 
   for (const section of ['operations', 'admin'] as const) {
     const groupRoutes = available.filter((item) => item.section === section);
@@ -331,7 +357,7 @@ function renderShell(content: HTMLElement): void {
   banner.setAttribute('role', 'status');
   banner.setAttribute('aria-live', 'polite');
   updateNetworkBanner(banner);
-  main.append(mobileNav, banner, content);
+  main.append(mobileNav, tabletNav, banner, content);
   startHealthChecks();
   layout.append(sidebar, main);
   root.replaceChildren(layout);
@@ -2131,6 +2157,78 @@ function renderPrintPreview(tableSessionId: string, receipt: ReceiptPayload): HT
   return panel;
 }
 
+async function renderOrderStation(): Promise<HTMLElement> {
+  const section = page('Order station', 'Choose a table and move straight into ordering. Built for quick service on tablets and phones.');
+  section.classList.add('order-station-page');
+
+  const [floor, orders, kdsSnapshot] = await Promise.all([
+    loadCashierTableFloor(session!.user.branchId),
+    apiClient.listOrders(),
+    apiClient.getKdsSnapshot(undefined, 'all'),
+  ]);
+  const activeTables = floor.tables.filter((row) => row.status !== 'inactive');
+  if (!selectedTableId || !activeTables.some((row) => row.table.id === selectedTableId)) {
+    selectedTableId = activeTables.find((row) => row.status === 'occupied')?.table.id ?? activeTables[0]?.table.id;
+  }
+  const selected = activeTables.find((row) => row.table.id === selectedTableId);
+
+  const intro = el('section', 'order-station-hero');
+  intro.innerHTML = `
+    <div><p class="eyebrow">${translateUiHtml('Service mode')}</p><h3>${translateUiHtml('Tap a table. Start an order.')}</h3><p>${translateUiHtml(`${floor.counts.occupied} in service · ${floor.counts.available} ready for guests`)}</p></div>
+    <button type="button" class="view-progress">${translateUiHtml('View order progress')}</button>
+  `;
+  intro.querySelector<HTMLButtonElement>('.view-progress')?.addEventListener('click', () => navigate('#/waiter-progress'));
+
+  const workspace = el('div', 'order-station-workspace');
+  const tablesPanel = el('section', 'pos-panel order-station-tables');
+  tablesPanel.innerHTML = '<div class="pos-panel-heading"><h3>Select a table</h3><span>Occupied tables appear first</span></div>';
+  const tableGrid = el('div', 'table-grid order-station-grid');
+  [...activeTables].sort((a, b) => Number(b.status === 'occupied') - Number(a.status === 'occupied')).forEach((row) => {
+    const button = el('button', `table-tile ${row.status} ${row.table.id === selected?.table.id ? 'selected' : ''}`);
+    button.type = 'button';
+    button.innerHTML = tableTileMarkup(row, orders, kdsSnapshot);
+    button.addEventListener('click', () => {
+      selectedTableId = row.table.id;
+      render();
+    });
+    tableGrid.append(button);
+  });
+  if (!activeTables.length) tableGrid.append(emptyState('No active tables are configured yet.'));
+  tablesPanel.append(tableGrid);
+
+  const actionPanel = el('aside', 'pos-panel order-station-action');
+  if (!selected) {
+    actionPanel.innerHTML = '<p class="eyebrow">Next step</p><h3>Select a table</h3><p class="muted">Choose an active table to begin.</p>';
+  } else if (selected.activeSession) {
+    const currentOrder = findOpenOrder(orders, selected.activeSession.id);
+    const itemCount = currentOrder?.items.reduce((sum, item) => sum + item.quantity, 0) ?? 0;
+    const prep = preparationSummaryForSession(orders, selected.activeSession.id, kdsSnapshot);
+    actionPanel.innerHTML = `<p class="eyebrow">Continue service</p><h3>${escapeHtml(selected.table.name)}</h3><div class="order-station-summary"><span>${selected.activeSession.guestCount} guests</span><span>${itemCount} items</span><span class="badge ${prep.tone}">${translateUiHtml(prep.label)}</span></div><p class="muted">Return to this table’s active ticket and add the next round.</p><button type="button" class="station-primary">${translateUiHtml('Continue order')}</button>`;
+    actionPanel.querySelector<HTMLButtonElement>('.station-primary')?.addEventListener('click', () => navigate('#/orders'));
+  } else {
+    actionPanel.innerHTML = `<p class="eyebrow">Start service</p><h3>${escapeHtml(selected.table.name)}</h3><p class="muted">${selected.table.capacity} seats available. Set the party size, then start taking the order.</p>`;
+    const form = el('form', 'order-station-open-form');
+    form.innerHTML = `<label>Guests<input name="guestCount" type="number" inputmode="numeric" min="1" max="${selected.table.capacity}" value="${Math.min(2, selected.table.capacity)}" required /></label><button type="submit" class="station-primary">${translateUiHtml('Open table & order')}</button><p class="form-error" hidden></p>`;
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const error = form.querySelector<HTMLParagraphElement>('.form-error')!;
+      try {
+        const guestCount = Number(new FormData(form).get('guestCount'));
+        await apiClient.openTableSession(session!.user.id, selected.table.id, guestCount, session!.user.branchId);
+        navigate('#/orders');
+      } catch (caught) {
+        error.hidden = false;
+        error.textContent = caught instanceof Error ? caught.message : 'Unable to open table.';
+      }
+    });
+    actionPanel.append(form);
+  }
+
+  workspace.append(tablesPanel, actionPanel);
+  section.append(intro, workspace);
+  return section;
+}
+
 async function renderOrderEntry(): Promise<HTMLElement> {
   const section = page('Order', 'Open tables, add guest items, and track preparation status without billing controls.');
   section.classList.add('pos-page');
@@ -2763,6 +2861,9 @@ async function renderRoute(): Promise<void> {
   switch (current.path) {
     case '#/dashboard':
       content = await renderDashboard();
+      break;
+    case '#/order-station':
+      content = await renderOrderStation();
       break;
     case '#/tables':
       content = await renderTableFloor();

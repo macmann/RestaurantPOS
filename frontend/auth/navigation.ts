@@ -17,6 +17,7 @@ export interface AppRoute {
 
 export const appRoutes: AppRoute[] = [
   { path: '#/dashboard', label: 'Dashboard', section: 'operations' },
+  { path: '#/order-station', label: 'Order station', section: 'operations', requiredPermissions: [Actions.CreateOrder] },
   { path: '#/tables', label: 'Table floor', section: 'operations', requiredPermissions: [Actions.CreateOrder] },
   { path: '#/orders', label: 'Order', section: 'operations', requiredPermissions: [Actions.CreateOrder] },
   { path: '#/billing', label: 'Billing', section: 'operations', requiredPermissions: [Actions.ViewBill, Actions.CloseBill] },
