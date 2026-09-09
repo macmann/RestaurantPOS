@@ -105,6 +105,7 @@ let activeUiLocale: SupportedLocale = normalizeLocale();
 let englishToMyanmarUiLabels: Record<string, string> = buildEnglishMyanmarLocalizationMap();
 let cachedPrepStations: SuperadminPrepStation[] = normalizePrepStations(undefined);
 let sidebarCollapsed = window.localStorage.getItem('sym-pos-sidebar-collapsed') === 'true';
+let renderGeneration = 0;
 
 apiClient.onNetworkStatus((status, detail) => {
   apiStatus = status;
@@ -2986,7 +2987,7 @@ async function renderRestaurantPos(): Promise<HTMLElement> {
   return section;
 }
 
-async function renderRoute(): Promise<void> {
+async function renderRoute(generation: number): Promise<void> {
   if (!session) return renderLogin();
   await syncApplicationLocale();
   const current = activeRoute();
@@ -3054,12 +3055,18 @@ async function renderRoute(): Promise<void> {
       content = page(translateUiText(current.label), translateUiText('Route shell ready for production workflows.'));
   }
 
+  // API-backed renders can overlap (for example, an item-add refresh may still
+  // be loading when the waiter submits the order). Never let an older response
+  // replace the newer submitted-order view with its stale pending-order cart.
+  if (generation !== renderGeneration) return;
   renderShell(content);
   localizeElementText(root);
 }
 
-function render(): void {
-  void renderRoute().catch((caught) => {
+function render(): Promise<void> {
+  const generation = ++renderGeneration;
+  return renderRoute(generation).catch((caught) => {
+    if (generation !== renderGeneration) return;
     if (caught instanceof ApiClientError && caught.status === 401) {
       session = null;
       loginNotice = 'Your session has expired. Please sign in again.';
