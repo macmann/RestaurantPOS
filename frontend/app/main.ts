@@ -104,6 +104,7 @@ let pendingPrintPreview: { tableSessionId: string; receipt: ReceiptPayload } | u
 let activeUiLocale: SupportedLocale = normalizeLocale();
 let englishToMyanmarUiLabels: Record<string, string> = buildEnglishMyanmarLocalizationMap();
 let cachedPrepStations: SuperadminPrepStation[] = normalizePrepStations(undefined);
+let sidebarCollapsed = window.localStorage.getItem('sym-pos-sidebar-collapsed') === 'true';
 
 apiClient.onNetworkStatus((status, detail) => {
   apiStatus = status;
@@ -301,13 +302,18 @@ function renderShell(content: HTMLElement): void {
   // Every authenticated workspace uses the same permission-aware navigation shell.
   // This keeps operational roles oriented in the same way as superadmins while
   // preserving a compact route switcher on small screens.
-  const layout = el('div', `app-shell unified-navigation-shell role-${shellRole}`);
+  const layout = el('div', `app-shell unified-navigation-shell role-${shellRole}${sidebarCollapsed ? ' sidebar-is-collapsed' : ''}`);
   const sidebar = el('aside', 'sidebar');
   const roleLabel = Array.isArray(session.user.role) ? session.user.role.join(', ') : session.user.role;
   sidebar.innerHTML = `
-    <div class="sidebar-brand">${brandLogo()}<div><h1>${APP_NAME}</h1><span>Restaurant command center</span></div></div>
+    <div class="sidebar-top"><div class="sidebar-brand">${brandLogo()}<div><h1>${APP_NAME}</h1><span>Restaurant command center</span></div></div><button type="button" class="sidebar-toggle" aria-label="${translateUiText(sidebarCollapsed ? 'Expand navigation' : 'Collapse navigation')}" aria-expanded="${String(!sidebarCollapsed)}" title="${translateUiText(sidebarCollapsed ? 'Expand navigation' : 'Collapse navigation')}"><span aria-hidden="true">${sidebarCollapsed ? '›' : '‹'}</span></button></div>
     <p class="sidebar-user">${session.user.id} · ${roleLabel}</p>
   `;
+  sidebar.querySelector<HTMLButtonElement>('.sidebar-toggle')?.addEventListener('click', () => {
+    sidebarCollapsed = !sidebarCollapsed;
+    window.localStorage.setItem('sym-pos-sidebar-collapsed', String(sidebarCollapsed));
+    renderShell(content);
+  });
 
   const mobileNav = el('div', 'mobile-route-bar');
   mobileNav.innerHTML = `
@@ -340,12 +346,15 @@ function renderShell(content: HTMLElement): void {
     for (const item of groupRoutes) {
       const link = el('a', shellRouteMatches(item, currentHash, current) ? 'active' : '', translateUiText(item.label));
       link.href = item.path;
+      link.title = translateUiText(item.label);
+      link.dataset.shortLabel = item.label.split(/\s+/).map((word) => word[0]).join('').slice(0, 2).toUpperCase();
       nav.append(link);
     }
     sidebar.append(heading, nav);
   }
 
   const signOut = el('button', 'secondary', translateUiText('Sign out'));
+  signOut.title = translateUiText('Sign out');
   signOut.addEventListener('click', () => {
     void logout().finally(() => {
       session = null;
@@ -2180,6 +2189,32 @@ function renderOrderedItemsReview(orders: OrderRecord[], snapshot?: KdsSnapshot)
   return review;
 }
 
+function renderPreviousOrders(orders: OrderRecord[], activeOrder: OrderRecord | undefined, snapshot?: KdsSnapshot): HTMLElement | undefined {
+  const previous = orders
+    .filter((order) => order.id !== activeOrder?.id)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  if (!previous.length) return undefined;
+
+  const history = el('section', 'previous-orders');
+  history.innerHTML = `<div class="previous-orders__heading"><div><span class="eyebrow">Already ordered</span><h4>Previous orders</h4></div><span>${previous.length} ${previous.length === 1 ? 'order' : 'orders'}</span></div>`;
+  for (const order of previous) {
+    const card = el('article', 'previous-order-card');
+    const statusLabel = order.status.replace(/_/g, ' ');
+    card.innerHTML = `<div class="previous-order-card__heading"><div><strong>Order ${escapeHtml(order.id.slice(-8))}</strong><small>${new Date(order.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</small></div><span class="order-status order-status--${order.status.replace(/_/g, '-')}">${translateUiHtml(statusLabel)}</span></div>`;
+    const items = el('div', 'previous-order-items');
+    for (const item of order.items) {
+      const itemStatus = orderItemPreparationStatus(order, item.id, snapshot);
+      const row = el('div', 'previous-order-item');
+      row.innerHTML = `<span><strong>${item.quantity}× ${escapeHtml(item.name)}</strong><small>${translateUiHtml(itemStatus)}</small></span><strong>${money(item.lineTotal)}</strong>`;
+      items.append(row);
+    }
+    if (!order.items.length) items.append(el('p', 'muted', 'No items on this order.'));
+    card.append(items);
+    history.append(card);
+  }
+  return history;
+}
+
 async function advanceSessionOrdersForClose(tableSessionId: string): Promise<void> {
   const orders = await apiClient.listOrders();
   for (const order of linkedOrdersForSession(orders, tableSessionId).filter((row) => row.status !== 'delivered')) {
@@ -2374,6 +2409,7 @@ async function renderOrderEntry(): Promise<HTMLElement> {
     orderPanel.append(openForm);
   } else {
     orderPanel.innerHTML = `<div class="pos-panel-heading"><h3>${selected.table.name} active order</h3><span>${selected.activeSession.guestCount} guests · send items from menu</span></div>`;
+    const sessionOrders = orders.filter((order) => order.tableSessionId === selected.activeSession!.id);
     const cart = el('div', 'cart-list');
     if (!activeOrder?.items.length) cart.append(el('p', 'muted', 'Tap menu items to start this table order.'));
     for (const item of activeOrder?.items ?? []) {
@@ -2409,6 +2445,8 @@ async function renderOrderEntry(): Promise<HTMLElement> {
       }
     });
     orderPanel.append(cart, orderSummary);
+    const previousOrders = renderPreviousOrders(sessionOrders, activeOrder, kdsSnapshot);
+    if (previousOrders) orderPanel.append(previousOrders);
   }
 
   const menuPanel = el('section', 'pos-panel menu-panel');
