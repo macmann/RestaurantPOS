@@ -293,23 +293,13 @@ button { min-height: var(--tap); touch-action: manipulation; }
 
 @media (max-width: 900px) {
   :root { --tap: 3.15rem; }
-  .responsive-role-shell { grid-template-columns: 1fr; }
-  .responsive-role-shell .sidebar { display: none; }
-  .responsive-role-shell .content { padding: 0.85rem; }
-  .responsive-role-shell .mobile-route-bar { position: sticky; top: 0; z-index: 10; display: grid; grid-template-columns: 1fr minmax(10rem, 45%); gap: 0.75rem; align-items: center; margin: -0.85rem -0.85rem 0; padding: 0.75rem 0.85rem; background: rgb(255 255 255 / 92%); border-bottom: 1px solid var(--line); box-shadow: var(--shadow-sm); backdrop-filter: blur(16px); }
-  .responsive-role-shell .tablet-role-nav { position: sticky; top: 4.2rem; z-index: 9; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0.4rem; margin: 0 -0.85rem 0.85rem; padding: 0.6rem 0.85rem; border-bottom: 1px solid var(--line); background: rgb(248 251 255 / 94%); backdrop-filter: blur(16px); }
-  .tablet-role-nav a { display: grid; place-items: center; min-height: 3.2rem; border-radius: 0.85rem; padding: 0.45rem; color: var(--muted); font-size: 0.76rem; font-weight: 900; text-align: center; }
-  .tablet-role-nav a.active { background: var(--primary); color: #fff; box-shadow: 0 8px 16px rgb(15 118 110 / 20%); }
-  .responsive-role-shell .mobile-route-bar select { display: none; }
-  .desktop-role-shell { grid-template-columns: 15rem minmax(0, 1fr); }
-  .desktop-role-shell .sidebar { display: flex; padding: 1rem; }
-  .desktop-role-shell .content { padding: 1rem; }
+  .unified-navigation-shell { grid-template-columns: 15rem minmax(0, 1fr); }
+  .unified-navigation-shell .sidebar { padding: 1rem; }
+  .unified-navigation-shell .content { padding: 1rem; }
   .mobile-route-brand strong { display: block; letter-spacing: -0.04em; }
   .mobile-route-brand .brand-logo { width: 2.65rem; height: 2.65rem; border-radius: 0.85rem; }
-  .responsive-role-shell .network-banner { top: 8.15rem; border-radius: 1rem; }
   .page-header { border-radius: 1.3rem; }
   .staff-table { font-size: 0.92rem; }
-  .responsive-role-shell .order-station-action { top: 8.25rem; }
 }
 
 @media (max-width: 760px) {
@@ -322,10 +312,12 @@ button { min-height: var(--tap); touch-action: manipulation; }
 @media (max-width: 640px) {
   .login-shell { padding: 0.85rem; place-items: stretch; align-content: center; }
   .login-card { border-radius: 1.35rem; }
-  .responsive-role-shell .mobile-route-bar { grid-template-columns: 1fr minmax(8.5rem, 45%); }
-  .responsive-role-shell .mobile-route-bar select { display: block; }
-  .responsive-role-shell .tablet-role-nav { display: none; }
-  .responsive-role-shell .network-banner { top: 4.9rem; }
+  .unified-navigation-shell { grid-template-columns: 1fr; }
+  .unified-navigation-shell .sidebar { display: none; }
+  .unified-navigation-shell .content { padding: 0.85rem; }
+  .unified-navigation-shell .mobile-route-bar { position: sticky; top: 0; z-index: 10; display: grid; grid-template-columns: 1fr minmax(8.5rem, 45%); gap: 0.75rem; align-items: center; margin: -0.85rem -0.85rem 0; padding: 0.75rem 0.85rem; background: rgb(255 255 255 / 92%); border-bottom: 1px solid var(--line); box-shadow: var(--shadow-sm); backdrop-filter: blur(16px); }
+  .unified-navigation-shell .mobile-route-bar select { display: block; }
+  .unified-navigation-shell .network-banner { top: 4.9rem; border-radius: 1rem; }
   .page-header h2 { font-size: clamp(2rem, 12vw, 2.8rem); }
   .card-grid, .table-grid, .menu-grid, .kds-board, .progress-lanes, .menu-admin-list, .report-grid, .dashboard-metrics, .dashboard-actions { grid-template-columns: 1fr; }
   .dashboard-hero { align-items: stretch; flex-direction: column; }

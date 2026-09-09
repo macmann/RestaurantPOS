@@ -297,9 +297,11 @@ function renderShell(content: HTMLElement): void {
   }
 
   const roles = userRoles(session.user);
-  const usesDesktopShell = roles.some((roleName) => ['superadmin', 'admin', 'manager', 'shift_lead'].includes(roleName));
   const shellRole = roles[0]?.replace(/[^a-z0-9_-]/gi, '-') ?? 'staff';
-  const layout = el('div', `app-shell ${usesDesktopShell ? 'desktop-role-shell' : 'responsive-role-shell'} role-${shellRole}`);
+  // Every authenticated workspace uses the same permission-aware navigation shell.
+  // This keeps operational roles oriented in the same way as superadmins while
+  // preserving a compact route switcher on small screens.
+  const layout = el('div', `app-shell unified-navigation-shell role-${shellRole}`);
   const sidebar = el('aside', 'sidebar');
   const roleLabel = Array.isArray(session.user.role) ? session.user.role.join(', ') : session.user.role;
   sidebar.innerHTML = `
