@@ -22,6 +22,11 @@ interface SuperadminPrinterSettings {
   enabled: boolean;
   printerId: string;
   displayName: string;
+  connectionType: 'simulator' | 'network';
+  networkAddress?: string;
+  networkPort: number;
+  copies: number;
+  autoPrint: boolean;
 }
 
 interface RestaurantBillInfo {
@@ -580,6 +585,11 @@ function normalizePrinterSettings(label: string, printer?: Partial<SuperadminPri
     enabled: printer?.enabled !== false,
     displayName: printer?.displayName?.trim() || `${label} printer`,
     printerId: printer?.printerId?.trim() || 'Not configured',
+    connectionType: printer?.connectionType === 'network' ? 'network' : 'simulator',
+    networkAddress: printer?.networkAddress?.trim() || '',
+    networkPort: Number(printer?.networkPort) || 9100,
+    copies: Number(printer?.copies) || 1,
+    autoPrint: printer?.autoPrint ?? label !== 'Receipt',
   };
 }
 
@@ -920,6 +930,7 @@ async function renderStaffSettings(isSuperadminPanel = false): Promise<HTMLEleme
       enabled: true,
       printerId: String(data.get('printerId') ?? '').trim() || `${stationId}-printer`,
       displayName: `${stationName} printer`,
+      connectionType: 'simulator', networkPort: 9100, copies: 1, autoPrint: true,
     };
     try {
       await apiClient.updateSettings({
@@ -1284,11 +1295,16 @@ async function renderBillSettings(): Promise<HTMLElement> {
             <label>Sort order<input name="stationSortOrder" type="number" value="${station.sortOrder}" /></label>
             <label>Printer ID<input name="stationPrinterId" value="${escapeHtml(printer.printerId)}" required /></label>
             <label>Printer display name<input name="stationPrinterDisplayName" value="${escapeHtml(printer.displayName)}" required /></label>
+            <label>Connection<select name="stationPrinterConnection"><option value="simulator" ${printer.connectionType === 'simulator' ? 'selected' : ''}>Simulator / test</option><option value="network" ${printer.connectionType === 'network' ? 'selected' : ''}>Wireless / LAN (TCP)</option></select></label>
+            <label>IP address / hostname<input name="stationPrinterAddress" value="${escapeHtml(printer.networkAddress ?? '')}" placeholder="192.168.1.50" /></label>
+            <label>Port<input name="stationPrinterPort" type="number" min="1" max="65535" value="${printer.networkPort}" /></label>
+            <label>Copies per order<input name="stationPrinterCopies" type="number" min="1" max="10" value="${printer.copies}" /></label>
           </div>
         </div>
         <div class="station-settings-card__toggles">
           <label class="checkbox-row"><input type="checkbox" name="stationEnabled" ${station.enabled ? 'checked' : ''} /> Board enabled</label>
           <label class="checkbox-row"><input type="checkbox" name="stationPrinterEnabled" ${printer.enabled ? 'checked' : ''} /> Printer enabled</label>
+          <label class="checkbox-row"><input type="checkbox" name="stationPrinterAutoPrint" ${printer.autoPrint ? 'checked' : ''} /> Print automatically</label>
         </div>
       </article>
     `;
@@ -1386,6 +1402,7 @@ async function renderBillSettings(): Promise<HTMLElement> {
         enabled: data.get('receiptEnabled') === 'on',
         printerId: String(data.get('receiptPrinterId') ?? ''),
         displayName: String(data.get('receiptDisplayName') ?? ''),
+        connectionType: 'simulator', networkPort: 9100, copies: 1, autoPrint: false,
       },
     };
 
@@ -1402,6 +1419,11 @@ async function renderBillSettings(): Promise<HTMLElement> {
         enabled: card.querySelector<HTMLInputElement>('input[name="stationPrinterEnabled"]')?.checked ?? true,
         printerId: card.querySelector<HTMLInputElement>('input[name="stationPrinterId"]')?.value ?? '',
         displayName: card.querySelector<HTMLInputElement>('input[name="stationPrinterDisplayName"]')?.value ?? '',
+        connectionType: card.querySelector<HTMLSelectElement>('select[name="stationPrinterConnection"]')?.value === 'network' ? 'network' : 'simulator',
+        networkAddress: card.querySelector<HTMLInputElement>('input[name="stationPrinterAddress"]')?.value ?? '',
+        networkPort: Number(card.querySelector<HTMLInputElement>('input[name="stationPrinterPort"]')?.value ?? 9100),
+        copies: Number(card.querySelector<HTMLInputElement>('input[name="stationPrinterCopies"]')?.value ?? 1),
+        autoPrint: card.querySelector<HTMLInputElement>('input[name="stationPrinterAutoPrint"]')?.checked ?? false,
       };
     });
 
@@ -1413,6 +1435,7 @@ async function renderBillSettings(): Promise<HTMLElement> {
         enabled: true,
         printerId: String(data.get('newStationPrinterId') ?? '').trim() || `${id}-printer`,
         displayName: `${newStationName} printer`,
+        connectionType: 'simulator', networkPort: 9100, copies: 1, autoPrint: true,
       };
     }
 

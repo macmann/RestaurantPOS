@@ -14,6 +14,11 @@ export interface PrinterDeviceConfig {
   enabled: boolean;
   printerId: string;
   displayName: string;
+  connectionType: 'simulator' | 'network';
+  networkAddress?: string;
+  networkPort: number;
+  copies: number;
+  autoPrint: boolean;
 }
 
 export interface PrepStationConfig {
@@ -64,6 +69,11 @@ function defaultStationPrinter(stationId: string, displayName: string): PrinterD
     enabled: envValue(`POS_${envPrefix}_PRINTER_ENABLED`) !== 'false',
     printerId: envValue(`POS_${envPrefix}_PRINTER_ID`) ?? `${stationId}-printer`,
     displayName: envValue(`POS_${envPrefix}_PRINTER_NAME`) ?? `${displayName} printer`,
+    connectionType: envValue(`POS_${envPrefix}_PRINTER_TYPE`) === 'network' ? 'network' : 'simulator',
+    networkAddress: envValue(`POS_${envPrefix}_PRINTER_ADDRESS`),
+    networkPort: Number(envValue(`POS_${envPrefix}_PRINTER_PORT`) ?? 9100),
+    copies: Number(envValue(`POS_${envPrefix}_PRINTER_COPIES`) ?? 1),
+    autoPrint: envValue(`POS_${envPrefix}_PRINTER_AUTO_PRINT`) !== 'false',
   };
 }
 
@@ -87,9 +97,9 @@ function defaultSettings(): PosOperationalSettings {
     },
     prepStations,
     printers: {
-      receipt: { enabled: envValue('POS_RECEIPT_PRINTER_ENABLED') !== 'false', printerId: envValue('POS_RECEIPT_PRINTER_ID') ?? 'receipt-counter', displayName: envValue('POS_RECEIPT_PRINTER_NAME') ?? 'Receipt printer' },
-      kitchen: { enabled: envValue('POS_KITCHEN_PRINTER_ENABLED') !== 'false', printerId: envValue('POS_KITCHEN_PRINTER_ID') ?? 'kitchen-hotline', displayName: envValue('POS_KITCHEN_PRINTER_NAME') ?? 'Kitchen printer' },
-      bar: { enabled: envValue('POS_BAR_PRINTER_ENABLED') !== 'false', printerId: envValue('POS_BAR_PRINTER_ID') ?? 'bar-service', displayName: envValue('POS_BAR_PRINTER_NAME') ?? 'Bar printer' },
+      receipt: { enabled: envValue('POS_RECEIPT_PRINTER_ENABLED') !== 'false', printerId: envValue('POS_RECEIPT_PRINTER_ID') ?? 'receipt-counter', displayName: envValue('POS_RECEIPT_PRINTER_NAME') ?? 'Receipt printer', connectionType: 'simulator', networkPort: 9100, copies: 1, autoPrint: false },
+      kitchen: defaultStationPrinter('kitchen', 'Kitchen'),
+      bar: defaultStationPrinter('bar', 'Bar'),
     },
     localization: {
       defaultLocale: normalizeLocale(envValue('POS_DEFAULT_LOCALE') ?? envValue('DEFAULT_LOCALE') ?? DEFAULT_LOCALE),
@@ -131,10 +141,17 @@ function normalizeTax(input: Partial<TaxSettings> | undefined, fallback: TaxSett
 }
 
 function normalizePrinter(input: Partial<PrinterDeviceConfig> | undefined, fallback: PrinterDeviceConfig): PrinterDeviceConfig {
+  const networkPort = Number(input?.networkPort ?? fallback.networkPort ?? 9100);
+  const copies = Number(input?.copies ?? fallback.copies ?? 1);
   return {
     enabled: typeof input?.enabled === 'boolean' ? input.enabled : fallback.enabled,
     printerId: cleanText(input?.printerId, fallback.printerId),
     displayName: cleanText(input?.displayName, fallback.displayName),
+    connectionType: input?.connectionType === 'network' ? 'network' : (fallback.connectionType ?? 'simulator'),
+    networkAddress: String(input?.networkAddress ?? fallback.networkAddress ?? '').trim() || undefined,
+    networkPort: Number.isInteger(networkPort) && networkPort > 0 && networkPort <= 65535 ? networkPort : 9100,
+    copies: Number.isInteger(copies) && copies >= 1 && copies <= 10 ? copies : 1,
+    autoPrint: typeof input?.autoPrint === 'boolean' ? input.autoPrint : (fallback.autoPrint ?? false),
   };
 }
 
@@ -158,7 +175,7 @@ function normalizePrepStations(input: unknown, fallback: PrepStationConfig[]): P
   return [...byId.values()].sort((a, b) => a.sortOrder - b.sortOrder || a.displayName.localeCompare(b.displayName));
 }
 
-function normalizePrinters(input: Partial<PrinterSettings> | undefined, stations: PrepStationConfig[], fallback: PrinterSettings): PrinterSettings {
+function normalizePrinters(input: Partial<Record<string, Partial<PrinterDeviceConfig>>> | undefined, stations: PrepStationConfig[], fallback: PrinterSettings): PrinterSettings {
   const printers: PrinterSettings = {
     receipt: normalizePrinter(input?.receipt, fallback.receipt),
   };
@@ -188,8 +205,9 @@ export function normalizePrepStationId(value: unknown): string {
   return station;
 }
 
-type PosOperationalSettingsInput = Partial<Omit<PosOperationalSettings, 'localization'>> & {
+type PosOperationalSettingsInput = Partial<Omit<PosOperationalSettings, 'localization' | 'printers'>> & {
   localization?: Partial<LocalizationSettings>;
+  printers?: Partial<Record<string, Partial<PrinterDeviceConfig>>>;
 };
 
 export function updatePosOperationalSettings(input: PosOperationalSettingsInput): PosOperationalSettings {

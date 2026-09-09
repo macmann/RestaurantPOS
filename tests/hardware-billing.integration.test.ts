@@ -4,6 +4,8 @@ import { listBillingAuditByTableSessionId, type TableOrderItem } from '../backen
 import { generateBillFromSessionItems, printBillReceipt, recordSplitPayment, refundSplitPayment, voidSplitPayment } from '../backend/billing/service';
 import { resetCashDrawerAdapter } from '../backend/hardware/cashDrawer';
 import { resetReceiptPrinterAdapter } from '../backend/hardware/receiptPrinter';
+import { resetOrderPrinterAdapter } from '../backend/hardware/orderPrinter';
+import type { OrderRecord } from '../backend/orders/repository';
 import { resetPaymentTerminalAdapter } from '../backend/integrations/paymentTerminal';
 import { updatePosOperationalSettings } from '../backend/config/posSettings';
 import { createTable, openTableSession } from '../backend/tables/service';
@@ -38,6 +40,19 @@ async function runHardwareBillingIntegration(): Promise<void> {
   const terminal = resetPaymentTerminalAdapter();
   const drawer = resetCashDrawerAdapter();
   const printer = resetReceiptPrinterAdapter();
+  const orderPrinter = resetOrderPrinterAdapter();
+
+  updatePosOperationalSettings({ printers: { kitchen: { copies: 2, autoPrint: true } } });
+  const ticketOrder: OrderRecord = {
+    id: 'ord-hardware-ticket', branchId: 'branch-hw', serviceMode: 'dine_in', tableId: 'table-7', tableName: 'Table 7', tableSessionId: 'session-7',
+    status: 'pending', subtotal: 12, version: 1, createdBy: 'waiter-1', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), changeLog: [],
+    items: [{ id: 'line-1', menuItemId: 'menu-1', name: 'Mohinga', quantity: 1, unitPrice: 12, lineTotal: 12, station: 'kitchen' }],
+  };
+  const tickets = await orderPrinter.printOrderForConfiguredStations(ticketOrder, true);
+  assertEqual(tickets.length, 1, 'Automatic order printing should route items only to their configured station');
+  assertEqual(tickets[0].copyCount, 2, 'Station copy configuration should be honored');
+  assert(tickets[0].renderedText.includes('Station: Kitchen'), 'Order ticket should identify the prep station.');
+  assert(tickets[0].renderedText.includes('Table: Table 7'), 'Order ticket should identify the table to serve.');
 
   const cardFixture = await createBillFixture('card', 100);
   const paidByCard = await recordSplitPayment({ tableSessionId: cardFixture.session.id, splitLabel: 'A', amount: 100, method: 'card', actorUserId: cardFixture.cashier.id });
