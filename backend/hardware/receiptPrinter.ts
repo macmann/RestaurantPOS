@@ -1,4 +1,6 @@
 import type { ReceiptPayload, SplitLabel } from '../billing/repository';
+import { getPosOperationalSettings } from '../config/posSettings';
+import { sendToNetworkPrinter, sendToWindowsPrinter } from './printerTransport';
 
 export interface ReceiptPrintRequest {
   payload: ReceiptPayload;
@@ -79,7 +81,22 @@ export class SimulatorReceiptPrinterAdapter implements ReceiptPrinterAdapter {
   }
 }
 
-let receiptPrinterAdapter: ReceiptPrinterAdapter = new SimulatorReceiptPrinterAdapter();
+export class ConfiguredReceiptPrinterAdapter extends SimulatorReceiptPrinterAdapter {
+  override async printReceipt(request: ReceiptPrintRequest): Promise<ReceiptPrintResult> {
+    const result = await super.printReceipt(request);
+    const printer = Object.values(getPosOperationalSettings().printers).find((candidate) => candidate.printerId === result.printerId);
+    if (printer?.connectionType === 'network') {
+      if (!printer.networkAddress) throw new Error(`Network address is required for ${printer.displayName}.`);
+      await sendToNetworkPrinter(printer.networkAddress, printer.networkPort, result.renderedText, result.copyCount);
+    } else if (printer?.connectionType === 'windows') {
+      if (!printer.windowsPrinterName) throw new Error(`Windows printer name is required for ${printer.displayName}.`);
+      await sendToWindowsPrinter(printer.windowsPrinterName, result.renderedText, result.copyCount);
+    }
+    return result;
+  }
+}
+
+let receiptPrinterAdapter: ReceiptPrinterAdapter = new ConfiguredReceiptPrinterAdapter();
 
 export function getReceiptPrinterAdapter(): ReceiptPrinterAdapter {
   return receiptPrinterAdapter;

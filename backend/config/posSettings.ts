@@ -16,7 +16,9 @@ export interface PrinterDeviceConfig {
   enabled: boolean;
   printerId: string;
   displayName: string;
-  connectionType: 'simulator' | 'network';
+  connectionType: 'simulator' | 'network' | 'windows';
+  /** Exact printer name shown in Windows Settings / Get-Printer. */
+  windowsPrinterName?: string;
   networkAddress?: string;
   networkPort: number;
   copies: number;
@@ -74,7 +76,8 @@ function defaultStationPrinter(stationId: string, displayName: string): PrinterD
     enabled: envValue(`POS_${envPrefix}_PRINTER_ENABLED`) !== 'false',
     printerId: envValue(`POS_${envPrefix}_PRINTER_ID`) ?? `${stationId}-printer`,
     displayName: envValue(`POS_${envPrefix}_PRINTER_NAME`) ?? `${displayName} printer`,
-    connectionType: envValue(`POS_${envPrefix}_PRINTER_TYPE`) === 'network' ? 'network' : 'simulator',
+    connectionType: envValue(`POS_${envPrefix}_PRINTER_TYPE`) === 'network' ? 'network' : envValue(`POS_${envPrefix}_PRINTER_TYPE`) === 'windows' ? 'windows' : 'simulator',
+    windowsPrinterName: envValue(`POS_${envPrefix}_WINDOWS_PRINTER_NAME`),
     networkAddress: envValue(`POS_${envPrefix}_PRINTER_ADDRESS`),
     networkPort: Number(envValue(`POS_${envPrefix}_PRINTER_PORT`) ?? 9100),
     copies: Number(envValue(`POS_${envPrefix}_PRINTER_COPIES`) ?? 1),
@@ -103,7 +106,17 @@ function defaultSettings(): PosOperationalSettings {
     },
     prepStations,
     printers: {
-      receipt: { enabled: envValue('POS_RECEIPT_PRINTER_ENABLED') !== 'false', printerId: envValue('POS_RECEIPT_PRINTER_ID') ?? 'receipt-counter', displayName: envValue('POS_RECEIPT_PRINTER_NAME') ?? 'Receipt printer', connectionType: 'simulator', networkPort: 9100, copies: 1, autoPrint: false },
+      receipt: {
+        enabled: envValue('POS_RECEIPT_PRINTER_ENABLED') !== 'false',
+        printerId: envValue('POS_RECEIPT_PRINTER_ID') ?? 'receipt-counter',
+        displayName: envValue('POS_RECEIPT_PRINTER_NAME') ?? 'Receipt printer',
+        connectionType: envValue('POS_RECEIPT_PRINTER_TYPE') === 'network' ? 'network' : envValue('POS_RECEIPT_PRINTER_TYPE') === 'windows' ? 'windows' : 'simulator',
+        windowsPrinterName: envValue('POS_RECEIPT_WINDOWS_PRINTER_NAME'),
+        networkAddress: envValue('POS_RECEIPT_PRINTER_ADDRESS'),
+        networkPort: Number(envValue('POS_RECEIPT_PRINTER_PORT') ?? 9100),
+        copies: Number(envValue('POS_RECEIPT_PRINTER_COPIES') ?? 1),
+        autoPrint: false,
+      },
       kitchen: defaultStationPrinter('kitchen', 'Kitchen'),
       bar: defaultStationPrinter('bar', 'Bar'),
     },
@@ -155,7 +168,8 @@ function normalizePrinter(input: Partial<PrinterDeviceConfig> | undefined, fallb
     enabled: typeof input?.enabled === 'boolean' ? input.enabled : fallback.enabled,
     printerId: cleanText(input?.printerId, fallback.printerId),
     displayName: cleanText(input?.displayName, fallback.displayName),
-    connectionType: input?.connectionType === 'network' ? 'network' : (fallback.connectionType ?? 'simulator'),
+    connectionType: input?.connectionType === 'network' || input?.connectionType === 'windows' ? input.connectionType : (fallback.connectionType ?? 'simulator'),
+    windowsPrinterName: String(input?.windowsPrinterName ?? fallback.windowsPrinterName ?? '').trim() || undefined,
     networkAddress: String(input?.networkAddress ?? fallback.networkAddress ?? '').trim() || undefined,
     networkPort: Number.isInteger(networkPort) && networkPort > 0 && networkPort <= 65535 ? networkPort : 9100,
     copies: Number.isInteger(copies) && copies >= 1 && copies <= 10 ? copies : 1,

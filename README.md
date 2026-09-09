@@ -84,6 +84,14 @@ npm install
 
 ## How to run locally
 
+### Use a USB receipt printer installed in Windows
+
+Run the POS API on the Windows computer where the USB printer is installed. In **Bill & printer settings**, edit the receipt printer, choose **Windows installed printer (USB)**, and enter the exact Windows printer queue name (the name displayed under **Settings > Bluetooth & devices > Printers & scanners**). Enable the printer, assign it as the receipt printer, save, and use **Print receipt** from billing.
+
+The Windows printer driver controls the paper size and other device preferences, so set the receipt roll width in Windows first. The API sends Unicode receipt text through the Windows print spooler using PowerShell. A server running on Linux or another computer cannot access a printer installed only on a cashier's Windows PC.
+
+For environment-based configuration, set `POS_RECEIPT_PRINTER_TYPE=windows` and `POS_RECEIPT_WINDOWS_PRINTER_NAME` to the exact queue name before starting the API.
+
 ### Type-check
 
 ```bash

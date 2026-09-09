@@ -22,7 +22,8 @@ interface SuperadminPrinterSettings {
   enabled: boolean;
   printerId: string;
   displayName: string;
-  connectionType: 'simulator' | 'network';
+  connectionType: 'simulator' | 'network' | 'windows';
+  windowsPrinterName?: string;
   networkAddress?: string;
   networkPort: number;
   copies: number;
@@ -663,7 +664,8 @@ function normalizePrinterSettings(label: string, printer?: Partial<SuperadminPri
     enabled: printer?.enabled !== false,
     displayName: printer?.displayName?.trim() || `${label} printer`,
     printerId: printer?.printerId?.trim() || 'Not configured',
-    connectionType: printer?.connectionType === 'network' ? 'network' : 'simulator',
+    connectionType: printer?.connectionType === 'network' || printer?.connectionType === 'windows' ? printer.connectionType : 'simulator',
+    windowsPrinterName: printer?.windowsPrinterName?.trim() || '',
     networkAddress: printer?.networkAddress?.trim() || '',
     networkPort: Number(printer?.networkPort) || 9100,
     copies: Number(printer?.copies) || 1,
@@ -1505,7 +1507,8 @@ async function renderBillSettings(): Promise<HTMLElement> {
           <label>Device key<input name="printerKey" value="${escapeHtml(key)}" readonly /></label>
           <label>Printer ID<input name="printerId" value="${escapeHtml(printer.printerId)}" required /></label>
           <label>Display name<input name="printerDisplayName" value="${escapeHtml(printer.displayName)}" required /></label>
-          <label>Connection<select name="printerConnection"><option value="simulator" ${printer.connectionType === 'simulator' ? 'selected' : ''}>Simulator / test</option><option value="network" ${printer.connectionType === 'network' ? 'selected' : ''}>Wireless / LAN (TCP)</option></select></label>
+          <label>Connection<select name="printerConnection"><option value="simulator" ${printer.connectionType === 'simulator' ? 'selected' : ''}>Simulator / test</option><option value="windows" ${printer.connectionType === 'windows' ? 'selected' : ''}>Windows installed printer (USB)</option><option value="network" ${printer.connectionType === 'network' ? 'selected' : ''}>Wireless / LAN (TCP)</option></select></label>
+          <label>Windows printer name<input name="windowsPrinterName" value="${escapeHtml(printer.windowsPrinterName ?? '')}" placeholder="Exact name from Windows Settings" /></label>
           <label>IP address / hostname<input name="printerAddress" value="${escapeHtml(printer.networkAddress ?? '')}" placeholder="192.168.1.50" /></label>
           <label>Port<input name="printerPort" type="number" min="1" max="65535" value="${printer.networkPort}" /></label>
           <label>Copies<input name="printerCopies" type="number" min="1" max="10" value="${printer.copies}" /></label>
@@ -1614,7 +1617,8 @@ async function renderBillSettings(): Promise<HTMLElement> {
         enabled: card.querySelector<HTMLInputElement>('input[name="printerEnabled"]')?.checked ?? true,
         printerId: card.querySelector<HTMLInputElement>('input[name="printerId"]')?.value ?? '',
         displayName: card.querySelector<HTMLInputElement>('input[name="printerDisplayName"]')?.value ?? '',
-        connectionType: card.querySelector<HTMLSelectElement>('select[name="printerConnection"]')?.value === 'network' ? 'network' : 'simulator',
+        connectionType: (() => { const value = card.querySelector<HTMLSelectElement>('select[name="printerConnection"]')?.value; return value === 'network' || value === 'windows' ? value : 'simulator'; })(),
+        windowsPrinterName: card.querySelector<HTMLInputElement>('input[name="windowsPrinterName"]')?.value ?? '',
         networkAddress: card.querySelector<HTMLInputElement>('input[name="printerAddress"]')?.value ?? '',
         networkPort: Number(card.querySelector<HTMLInputElement>('input[name="printerPort"]')?.value ?? 9100),
         copies: Number(card.querySelector<HTMLInputElement>('input[name="printerCopies"]')?.value ?? 1),
