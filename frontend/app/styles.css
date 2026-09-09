@@ -34,6 +34,7 @@ button, input, select { font: inherit; }
 button, a, select { -webkit-tap-highlight-color: transparent; }
 button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid rgb(37 99 235 / 45%); outline-offset: 3px; }
 button { min-height: var(--tap); touch-action: manipulation; }
+[hidden] { display: none !important; }
 
 .brand-heading, .sidebar-brand, .mobile-route-brand { display: flex; align-items: center; gap: 0.85rem; }
 .brand-heading { margin-bottom: 1.25rem; }
@@ -421,7 +422,17 @@ button { min-height: var(--tap); touch-action: manipulation; }
 .sales-history-wide ol { margin: 0; padding-left: 1.25rem; display: grid; gap: 0.55rem; }
 
 .superadmin-page .page-header { background: radial-gradient(circle at 85% 15%, rgb(255 255 255 / 22%), transparent 16rem), linear-gradient(135deg, #115e59 0%, #0f766e 42%, #1d4ed8 100%); }
+.superadmin-page > .card-grid { display: none; }
+.workspace-tabs { position: sticky; top: 0.85rem; z-index: 6; display: grid; grid-template-columns: repeat(5, minmax(8.5rem, 1fr)); gap: 0.4rem; overflow-x: auto; padding: 0.45rem; border: 1px solid rgb(219 230 243 / 88%); border-radius: 1.25rem; background: rgb(255 255 255 / 88%); box-shadow: var(--shadow-sm); backdrop-filter: blur(18px); scrollbar-width: thin; }
+.workspace-tabs button { display: grid; gap: 0.18rem; min-width: 8.5rem; min-height: 3.8rem; border: 0; border-radius: 0.9rem; padding: 0.65rem 0.8rem; background: transparent; color: var(--muted); text-align: left; cursor: pointer; transition: color 140ms ease, background 140ms ease, box-shadow 140ms ease, transform 140ms ease; }
+.workspace-tabs button span { color: inherit; font-size: 0.88rem; font-weight: 950; }
+.workspace-tabs button small { overflow: hidden; color: inherit; font-size: 0.7rem; font-weight: 750; opacity: 0.78; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-tabs button:hover { background: var(--surface-tint); color: var(--primary-dark); }
+.workspace-tabs button.active { background: linear-gradient(135deg, var(--primary), var(--accent)); color: #fff; box-shadow: 0 10px 22px rgb(15 118 110 / 22%); transform: translateY(-1px); }
 .superadmin-panel { grid-template-columns: minmax(min(100%, 32rem), 1fr) minmax(min(100%, 28rem), 0.95fr); align-items: stretch; }
+.superadmin-panel[data-active-tab] { grid-template-columns: minmax(0, 1fr); }
+.superadmin-panel [data-admin-panel] { animation: panel-enter 180ms ease-out; }
+@keyframes panel-enter { from { opacity: 0; transform: translateY(0.35rem); } to { opacity: 1; transform: translateY(0); } }
 .staff-create-card, .superadmin-overview-card { min-height: 100%; }
 .staff-create-card { background: linear-gradient(180deg, #fff, #f8fafc); }
 .staff-create-card > div:first-child p:last-child { margin-bottom: 0; }
@@ -473,6 +484,8 @@ button { min-height: var(--tap); touch-action: manipulation; }
 }
 
 @media (max-width: 760px) {
+  .workspace-tabs { top: 0.35rem; grid-template-columns: repeat(5, minmax(8rem, 44vw)); margin-inline: -0.15rem; border-radius: 1rem; }
+  .workspace-tabs button { min-width: 8rem; }
   .superadmin-metrics, .superadmin-printers { grid-template-columns: 1fr 1fr; }
   .translation-map__header, .translation-row { grid-template-columns: 1fr; }
   .translation-map__header { display: none; }

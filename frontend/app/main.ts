@@ -895,7 +895,7 @@ async function renderStaffSettings(isSuperadminPanel = false): Promise<HTMLEleme
       `).join('')}
     `;
     launchpad.querySelectorAll<HTMLButtonElement>('button').forEach((button) => button.addEventListener('click', () => navigate(button.dataset.target!)));
-    section.append(launchpad);
+    panel.append(launchpad);
   }
 
   const staffListCard = el('article', 'card admin-card staff-list-card');
@@ -931,7 +931,80 @@ async function renderStaffSettings(isSuperadminPanel = false): Promise<HTMLEleme
   staffTableWrap.append(table);
   staffListCard.append(staffTableWrap);
   panel.append(staffListCard);
-  section.append(panel);
+
+  if (isSuperadminPanel) {
+    const tabDefinitions = [
+      { id: 'overview', label: 'Overview', description: 'Health at a glance' },
+      { id: 'team', label: 'Team & access', description: `${users.length} staff profiles` },
+      { id: 'operations', label: 'Operations setup', description: `${settings.prepStations.length} prep stations` },
+      { id: 'localization', label: 'Localization', description: getLocaleResource(settings.localization.defaultLocale).nativeName },
+      { id: 'settings', label: 'System settings', description: 'Bills, printers & language' },
+    ] as const;
+    const params = new URLSearchParams(route.split('?')[1] ?? '');
+    const requestedTab = params.get('tab');
+    const initialTab = tabDefinitions.some((tab) => tab.id === requestedTab) ? requestedTab! : 'overview';
+    const tabList = el('nav', 'workspace-tabs superadmin-tabs');
+    tabList.setAttribute('aria-label', translateUiText('Super admin workspace sections'));
+    tabList.setAttribute('role', 'tablist');
+    tabList.innerHTML = tabDefinitions.map((tab) => `
+      <button type="button" role="tab" data-admin-tab="${tab.id}">
+        <span>${translateUiHtml(tab.label)}</span>
+        <small>${translateUiHtml(tab.description)}</small>
+      </button>
+    `).join('');
+
+    const panelAssignments: Array<[string, string]> = [
+      ['.superadmin-overview-card', 'overview'],
+      ['.staff-create-card', 'team'],
+      ['.staff-list-card', 'team'],
+      ['.superadmin-station-card', 'operations'],
+      ['.superadmin-localization-card', 'localization'],
+      ['.superadmin-settings-launchpad', 'settings'],
+    ];
+    for (const [selector, tabId] of panelAssignments) {
+      const item = panel.querySelector<HTMLElement>(selector);
+      if (item) {
+        item.dataset.adminPanel = tabId;
+        item.setAttribute('role', 'tabpanel');
+      }
+    }
+
+    const activateTab = (tabId: string, updateUrl = true): void => {
+      tabList.querySelectorAll<HTMLButtonElement>('[data-admin-tab]').forEach((button) => {
+        const active = button.dataset.adminTab === tabId;
+        button.classList.toggle('active', active);
+        button.setAttribute('aria-selected', String(active));
+        button.tabIndex = active ? 0 : -1;
+      });
+      panel.querySelectorAll<HTMLElement>('[data-admin-panel]').forEach((item) => {
+        item.hidden = item.dataset.adminPanel !== tabId;
+      });
+      panel.dataset.activeTab = tabId;
+      if (updateUrl) {
+        const next = new URLSearchParams(route.split('?')[1] ?? '');
+        next.set('tab', tabId);
+        const nextHash = `${routePath()}?${next.toString()}`;
+        window.history.replaceState(null, '', nextHash);
+        route = nextHash;
+      }
+    };
+
+    tabList.querySelectorAll<HTMLButtonElement>('[data-admin-tab]').forEach((button, index, buttons) => {
+      button.addEventListener('click', () => activateTab(button.dataset.adminTab!));
+      button.addEventListener('keydown', (event) => {
+        if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return;
+        event.preventDefault();
+        const direction = event.key === 'ArrowRight' ? 1 : -1;
+        const nextButton = buttons[(index + direction + buttons.length) % buttons.length];
+        nextButton.focus();
+        activateTab(nextButton.dataset.adminTab!);
+      });
+    });
+    activateTab(initialTab, false);
+    section.append(tabList, panel);
+  } else {
+    section.append(panel);
+  }
 
   attachLocalizationForm(panel, settings);
 
