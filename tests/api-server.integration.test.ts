@@ -1,5 +1,6 @@
 declare const process: { exitCode?: number };
 
+import { updatePosOperationalSettings } from '../backend/config/posSettings';
 import { createInventoryMasterItem, saveMenuInventoryRecipe } from '../backend/inventory/service';
 import { adminCreateCategory, adminCreateItem } from '../backend/menu/service';
 import { createTable } from '../backend/tables/service';
@@ -8,6 +9,7 @@ import { assert } from './helpers/assertions';
 import { apiRequest, login, seedLoginUser, startTestServer } from './helpers/apiTestHarness';
 
 async function runApiIntegration(): Promise<void> {
+  updatePosOperationalSettings({ menuInventoryLinkEnabled: true });
   const branchId = 'api-main';
   const password = 'correct-horse-api';
   await Promise.all([

@@ -43,6 +43,7 @@ export interface TaxSettings {
 }
 
 export interface PosOperationalSettings {
+  menuInventoryLinkEnabled: boolean;
   restaurantBillInfo: RestaurantBillInfo;
   tax: TaxSettings;
   prepStations: PrepStationConfig[];
@@ -84,6 +85,7 @@ function defaultSettings(): PosOperationalSettings {
     { id: 'bar', displayName: 'Bar', enabled: true, sortOrder: 20 },
   ];
   return {
+    menuInventoryLinkEnabled: envValue('POS_MENU_INVENTORY_LINK_ENABLED') === 'true',
     restaurantBillInfo: {
       restaurantName: envValue('POS_RESTAURANT_NAME') ?? runtime.branch.branchName,
       address: envValue('POS_RESTAURANT_ADDRESS') ?? runtime.branch.locationLabel ?? 'Configure restaurant address in Settings',
@@ -190,6 +192,10 @@ export function getPosOperationalSettings(): PosOperationalSettings {
   return structuredClone(currentSettings);
 }
 
+export function isMenuInventoryLinkEnabled(): boolean {
+  return currentSettings.menuInventoryLinkEnabled;
+}
+
 export function listPrepStations(includeDisabled = false): PrepStationConfig[] {
   return getPosOperationalSettings().prepStations.filter((station) => includeDisabled || station.enabled);
 }
@@ -213,6 +219,9 @@ type PosOperationalSettingsInput = Partial<Omit<PosOperationalSettings, 'localiz
 export function updatePosOperationalSettings(input: PosOperationalSettingsInput): PosOperationalSettings {
   const prepStations = normalizePrepStations(input.prepStations, currentSettings.prepStations);
   currentSettings = {
+    menuInventoryLinkEnabled: typeof input.menuInventoryLinkEnabled === 'boolean'
+      ? input.menuInventoryLinkEnabled
+      : currentSettings.menuInventoryLinkEnabled,
     restaurantBillInfo: {
       restaurantName: cleanText(input.restaurantBillInfo?.restaurantName, currentSettings.restaurantBillInfo.restaurantName),
       address: cleanText(input.restaurantBillInfo?.address, currentSettings.restaurantBillInfo.address),

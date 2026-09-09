@@ -2,6 +2,7 @@ declare const process: { exitCode?: number };
 
 import { AdminAuditApi } from '../backend/audit/controller';
 import type { AuthenticatedUser } from '../backend/auth/policies';
+import { updatePosOperationalSettings } from '../backend/config/posSettings';
 import { recordSplitPayment } from '../backend/billing/service';
 import { resetOrderPrinterAdapter } from '../backend/hardware/orderPrinter';
 import { createInventoryMasterItem, listInventoryWithBalances, saveMenuInventoryRecipe } from '../backend/inventory/service';
@@ -38,6 +39,7 @@ async function assertRejects(action: () => Promise<unknown>, expectedMessage: st
 }
 
 async function runEndToEndPosFlow(): Promise<void> {
+  updatePosOperationalSettings({ menuInventoryLinkEnabled: true });
   const branchId = 'main';
   const manager: AuthenticatedUser = { id: 'mgr-e2e', branchId, role: 'manager', status: 'active' };
   const waiter: AuthenticatedUser = { id: 'waiter-e2e', branchId, role: 'waitstaff', status: 'active' };
@@ -221,6 +223,13 @@ async function runEndToEndPosFlow(): Promise<void> {
   const auditSearch = await AdminAuditApi.search(manager, { query: order.id, limit: 20 });
   assert(auditSearch.events.some((event) => event.action === 'order_edited'), 'Audit API should expose order edit audit records.');
   assert(auditViewer.rows.length >= 1, 'Audit frontend should render query results.');
+
+  updatePosOperationalSettings({ menuInventoryLinkEnabled: false });
+  const independentItem = await adminCreateItem({ branchId, categoryId: category.id, name: 'Independent Menu E2E', price: 4, prepStation: 'kitchen', isAvailable: true });
+  assert(!independentItem.inventoryItemId, 'Disabled menu-inventory linking should not create an inventory item.');
+  const independentOrder = await createOrderDraft(waiter, { branchId, serviceMode: 'takeout', takeoutName: 'Independent Guest', items: [{ menuItemId: independentItem.id, quantity: 1 }] });
+  const independentPreparingOrder = await transitionOrderStatus(waiter, independentOrder.id, independentOrder.version, 'in_preparation');
+  assertEqual(independentPreparingOrder.status, 'in_preparation', 'Independent menu items should enter preparation without an inventory recipe mapping.');
 }
 
 runEndToEndPosFlow()

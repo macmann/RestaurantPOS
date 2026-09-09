@@ -1,5 +1,6 @@
 declare const process: { exitCode?: number };
 
+import { updatePosOperationalSettings } from '../backend/config/posSettings';
 import { createInventoryMasterItem, listInventoryWithBalances, saveMenuInventoryRecipe } from '../backend/inventory/service';
 import { adminCreateCategory, adminCreateItem } from '../backend/menu/service';
 import { createTable } from '../backend/tables/service';
@@ -16,6 +17,7 @@ async function settle<T>(promise: Promise<T>): Promise<{ ok: true; value: T } | 
 }
 
 async function runConcurrencyCoverage(): Promise<void> {
+  updatePosOperationalSettings({ menuInventoryLinkEnabled: true });
   const branchId = 'concurrency-main';
   const password = 'correct-horse-concurrency';
   await Promise.all([

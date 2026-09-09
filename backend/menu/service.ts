@@ -1,6 +1,6 @@
 import { getCurrentBranchId } from '../config/branch';
 import { createInventoryMasterItem } from '../inventory/service';
-import { isConfiguredPrepStation, normalizePrepStationId } from '../config/posSettings';
+import { isConfiguredPrepStation, isMenuInventoryLinkEnabled, normalizePrepStationId } from '../config/posSettings';
 import {
   createCategory,
   createItem,
@@ -170,7 +170,7 @@ export async function adminCreateItem(input: ItemInput): Promise<MenuItemRecord>
     updatedAt: now,
   });
 
-  if (menuItem.inventoryItemId) return menuItem;
+  if (menuItem.inventoryItemId || !isMenuInventoryLinkEnabled()) return menuItem;
 
   const inventoryItemId = await createLinkedInventoryItemForMenuItem(menuItem, input);
   const linkedMenuItem = await updateItem(menuItem.id, { inventoryItemId, updatedAt: nowIso() });
