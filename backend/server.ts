@@ -10,6 +10,7 @@ import { Actions, RolePermissions } from './auth/permissions';
 import { getCurrentBranchId, getRuntimeSettings } from './config/branch';
 import { getPosOperationalSettings, initializePosOperationalSettings, savePosOperationalSettings } from './config/posSettings';
 import { getOrderPrinterAdapter } from './hardware/orderPrinter';
+import { getPrinterStatuses } from './hardware/printerStatus';
 import { listUsers } from './users/repository';
 import { ensureDefaultSuperadmin } from './users/bootstrap';
 import { activateUser, createStaffProfile, deactivateUser, updateStaffProfile } from './users/service';
@@ -357,6 +358,7 @@ function buildUsersRouter(): Router {
 function buildSettingsRouter(): Router {
   const router = express.Router();
   router.get('/', send(() => ({ branch: getRuntimeSettings().branch, inventoryDeductionPolicy: InventoryAdminApi.getDeductionPolicy(), pos: getPosOperationalSettings() })));
+  router.get('/printers/status', authorize(Actions.ManageSystem), send(() => getPrinterStatuses()));
   router.put('/', authorize(Actions.ManageSystem), send(async (req) => ({ branch: getRuntimeSettings().branch, inventoryDeductionPolicy: InventoryAdminApi.getDeductionPolicy(), pos: await savePosOperationalSettings((bodyObject(req).pos as any) ?? (bodyObject(req) as any)) })));
   router.get('/branch', send(() => getRuntimeSettings().branch));
   router.get('/inventory/deduction-policy', authorize(Actions.AdjustStock), send(() => InventoryAdminApi.getDeductionPolicy()));

@@ -85,6 +85,14 @@ async function runApiIntegration(): Promise<void> {
     assert(superadminSettingsUpdate.body.data.pos.printers['salad-bar'].printerId === 'salad-bar-printer', 'New prep station should create a matching station printer configuration.');
     assert(superadminSettingsUpdate.body.data.pos.printerAssignments['salad-bar'] === 'receipt', 'Prep printing should be assignable to an independent configured printer.');
 
+    const printerStatusResponse = await apiRequest<{ data: Record<string, { printerId: string; status: string; connection: string }> }>(server.baseUrl, '/api/settings/printers/status', { token: superadmin.token });
+    assert(printerStatusResponse.status === 200, `Superadmin should load actual printer statuses, got ${printerStatusResponse.status}.`);
+    assert(printerStatusResponse.body.data.receipt.printerId === 'receipt-counter', 'Printer status should identify the currently configured receipt device.');
+    assert(printerStatusResponse.body.data.receipt.status === 'simulator', 'Simulator printers must be identified as simulators rather than incorrectly shown online.');
+    assert(printerStatusResponse.body.data.receipt.connection === 'Simulator', 'Printer status should expose the actual configured connection.');
+    const unauthorizedPrinterStatus = await apiRequest(server.baseUrl, '/api/settings/printers/status', { token: manager.token });
+    assert(unauthorizedPrinterStatus.status === 403, `Printer connection details should remain superadmin-only, got ${unauthorizedPrinterStatus.status}.`);
+
     const superadminMenuItem = await apiRequest<{ data: { id: string; name: string } }>(server.baseUrl, '/api/menu/items', {
       method: 'POST',
       token: superadmin.token,
