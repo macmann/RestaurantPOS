@@ -6,7 +6,7 @@ import { loadOrderProgressForWaiter } from '../waiter/order-progress';
 import { orderItemPreparationStatus } from '../orders/order-screen';
 import { loadAdminMenuDashboard } from '../admin/menu-management';
 import { loadAdminAuditViewer } from '../admin/audit-viewer';
-import { ApiClientError, apiClient } from '../api/client';
+import { ApiClientError, apiClient, type PrinterStatus } from '../api/client';
 import { loadCashierTableFloor } from '../cashier/table-floor';
 import { closePaidTableFromBillingScreen } from '../billing/billing-screen';
 import type { OrderRecord, OrderStatus } from '../../backend/orders/repository';
@@ -763,15 +763,19 @@ function normalizeOperationalSettings(response: unknown): SuperadminOperationalS
   };
 }
 
-function printerStatusCard(label: string, printer: SuperadminPrinterSettings): string {
-  const status = printer.enabled ? 'Online' : 'Paused';
-  const statusClass = printer.enabled ? 'ready' : 'warning';
+function printerStatusCard(label: string, printer: SuperadminPrinterSettings, liveStatus?: PrinterStatus): string {
+  const statusLabels: Record<PrinterStatus['status'], string> = { online: 'Online', offline: 'Offline', disabled: 'Disabled', simulator: 'Simulator', not_configured: 'Not configured' };
+  const status = liveStatus ? statusLabels[liveStatus.status] : 'Status unavailable';
+  const statusClass = liveStatus?.status === 'online' ? 'ready' : liveStatus?.status === 'offline' || liveStatus?.status === 'not_configured' ? 'critical' : 'warning';
+  const connection = liveStatus?.connection ?? (printer.connectionType === 'network' ? `${printer.networkAddress || 'No address'}:${printer.networkPort}` : printer.connectionType === 'windows' ? printer.windowsPrinterName || 'No queue name' : 'Simulator');
   return `
     <div class="superadmin-printer-card">
       <span class="badge ${statusClass}">${status}</span>
-      <strong>${label}</strong>
-      <span>${printer.displayName}</span>
-      <small>${printer.printerId}</small>
+      <strong>${escapeHtml(label)}</strong>
+      <span>${escapeHtml(printer.displayName)}</span>
+      <small>Device ID: ${escapeHtml(printer.printerId)}</small>
+      <small>Connection: ${escapeHtml(connection)}</small>
+      <small>${escapeHtml(liveStatus?.detail ?? 'The live printer check could not be loaded.')}</small>
     </div>
   `;
 }
@@ -873,7 +877,11 @@ async function renderStaffSettings(isSuperadminPanel = false): Promise<HTMLEleme
   if (isSuperadminPanel) section.classList.add('superadmin-page');
 
   const panel = el('section', isSuperadminPanel ? 'admin-panel superadmin-panel' : 'admin-panel');
-  const [users, settingsResponse] = await Promise.all([apiClient.listUsers(), apiClient.getSettings()]);
+  const [users, settingsResponse, printerStatuses] = await Promise.all([
+    apiClient.listUsers(),
+    apiClient.getSettings(),
+    isSuperadminPanel ? apiClient.getPrinterStatuses().catch(() => ({} as Record<string, PrinterStatus>)) : Promise.resolve({} as Record<string, PrinterStatus>),
+  ]);
   const settings = normalizeOperationalSettings(settingsResponse);
   const typography = getTypographyForLocale(settings.localization.defaultLocale);
   setActiveLocale(settings.localization.defaultLocale);
@@ -916,8 +924,8 @@ async function renderStaffSettings(isSuperadminPanel = false): Promise<HTMLEleme
           <div><strong>${roleCount}</strong><span>Roles in use</span></div>
         </div>
         <div class="superadmin-printers">
-          ${printerStatusCard('Receipts', settings.printers[settings.printerAssignments.receipt])}
-          ${settings.prepStations.map((station) => printerStatusCard(station.displayName, settings.printers[settings.printerAssignments[station.id]])).join('')}
+          ${printerStatusCard('Receipts', settings.printers[settings.printerAssignments.receipt], printerStatuses[settings.printerAssignments.receipt])}
+          ${settings.prepStations.map((station) => printerStatusCard(station.displayName, settings.printers[settings.printerAssignments[station.id]], printerStatuses[settings.printerAssignments[station.id]])).join('')}
         </div>
       </article>
       <article class="card admin-card settings-card superadmin-station-card">

@@ -45,6 +45,15 @@ export interface ApiErrorBody {
 export type ApiNetworkStatus = 'online' | 'degraded' | 'offline';
 export type ApiNetworkListener = (status: ApiNetworkStatus, detail?: { message?: string; attempt?: number }) => void;
 
+export interface PrinterStatus {
+  printerKey: string;
+  printerId: string;
+  status: 'online' | 'offline' | 'disabled' | 'simulator' | 'not_configured';
+  connection: string;
+  checkedAt: string;
+  detail: string;
+}
+
 export class ApiClientError extends Error {
   constructor(
     message: string,
@@ -267,6 +276,10 @@ async function requestInProcess<T>(path: string, method: string, body: unknown, 
     const branch = await backendModule<any>('../../backend/config/branch.js');
     const { InventoryAdminApi } = await backendModule<any>('../../backend/inventory/controller.js');
     const posSettings = await backendModule<any>('../../backend/config/posSettings.js');
+    if (parts[2] === 'printers' && parts[3] === 'status' && method === 'GET') {
+      const printerStatus = await backendModule<any>('../../backend/hardware/printerStatus.js');
+      return printerStatus.getPrinterStatuses() as Promise<T>;
+    }
     if (method === 'PUT') return { branch: branch.getRuntimeSettings().branch, inventoryDeductionPolicy: await InventoryAdminApi.getDeductionPolicy(), pos: posSettings.updatePosOperationalSettings((body as any).pos ?? body) } as T;
     return { branch: branch.getRuntimeSettings().branch, inventoryDeductionPolicy: await InventoryAdminApi.getDeductionPolicy(), pos: posSettings.getPosOperationalSettings() } as T;
   }
@@ -595,6 +608,10 @@ export class RestaurantApiClient {
 
   getSettings() {
     return this.request('/api/settings');
+  }
+
+  getPrinterStatuses(): Promise<Record<string, PrinterStatus>> {
+    return this.request('/api/settings/printers/status');
   }
 
   updateSettings(input: unknown) {
