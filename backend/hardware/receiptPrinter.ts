@@ -4,6 +4,7 @@ import { sendToNetworkPrinter, sendToWindowsPrinter } from './printerTransport';
 
 export interface ReceiptPrintRequest {
   payload: ReceiptPayload;
+  splitLabel?: SplitLabel;
   copies?: number;
   printerId?: string;
 }
@@ -27,36 +28,49 @@ function money(value: number): string {
   return value.toFixed(2);
 }
 
-function renderSplit(payload: ReceiptPayload, split: ReceiptPayload['splits'][number]): string[] {
-  const lines = [`${payload.labels.split} ${split.label as SplitLabel}`];
+const RECEIPT_WIDTH = 42;
+
+function receiptRow(label: string, value: string): string {
+  const available = Math.max(1, RECEIPT_WIDTH - value.length - 1);
+  return `${label.slice(0, available).padEnd(available)} ${value}`;
+}
+
+function renderSplit(payload: ReceiptPayload, split: ReceiptPayload['splits'][number], showSplitLabel: boolean): string[] {
+  const lines = showSplitLabel ? [`${payload.labels.split} ${split.label as SplitLabel}`, '-'.repeat(RECEIPT_WIDTH)] : [];
   for (const item of split.lines) {
-    lines.push(`${item.quantity} x ${item.name} @ ${money(item.unitPrice)} = ${money(item.lineTotal)}`);
+    lines.push(`${item.quantity} x ${item.name}`);
+    lines.push(receiptRow(`  @ ${money(item.unitPrice)}`, money(item.lineTotal)));
   }
-  lines.push(`${payload.labels.subtotal}: ${money(split.calculationBreakdown.subtotal)}`);
-  lines.push(`${payload.labels.discount}: ${money(split.calculationBreakdown.discounts.total)}`);
-  lines.push(`${payload.labels.tax}: ${money(split.calculationBreakdown.taxTotal)}`);
-  lines.push(`${payload.labels.total_due}: ${money(split.calculationBreakdown.totalDue)}`);
+  lines.push('-'.repeat(RECEIPT_WIDTH));
+  lines.push(receiptRow(payload.labels.subtotal, money(split.calculationBreakdown.subtotal)));
+  lines.push(receiptRow(payload.labels.discount, money(split.calculationBreakdown.discounts.total)));
+  lines.push(receiptRow(payload.labels.tax, money(split.calculationBreakdown.taxTotal)));
+  lines.push(receiptRow(payload.labels.total_due, money(split.calculationBreakdown.totalDue)));
   for (const payment of split.payments) {
     const label = payload.paymentLabels[payment.method] ?? payment.method;
-    lines.push(`${label}: ${money(payment.amount)}`);
+    lines.push(receiptRow(label, money(payment.amount)));
   }
   return lines;
 }
 
-export function renderReceiptPayload(payload: ReceiptPayload): string {
+export function renderReceiptPayload(payload: ReceiptPayload, requestedSplit?: SplitLabel): string {
+  const activeSplits = payload.splits.filter((split) => split.lines.length > 0 || split.calculationBreakdown.totalDue > 0);
+  const splits = requestedSplit ? activeSplits.filter((split) => split.label === requestedSplit) : activeSplits;
+  if (requestedSplit && !splits.length) throw new Error(`Split ${requestedSplit} has no bill items to print.`);
+  if (!requestedSplit && activeSplits.length > 1) throw new Error('Choose a split before printing a split bill.');
+  const splitTotalPaid = splits.flatMap((split) => split.payments).reduce((sum, payment) => sum + payment.amount, 0);
+  const splitTotalDue = splits.reduce((sum, split) => sum + split.calculationBreakdown.totalDue, 0);
   return [
     payload.restaurant.restaurantName,
     payload.restaurant.address,
     payload.restaurant.contact,
     payload.restaurant.taxId ? `Tax ID: ${payload.restaurant.taxId}` : '',
-    `${payload.labels.receipt} ${payload.receiptId}`,
-    `${payload.labels.table_session}: ${payload.tableSessionId}`,
-    `Locale: ${payload.locale}`,
-    `Font: ${payload.printFontFamily}`,
-    payload.unicodeSample,
-    ...payload.splits.flatMap((split) => renderSplit(payload, split)),
-    `${payload.labels.total_paid}: ${money(payload.totalPaid)}`,
-    `${payload.labels.balance_due}: ${money(payload.balanceDue)}`,
+    payload.labels.receipt,
+    '='.repeat(RECEIPT_WIDTH),
+    ...splits.flatMap((split) => renderSplit(payload, split, activeSplits.length > 1)),
+    '='.repeat(RECEIPT_WIDTH),
+    receiptRow(payload.labels.total_paid, money(splitTotalPaid)),
+    receiptRow(payload.labels.balance_due, money(Math.max(splitTotalDue - splitTotalPaid, 0))),
     payload.restaurant.receiptFooter ?? '',
   ].filter(Boolean).join('\n');
 }
@@ -74,7 +88,7 @@ export class SimulatorReceiptPrinterAdapter implements ReceiptPrinterAdapter {
       locale: request.payload.locale,
       fontFamily: request.payload.printFontFamily,
       copyCount: request.copies ?? 1,
-      renderedText: renderReceiptPayload(request.payload),
+      renderedText: renderReceiptPayload(request.payload, request.splitLabel),
     };
     this.jobs.push(structuredClone(result));
     return structuredClone(result);
@@ -102,7 +116,7 @@ export class ConfiguredReceiptPrinterAdapter extends SimulatorReceiptPrinterAdap
       await sendToNetworkPrinter(printer.networkAddress, printer.networkPort, result.renderedText, result.copyCount);
     } else if (printer?.connectionType === 'windows') {
       if (!printer.windowsPrinterName) throw new Error(`Windows printer name is required for ${printer.displayName}.`);
-      await sendToWindowsPrinter(printer.windowsPrinterName, result.renderedText, result.copyCount);
+      await sendToWindowsPrinter(printer.windowsPrinterName, result.renderedText, result.copyCount, result.fontFamily);
     } else {
       console.warn('[printer] simulator receipt completed without physical output', { printJobId: result.printJobId, printerId: result.printerId });
     }

@@ -306,7 +306,7 @@ function buildBillingRouter(): Router {
   router.get('/bills/:tableSessionId/receipt', authorize(Actions.ViewBill), send((req) => getPrintedReceiptPayload(stringParam(req, 'tableSessionId'), optionalString(queryObject(req).locale))));
   router.post('/bills/:tableSessionId/print', authorize(Actions.CloseBill), send((req) => {
     const body = bodyObject(req);
-    return printBillReceipt({ tableSessionId: stringParam(req, 'tableSessionId'), actorUserId: req.user!.id, locale: optionalString(body.locale), copies: body.copies === undefined ? undefined : requiredNumber(body.copies, 'copies'), printerId: optionalString(body.printerId) });
+    return printBillReceipt({ tableSessionId: stringParam(req, 'tableSessionId'), actorUserId: req.user!.id, locale: optionalString(body.locale), copies: body.copies === undefined ? undefined : requiredNumber(body.copies, 'copies'), printerId: optionalString(body.printerId), splitLabel: optionalString(body.splitLabel) as any });
   }));
   router.post('/bills/:tableSessionId/payments', authorize(Actions.CloseBill), send((req) => recordSplitPayment({ ...bodyObject(req), tableSessionId: stringParam(req, 'tableSessionId'), actorUserId: req.user!.id } as any)));
   router.post('/bills/:tableSessionId/debt/settlements', authorize(Actions.MarkDebt), send((req) => settleDebt({ ...bodyObject(req), tableSessionId: stringParam(req, 'tableSessionId'), actorUserId: req.user!.id } as any)));

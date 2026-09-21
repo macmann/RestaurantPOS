@@ -622,6 +622,7 @@ export async function printBillReceipt(input: {
   locale?: string;
   copies?: number;
   printerId?: string;
+  splitLabel?: SplitLabel;
 }): Promise<ReceiptPrintResult> {
   const bill = await getBillByTableSessionId(input.tableSessionId);
   if (!bill) throw new Error('Bill not found for table session.');
@@ -641,7 +642,7 @@ export async function printBillReceipt(input: {
   });
   let result: ReceiptPrintResult;
   try {
-    result = await getReceiptPrinterAdapter().printReceipt({ payload, copies, printerId });
+    result = await getReceiptPrinterAdapter().printReceipt({ payload, copies, printerId, splitLabel: input.splitLabel });
   } catch (error) {
     console.error('[printer] receipt request failed', {
       tableSessionId: input.tableSessionId,
@@ -657,7 +658,7 @@ export async function printBillReceipt(input: {
     id: createId('audit'),
     branchId: bill.branchId,
     tableSessionId: bill.tableSessionId,
-    splitLabel: 'A',
+    splitLabel: input.splitLabel ?? 'A',
     action: 'receipt_printed',
     actorUserId: input.actorUserId,
     at: result.printedAt,
