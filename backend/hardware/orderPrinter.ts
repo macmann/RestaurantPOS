@@ -1,7 +1,7 @@
 import type { OrderRecord } from '../orders/repository';
 import { getPosOperationalSettings, listPrepStations } from '../config/posSettings';
 import type { Station } from '../kds/repository';
-import { sendToNetworkPrinter, sendToWindowsPrinter } from './printerTransport';
+import { MYANMAR_PRINT_FONT_FAMILY, sendToNetworkPrinter, sendToWindowsPrinter } from './printerTransport';
 
 export interface OrderPrintResult {
   printJobId: string;
@@ -45,10 +45,10 @@ export class SimulatorOrderPrinterAdapter {
     ].join('\n');
     if (printer.connectionType === 'network') {
       if (!printer.networkAddress) throw new Error(`Network address is required for ${printer.displayName}.`);
-      await sendToNetworkPrinter(printer.networkAddress, printer.networkPort, renderedText, printer.copies, "'Noto Sans Myanmar', 'Padauk', 'Myanmar Text', 'Pyidaungsu', sans-serif");
+      await sendToNetworkPrinter(printer.networkAddress, printer.networkPort, renderedText, printer.copies, MYANMAR_PRINT_FONT_FAMILY);
     } else if (printer.connectionType === 'windows') {
       if (!printer.windowsPrinterName) throw new Error(`Windows printer name is required for ${printer.displayName}.`);
-      await sendToWindowsPrinter(printer.windowsPrinterName, renderedText, printer.copies);
+      await sendToWindowsPrinter(printer.windowsPrinterName, renderedText, printer.copies, MYANMAR_PRINT_FONT_FAMILY);
     }
     const result = { printJobId: `order_print_${this.jobs.length + 1}`, printerId: printer.printerId, station, printedAt, renderedText, copyCount: printer.copies };
     this.jobs.push(structuredClone(result));
