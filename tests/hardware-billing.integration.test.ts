@@ -5,7 +5,7 @@ import { generateBillFromSessionItems, printBillReceipt, recordSplitPayment, ref
 import { resetCashDrawerAdapter } from '../backend/hardware/cashDrawer';
 import { renderReceiptPayload, resetReceiptPrinterAdapter } from '../backend/hardware/receiptPrinter';
 import { resetOrderPrinterAdapter } from '../backend/hardware/orderPrinter';
-import { buildNetworkPrinterTicket, containsMyanmarText, NETWORK_RASTER_FONT_HEIGHT_DOTS } from '../backend/hardware/printerTransport';
+import { buildNetworkPrinterTicket, containsMyanmarText, MYANMAR_PRINT_FONT_FAMILY, NETWORK_RASTER_FONT_HEIGHT_DOTS, printFontFamilyForText } from '../backend/hardware/printerTransport';
 import type { OrderRecord } from '../backend/orders/repository';
 import { resetPaymentTerminalAdapter } from '../backend/integrations/paymentTerminal';
 import { updatePosOperationalSettings } from '../backend/config/posSettings';
@@ -43,6 +43,8 @@ async function runHardwareBillingIntegration(): Promise<void> {
   assert(networkTicket.subarray(2).equals(expectedCutSequence), 'Network print jobs should feed five lines after the content before cutting.');
   assert(containsMyanmarText('ရွှေယမင်း စားသောက်ဆိုင်'), 'Myanmar receipt text should be detected so it is rasterized instead of sent through an unsupported ESC/POS code page.');
   assert(!containsMyanmarText('Shwe Ya Min Restaurant'), 'ASCII receipts should continue to use the compact native ESC/POS text path.');
+  assertEqual(printFontFamilyForText('1 x မုန့်ဟင်းခါး', 'Arial'), MYANMAR_PRINT_FONT_FAMILY, 'Every print job containing Myanmar text should use a Myanmar-capable font, regardless of the UI locale.');
+  assertEqual(printFontFamilyForText('1 x Mohinga', 'Arial'), 'Arial', 'Print jobs without Myanmar text should retain their requested font.');
   assertEqual(NETWORK_RASTER_FONT_HEIGHT_DOTS, 25, 'Rasterized Unicode receipts should render nine-point text at the physical 203-DPI print-head size rather than the 96-DPI bitmap default.');
 
   const terminal = resetPaymentTerminalAdapter();
@@ -64,7 +66,7 @@ async function runHardwareBillingIntegration(): Promise<void> {
   const ticketOrder: OrderRecord = {
     id: 'ord-hardware-ticket', branchId: 'branch-hw', serviceMode: 'dine_in', tableId: 'table-7', tableName: 'Table 7', tableSessionId: 'session-7',
     status: 'pending', subtotal: 12, version: 1, createdBy: 'waiter-1', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), changeLog: [],
-    items: [{ id: 'line-1', menuItemId: 'menu-1', name: 'Mohinga', quantity: 1, unitPrice: 12, lineTotal: 12, station: 'kitchen' }],
+    items: [{ id: 'line-1', menuItemId: 'menu-1', name: 'မုန့်ဟင်းခါး', quantity: 1, unitPrice: 12, lineTotal: 12, station: 'kitchen', note: 'အကြော်ထည့်ပါ' }],
   };
   const tickets = await orderPrinter.printOrderForConfiguredStations(ticketOrder, true);
   assertEqual(tickets.length, 1, 'Automatic order printing should route items only to their configured station');
@@ -73,6 +75,7 @@ async function runHardwareBillingIntegration(): Promise<void> {
   assert(tickets[0].renderedText.includes('Station: Kitchen'), 'Order ticket should identify the prep station.');
   assert(tickets[0].renderedText.includes('*** TABLE: Table 7 ***'), 'Order ticket should prominently identify the table to serve.');
   assert(tickets[0].renderedText.includes('Date & time:'), 'Order ticket should include its print date and time.');
+  assert(tickets[0].renderedText.includes('မုန့်ဟင်းခါး') && tickets[0].renderedText.includes('အကြော်ထည့်ပါ'), 'Kitchen and bar tickets should preserve Myanmar item names and notes.');
   assert(!tickets[0].renderedText.includes(ticketOrder.id), 'Order ticket should not expose an internal order number.');
   assert(!tickets[0].renderedText.includes(ticketOrder.tableSessionId!), 'Order ticket should not expose an internal table session ID.');
 

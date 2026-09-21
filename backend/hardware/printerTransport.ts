@@ -14,9 +14,19 @@ const CUT_FEED_LINES = 5;
 export const NETWORK_RASTER_FONT_HEIGHT_DOTS = 25;
 
 const MYANMAR_CHARACTER_PATTERN = /[\u1000-\u109f\uaa60-\uaa7f\ua9e0-\ua9ff]/u;
+export const MYANMAR_PRINT_FONT_FAMILY = "'Noto Sans Myanmar', 'Myanmar Text', 'Padauk', 'Pyidaungsu', sans-serif";
 
 export function containsMyanmarText(text: string): boolean {
   return MYANMAR_CHARACTER_PATTERN.test(text);
+}
+
+/**
+ * Item and note text can be Myanmar even when the POS/receipt locale is English.
+ * Always select a shaping-capable font for those jobs rather than relying on the
+ * locale's (often Latin-only) font preference.
+ */
+export function printFontFamilyForText(text: string, requestedFontFamily = 'Arial'): string {
+  return containsMyanmarText(text) ? MYANMAR_PRINT_FONT_FAMILY : requestedFontFamily;
 }
 
 /** Build an ESC/POS job with enough trailing paper to clear the cutter. */
@@ -74,15 +84,15 @@ function buildWindowsRasterPrinterTicket(text: string, fontFamily: string): Prom
     let output = ''; let errorOutput = '';
     child.stdout.setEncoding('ascii'); child.stdout.on('data', (chunk: string) => { output += chunk; });
     child.stderr.setEncoding('utf8'); child.stderr.on('data', (chunk: string) => { errorOutput += chunk; });
-    child.once('error', (error) => reject(new Error(`Could not start Myanmar receipt rendering: ${error.message}`)));
-    child.once('close', (code) => code === 0 ? resolve(Buffer.from(output.trim(), 'base64')) : reject(new Error(`Could not render Myanmar receipt${errorOutput.trim() ? `: ${errorOutput.trim()}` : '.'}`)));
+    child.once('error', (error) => reject(new Error(`Could not start Myanmar print rendering: ${error.message}`)));
+    child.once('close', (code) => code === 0 ? resolve(Buffer.from(output.trim(), 'base64')) : reject(new Error(`Could not render Myanmar print job${errorOutput.trim() ? `: ${errorOutput.trim()}` : '.'}`)));
   });
 }
 
-export async function sendToNetworkPrinter(host: string, port: number, text: string, copies: number, fontFamily = "'Noto Sans Myanmar', 'Padauk', 'Myanmar Text', 'Pyidaungsu', sans-serif"): Promise<void> {
+export async function sendToNetworkPrinter(host: string, port: number, text: string, copies: number, fontFamily = 'Arial'): Promise<void> {
   const startedAt = Date.now();
   logPrinterEvent('network job starting', { host, port, copies, bytes: Buffer.byteLength(text, 'utf8') });
-  const ticket = containsMyanmarText(text) ? await buildWindowsRasterPrinterTicket(text, fontFamily) : buildNetworkPrinterTicket(text);
+  const ticket = containsMyanmarText(text) ? await buildWindowsRasterPrinterTicket(text, printFontFamilyForText(text, fontFamily)) : buildNetworkPrinterTicket(text);
   return new Promise((resolve, reject) => {
     const socket = createConnection({ host, port });
     let settled = false;
@@ -129,7 +139,7 @@ export function sendToWindowsPrinter(printerName: string, text: string, copies: 
     '$installed = New-Object Drawing.Text.InstalledFontCollection',
     '$available = @($installed.Families | ForEach-Object { $_.Name })',
     '$preferred = $requested | Where-Object { $available -contains $_ } | Select-Object -First 1',
-    'if (-not $preferred) { throw "None of the configured receipt fonts are installed. Install Noto Sans Myanmar, Myanmar Text, Padauk, or Pyidaungsu." }',
+    'if (-not $preferred) { throw "None of the configured print fonts are installed. Install Noto Sans Myanmar, Myanmar Text, Padauk, or Pyidaungsu." }',
     '$font = New-Object Drawing.Font($preferred, 9)',
     '$doc = New-Object Drawing.Printing.PrintDocument',
     '$doc.PrinterSettings.PrinterName = $env:POS_PRINTER_NAME',
@@ -142,7 +152,7 @@ export function sendToWindowsPrinter(printerName: string, text: string, copies: 
 
   return new Promise((resolve, reject) => {
     const child = spawn('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script], {
-      env: { ...process.env, POS_PRINTER_NAME: printerName, POS_PRINT_COPIES: String(copies), POS_PRINT_FONT: fontFamily, POS_PRINT_TEXT: Buffer.from(text, 'utf8').toString('base64') },
+      env: { ...process.env, POS_PRINTER_NAME: printerName, POS_PRINT_COPIES: String(copies), POS_PRINT_FONT: printFontFamilyForText(text, fontFamily), POS_PRINT_TEXT: Buffer.from(text, 'utf8').toString('base64') },
       stdio: ['ignore', 'ignore', 'pipe'],
       windowsHide: true,
     });
