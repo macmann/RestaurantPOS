@@ -212,6 +212,62 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, t
   return node;
 }
 
+type ToastTone = 'loading' | 'success' | 'error';
+
+function showActionToast(message: string, tone: ToastTone, existing?: HTMLElement): HTMLElement {
+  let region = document.querySelector<HTMLElement>('.toast-region');
+  if (!region) {
+    region = el('div', 'toast-region');
+    region.setAttribute('aria-live', 'polite');
+    region.setAttribute('aria-label', 'Action notifications');
+    document.body.append(region);
+  }
+
+  const toast = existing ?? el('div', 'action-toast');
+  toast.className = `action-toast action-toast--${tone}`;
+  toast.setAttribute('role', tone === 'error' ? 'alert' : 'status');
+  toast.innerHTML = `${tone === 'loading' ? '<span class="loading-spinner" aria-hidden="true"></span>' : `<span class="action-toast__icon" aria-hidden="true">${tone === 'success' ? '&#10003;' : '!'}</span>`}<span>${escapeHtml(translateUiText(message))}</span>`;
+  if (!existing) region.append(toast);
+  window.clearTimeout(Number(toast.dataset.dismissTimer));
+  if (tone !== 'loading') {
+    const timer = window.setTimeout(() => toast.remove(), tone === 'error' ? 6000 : 3500);
+    toast.dataset.dismissTimer = String(timer);
+  }
+  return toast;
+}
+
+async function runButtonAction<T>(
+  button: HTMLButtonElement,
+  messages: { loading: string; success: string; error: string },
+  action: () => Promise<T>,
+): Promise<T> {
+  if (button.dataset.loading === 'true') throw new Error('This action is already being processed.');
+  const originalMarkup = button.innerHTML;
+  const wasDisabled = button.disabled;
+  button.dataset.loading = 'true';
+  button.disabled = true;
+  button.setAttribute('aria-busy', 'true');
+  button.classList.add('button-loading');
+  button.innerHTML = `<span class="loading-spinner" aria-hidden="true"></span><span>${escapeHtml(translateUiText(messages.loading))}</span>`;
+  const toast = showActionToast(messages.loading, 'loading');
+
+  try {
+    const result = await action();
+    showActionToast(messages.success, 'success', toast);
+    return result;
+  } catch (caught) {
+    const detail = caught instanceof Error ? caught.message : messages.error;
+    showActionToast(detail || messages.error, 'error', toast);
+    throw caught;
+  } finally {
+    button.dataset.loading = 'false';
+    button.disabled = wasDisabled;
+    button.removeAttribute('aria-busy');
+    button.classList.remove('button-loading');
+    button.innerHTML = originalMarkup;
+  }
+}
+
 function brandLogo(extraClass = ''): string {
   const className = `brand-logo${extraClass ? ` ${extraClass}` : ''}`;
   return `
@@ -2428,7 +2484,16 @@ function renderPrintPreview(tableSessionId: string, receipt: ReceiptPayload, spl
   const panel = el('section', 'pos-panel print-preview-panel');
   panel.innerHTML = `<div class="pos-panel-heading"><h3>Print preview${activeSplits.length > 1 ? ` · Split ${splitLabel}` : ''}</h3><span>Confirm before printing</span></div><div class="receipt-preview-paper"><strong>${receipt.restaurant.restaurantName}</strong><span>${new Date(receipt.generatedAt).toLocaleString()}</span>${receipt.tableName ? `<strong class="receipt-preview-paper__table">Table: ${escapeHtml(receipt.tableName)}</strong>` : ''}${breakdown.lines.map((line) => `<div class="receipt-preview-paper__line">${line.quantity}× ${line.name} — ${money(line.lineTotal)}</div>`).join('')}<hr><span>Subtotal ${money(breakdown.subtotal)}</span><span>Discount ${money(breakdown.discounts.total)}</span><span>Tax ${money(breakdown.taxTotal)}</span><strong>Total ${money(breakdown.totalDue)}</strong></div><div class="billing-actions"><button type="button" class="secondary cancel-print">Cancel</button><button type="button" class="billing-action confirm-print">Confirm print</button></div>`;
   panel.querySelector<HTMLButtonElement>('.cancel-print')?.addEventListener('click', () => { pendingPrintPreview = undefined; render(); });
-  panel.querySelector<HTMLButtonElement>('.confirm-print')?.addEventListener('click', async () => { await apiClient.printReceipt(tableSessionId, { copies: 1, splitLabel }, session!.user.id); pendingPrintPreview = undefined; render(); });
+  panel.querySelector<HTMLButtonElement>('.confirm-print')?.addEventListener('click', async (event) => {
+    const button = event.currentTarget as HTMLButtonElement;
+    try {
+      await runButtonAction(button, { loading: 'Sending receipt to printer…', success: 'Receipt sent to the printer.', error: 'Unable to print receipt.' }, async () => {
+        await apiClient.printReceipt(tableSessionId, { copies: 1, splitLabel }, session!.user.id);
+        pendingPrintPreview = undefined;
+        render();
+      });
+    } catch { /* The toast provides the actionable error without closing the preview. */ }
+  });
   return panel;
 }
 
@@ -2595,16 +2660,13 @@ async function renderOrderEntry(): Promise<HTMLElement> {
     orderSummary.querySelector<HTMLButtonElement>('.save-order')?.addEventListener('click', async (event) => {
       const submitButton = event.currentTarget as HTMLButtonElement;
       if (!window.confirm(`Submit ${activeOrder!.items.reduce((sum, item) => sum + item.quantity, 0)} item(s) for ${selected.table.name}?`)) return;
-      submitButton.disabled = true;
-      submitButton.textContent = 'Submitting order…';
       try {
-        await apiClient.printOrderTickets(session!.user.id, activeOrder!.id);
-        await apiClient.transitionOrderStatus(session!.user.id, activeOrder!.id, activeOrder!.version, 'in_preparation');
-        window.alert(`Order confirmed for ${selected.table.name}. The order entry is now clear.`);
-        await render();
+        await runButtonAction(submitButton, { loading: 'Saving order & printing…', success: `Order confirmed for ${selected.table.name}.`, error: 'Unable to print order tickets.' }, async () => {
+          await apiClient.printOrderTickets(session!.user.id, activeOrder!.id);
+          await apiClient.transitionOrderStatus(session!.user.id, activeOrder!.id, activeOrder!.version, 'in_preparation');
+          await render();
+        });
       } catch (caught) {
-        submitButton.disabled = false;
-        submitButton.textContent = 'Save order & print tickets';
         status.hidden = false;
         status.textContent = caught instanceof Error ? caught.message : 'Unable to print order tickets.';
       }
@@ -2717,10 +2779,12 @@ async function renderBillingDesk(): Promise<HTMLElement> {
       render();
     });
     draft.append(renderSplitItemAssignment(selectedSessionId, orders));
-    draft.querySelector<HTMLButtonElement>('.billing-action')?.addEventListener('click', async () => {
+    draft.querySelector<HTMLButtonElement>('.billing-action')?.addEventListener('click', async (event) => {
       try {
-        await createBillForSession(selectedSessionId);
-        render();
+        await runButtonAction(event.currentTarget as HTMLButtonElement, { loading: 'Preparing bill…', success: 'Bill is ready for payment.', error: 'Unable to prepare bill.' }, async () => {
+          await createBillForSession(selectedSessionId);
+          render();
+        });
       } catch (caught) {
         status.hidden = false;
         status.textContent = caught instanceof Error ? caught.message : 'Unable to prepare bill.';
@@ -2762,16 +2826,18 @@ async function renderBillingDesk(): Promise<HTMLElement> {
           ${receipt.splits.filter((row) => row.lines.length || row.calculationBreakdown.totalDue > 0).length > 1 ? `<button type="button" class="secondary print-split" ${cashierMode ? '' : 'disabled'}>Print Split ${split.label}</button>` : ''}
         </div>
       `;
-      card.querySelector<HTMLButtonElement>('.take-payment')?.addEventListener('click', async () => {
+      card.querySelector<HTMLButtonElement>('.take-payment')?.addEventListener('click', async (event) => {
         try {
-          await apiClient.recordSplitPayment({
-            tableSessionId: selectedSessionId,
-            splitLabel: split.label,
-            amount: Math.max(balance, 0),
-            method: 'cash',
-            createDebtForUnpaidBalance: false,
-          }, session!.user.id, `billing-paid-${selectedSessionId}-${split.label}-${Date.now()}`);
-          render();
+          await runButtonAction(event.currentTarget as HTMLButtonElement, { loading: 'Recording cash payment…', success: `Cash payment recorded for Split ${split.label}.`, error: 'Unable to record payment.' }, async () => {
+            await apiClient.recordSplitPayment({
+              tableSessionId: selectedSessionId,
+              splitLabel: split.label,
+              amount: Math.max(balance, 0),
+              method: 'cash',
+              createDebtForUnpaidBalance: false,
+            }, session!.user.id, `billing-paid-${selectedSessionId}-${split.label}-${Date.now()}`);
+            render();
+          });
         } catch (caught) {
           status.hidden = false;
           status.textContent = caught instanceof Error ? caught.message : 'Unable to record payment.';
@@ -2797,38 +2863,46 @@ async function renderBillingDesk(): Promise<HTMLElement> {
       <button type="button" class="billing-action close-table" ${receipt.balanceDue > 0 || !cashierMode ? 'disabled' : ''}>${cashierMode ? 'Close paid table' : 'Cashier closes table'}</button>
     `;
     billActions.querySelector<HTMLButtonElement>('.back-split')?.addEventListener('click', () => { window.history.back(); });
-    billActions.querySelector<HTMLButtonElement>('.update-splits')?.addEventListener('click', async () => {
+    billActions.querySelector<HTMLButtonElement>('.update-splits')?.addEventListener('click', async (event) => {
       try {
-        await apiClient.updateBillSplitItems({ tableSessionId: selectedSessionId, itemsBySplit: splitDraftSelections[selectedSessionId] ?? {} }, session!.user.id);
-        render();
+        await runButtonAction(event.currentTarget as HTMLButtonElement, { loading: 'Updating split items…', success: 'Split items updated.', error: 'Unable to update split items.' }, async () => {
+          await apiClient.updateBillSplitItems({ tableSessionId: selectedSessionId, itemsBySplit: splitDraftSelections[selectedSessionId] ?? {} }, session!.user.id);
+          render();
+        });
       } catch (caught) {
         status.hidden = false;
         status.textContent = caught instanceof Error ? caught.message : 'Unable to update split items.';
       }
     });
-    billActions.querySelector<HTMLButtonElement>('.merge-splits')?.addEventListener('click', async () => {
+    billActions.querySelector<HTMLButtonElement>('.merge-splits')?.addEventListener('click', async (event) => {
       try {
-        await apiClient.mergeBillSplits({ tableSessionId: selectedSessionId, targetSplitLabel: 'A' }, session!.user.id);
-        splitDraftSelections[selectedSessionId] = {};
-        render();
+        await runButtonAction(event.currentTarget as HTMLButtonElement, { loading: 'Merging split bills…', success: 'Split bills merged.', error: 'Unable to merge split bills.' }, async () => {
+          await apiClient.mergeBillSplits({ tableSessionId: selectedSessionId, targetSplitLabel: 'A' }, session!.user.id);
+          splitDraftSelections[selectedSessionId] = {};
+          render();
+        });
       } catch (caught) {
         status.hidden = false;
         status.textContent = caught instanceof Error ? caught.message : 'Unable to merge split bills.';
       }
     });
-    billActions.querySelector<HTMLButtonElement>('.tax-toggle')?.addEventListener('click', async () => {
+    billActions.querySelector<HTMLButtonElement>('.tax-toggle')?.addEventListener('click', async (event) => {
       try {
-        await apiClient.setBillTaxMode({ tableSessionId: selectedSessionId, taxMode: receipt!.calculationBreakdown.taxMode === 'taxable' ? 'tax_exempt' : 'taxable' }, session!.user.id);
-        render();
+        await runButtonAction(event.currentTarget as HTMLButtonElement, { loading: 'Updating tax mode…', success: 'Tax mode updated.', error: 'Unable to update tax mode.' }, async () => {
+          await apiClient.setBillTaxMode({ tableSessionId: selectedSessionId, taxMode: receipt!.calculationBreakdown.taxMode === 'taxable' ? 'tax_exempt' : 'taxable' }, session!.user.id);
+          render();
+        });
       } catch (caught) {
         status.hidden = false;
         status.textContent = caught instanceof Error ? caught.message : 'Unable to update tax mode.';
       }
     });
-    billActions.querySelector<HTMLButtonElement>('.print-receipt')?.addEventListener('click', async () => {
+    billActions.querySelector<HTMLButtonElement>('.print-receipt')?.addEventListener('click', async (event) => {
       try {
-        pendingPrintPreview = { tableSessionId: selectedSessionId, receipt: await apiClient.getReceipt(selectedSessionId) };
-        render();
+        await runButtonAction(event.currentTarget as HTMLButtonElement, { loading: 'Loading print preview…', success: 'Print preview is ready.', error: 'Unable to load receipt.' }, async () => {
+          pendingPrintPreview = { tableSessionId: selectedSessionId, receipt: await apiClient.getReceipt(selectedSessionId) };
+          render();
+        });
       } catch (caught) {
         status.hidden = false;
         status.textContent = caught instanceof Error ? caught.message : 'Unable to print receipt.';
@@ -2836,17 +2910,17 @@ async function renderBillingDesk(): Promise<HTMLElement> {
     });
     billActions.querySelector<HTMLButtonElement>('.close-table')?.addEventListener('click', async (event) => {
       const button = event.currentTarget as HTMLButtonElement;
-      button.disabled = true;
       status.hidden = false;
       status.textContent = 'Closing paid table…';
       try {
-        await advanceSessionOrdersForClose(selectedSessionId);
-        await closePaidTableFromBillingScreen({ user: session!.user, tableSessionId: selectedSessionId, branchId: session!.user.branchId });
-        selectedTableId = undefined;
-        status.textContent = 'Paid table closed and returned to available.';
-        render();
+        await runButtonAction(button, { loading: 'Closing paid table…', success: 'Paid table closed and returned to available.', error: 'Unable to close table.' }, async () => {
+          await advanceSessionOrdersForClose(selectedSessionId);
+          await closePaidTableFromBillingScreen({ user: session!.user, tableSessionId: selectedSessionId, branchId: session!.user.branchId });
+          selectedTableId = undefined;
+          status.textContent = 'Paid table closed and returned to available.';
+          render();
+        });
       } catch (caught) {
-        button.disabled = receipt!.balanceDue > 0 || !cashierMode;
         status.hidden = false;
         status.textContent = caught instanceof Error ? caught.message : 'Unable to close table.';
       }
