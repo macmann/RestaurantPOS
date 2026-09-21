@@ -5,6 +5,14 @@ function logPrinterEvent(event: string, details: Record<string, unknown>): void 
   console.info(`[printer] ${event}`, details);
 }
 
+const CUT_FEED_LINES = 5;
+
+/** Build an ESC/POS job with enough trailing paper to clear the cutter. */
+export function buildNetworkPrinterTicket(text: string): Buffer {
+  const trailingFeed = '\n'.repeat(CUT_FEED_LINES);
+  return Buffer.from(`\x1b@${text}${trailingFeed}\x1dV\x00`, 'utf8');
+}
+
 export function sendToNetworkPrinter(host: string, port: number, text: string, copies: number): Promise<void> {
   const startedAt = Date.now();
   logPrinterEvent('network job starting', { host, port, copies, bytes: Buffer.byteLength(text, 'utf8') });
@@ -19,7 +27,7 @@ export function sendToNetworkPrinter(host: string, port: number, text: string, c
     };
     socket.setTimeout(5000);
     socket.once('connect', () => {
-      const ticket = Buffer.from(`\x1b@${text}\n\n\n\x1dV\x00`, 'utf8');
+      const ticket = buildNetworkPrinterTicket(text);
       logPrinterEvent('network connection established', { host, port, copies, ticketBytes: ticket.length });
       for (let copy = 0; copy < copies; copy += 1) socket.write(ticket);
       socket.end();
