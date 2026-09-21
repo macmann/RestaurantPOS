@@ -119,13 +119,30 @@ Use this account to open the **Super admin panel**, create role-based staff acco
 
 ### Run the single application
 
-After building, start the combined API and frontend server:
+For a first local run—or after changing the backend or frontend—build and start the
+combined application with one command:
+
+```bash
+npm run start:local
+```
+
+Then open **http://localhost:8080/** in the browser. `0.0.0.0` in the terminal is
+the server's bind address, not the address to type into a browser. The same URL
+serves both the frontend and the API.
+
+If `npm run build` has already completed and `dist/frontend` exists, start the
+previously compiled application without rebuilding it:
 
 ```bash
 npm start
 ```
 
 The server binds to `HOST` and `PORT` (`0.0.0.0:8080` by default). API routes stay under `/api/*`, authentication routes stay under `/auth/*`, health checks are available at `/healthz` and `/api/health`, and browser routes fall back to `dist/frontend/index.html`.
+
+If the terminal reports `Frontend build not found`, stop the server and use
+`npm run start:local` (or run `npm run build` before `npm start`). On another
+device on the same LAN, replace `localhost` with the POS computer's LAN IP, for
+example `http://192.168.1.25:8080/`, and allow port 8080 through the host firewall.
 
 ### Render deployment
 
@@ -197,6 +214,7 @@ The runner reads `DATABASE_URL` when present; otherwise it reads `DB_CLIENT`, `D
 | `typecheck` | `tsc --noEmit` | Validates TypeScript without writing output. |
 | `build` | `npm run build:api && npm run build:frontend` | Compiles the backend/API and packaged browser app to `dist/`. |
 | `start` | `npm run start:api` | Starts the combined API/frontend Express application from `dist/backend/server.js`. |
+| `start:local` | `npm run build && npm start` | Builds both halves, then starts the combined app at `http://localhost:8080/` by default. |
 | `render:start` | `npm run db:migrate && npm run start:api` | Applies PostgreSQL migrations, then starts the combined app for Render. |
 | `test:e2e` | `npm run build:api -- --noEmit false && node dist/tests/e2e-pos-flow.test.js && ...` | Builds and executes the end-to-end POS flow tests. |
 

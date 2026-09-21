@@ -10,6 +10,7 @@
     "dev:api": "tsx backend/server.ts",
     "start:api": "node dist/backend/server.js",
     "start": "npm run start:api",
+    "start:local": "npm run build && npm start",
     "dev:frontend": "npm run build:frontend && node scripts/preview-frontend.mjs",
     "build:frontend": "node scripts/build-frontend.mjs",
     "preview:frontend": "node scripts/preview-frontend.mjs",
