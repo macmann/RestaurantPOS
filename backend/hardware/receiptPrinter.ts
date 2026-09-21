@@ -85,13 +85,28 @@ export class ConfiguredReceiptPrinterAdapter extends SimulatorReceiptPrinterAdap
   override async printReceipt(request: ReceiptPrintRequest): Promise<ReceiptPrintResult> {
     const result = await super.printReceipt(request);
     const printer = Object.values(getPosOperationalSettings().printers).find((candidate) => candidate.printerId === result.printerId);
+    if (!printer) {
+      console.error('[printer] receipt job rejected', { printJobId: result.printJobId, printerId: result.printerId, error: 'Printer ID is not configured' });
+      throw new Error(`Receipt printer "${result.printerId}" is not configured.`);
+    }
+    console.info('[printer] receipt job prepared', {
+      printJobId: result.printJobId,
+      printerId: result.printerId,
+      displayName: printer.displayName,
+      connectionType: printer.connectionType,
+      copies: result.copyCount,
+      locale: result.locale,
+    });
     if (printer?.connectionType === 'network') {
       if (!printer.networkAddress) throw new Error(`Network address is required for ${printer.displayName}.`);
       await sendToNetworkPrinter(printer.networkAddress, printer.networkPort, result.renderedText, result.copyCount);
     } else if (printer?.connectionType === 'windows') {
       if (!printer.windowsPrinterName) throw new Error(`Windows printer name is required for ${printer.displayName}.`);
       await sendToWindowsPrinter(printer.windowsPrinterName, result.renderedText, result.copyCount);
+    } else {
+      console.warn('[printer] simulator receipt completed without physical output', { printJobId: result.printJobId, printerId: result.printerId });
     }
+    console.info('[printer] receipt job completed', { printJobId: result.printJobId, printerId: result.printerId, connectionType: printer.connectionType, copies: result.copyCount });
     return result;
   }
 }

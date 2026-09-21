@@ -164,11 +164,14 @@ function normalizeTax(input: Partial<TaxSettings> | undefined, fallback: TaxSett
 function normalizePrinter(input: Partial<PrinterDeviceConfig> | undefined, fallback: PrinterDeviceConfig): PrinterDeviceConfig {
   const networkPort = Number(input?.networkPort ?? fallback.networkPort ?? 9100);
   const copies = Number(input?.copies ?? fallback.copies ?? 1);
+  const connectionType = input?.connectionType === 'network' || input?.connectionType === 'windows' || input?.connectionType === 'simulator'
+    ? input.connectionType
+    : (fallback.connectionType ?? 'simulator');
   return {
     enabled: typeof input?.enabled === 'boolean' ? input.enabled : fallback.enabled,
     printerId: cleanText(input?.printerId, fallback.printerId),
     displayName: cleanText(input?.displayName, fallback.displayName),
-    connectionType: input?.connectionType === 'network' || input?.connectionType === 'windows' ? input.connectionType : (fallback.connectionType ?? 'simulator'),
+    connectionType,
     windowsPrinterName: String(input?.windowsPrinterName ?? fallback.windowsPrinterName ?? '').trim() || undefined,
     networkAddress: String(input?.networkAddress ?? fallback.networkAddress ?? '').trim() || undefined,
     networkPort: Number.isInteger(networkPort) && networkPort > 0 && networkPort <= 65535 ? networkPort : 9100,

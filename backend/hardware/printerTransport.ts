@@ -1,26 +1,49 @@
 import { spawn } from 'node:child_process';
 import { createConnection } from 'node:net';
 
+function logPrinterEvent(event: string, details: Record<string, unknown>): void {
+  console.info(`[printer] ${event}`, details);
+}
+
 export function sendToNetworkPrinter(host: string, port: number, text: string, copies: number): Promise<void> {
+  const startedAt = Date.now();
+  logPrinterEvent('network job starting', { host, port, copies, bytes: Buffer.byteLength(text, 'utf8') });
   return new Promise((resolve, reject) => {
     const socket = createConnection({ host, port });
+    let settled = false;
+    const fail = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      console.error('[printer] network job failed', { host, port, copies, durationMs: Date.now() - startedAt, error: error.message });
+      reject(error);
+    };
     socket.setTimeout(5000);
     socket.once('connect', () => {
       const ticket = Buffer.from(`\x1b@${text}\n\n\n\x1dV\x00`, 'utf8');
+      logPrinterEvent('network connection established', { host, port, copies, ticketBytes: ticket.length });
       for (let copy = 0; copy < copies; copy += 1) socket.write(ticket);
       socket.end();
     });
-    socket.once('timeout', () => socket.destroy(new Error(`Printer ${host}:${port} timed out.`)));
-    socket.once('error', reject);
-    socket.once('close', (hadError) => { if (!hadError) resolve(); });
+    socket.once('timeout', () => socket.destroy(new Error(`Printer ${host}:${port} timed out after 5000ms.`)));
+    socket.once('error', fail);
+    socket.once('close', (hadError) => {
+      if (hadError || settled) return;
+      settled = true;
+      logPrinterEvent('network job sent', { host, port, copies, durationMs: Date.now() - startedAt });
+      resolve();
+    });
   });
 }
 
 /** Send Unicode text through the Windows print spooler and the printer's installed driver. */
 export function sendToWindowsPrinter(printerName: string, text: string, copies: number): Promise<void> {
   if (process.platform !== 'win32') {
+    console.error('[printer] Windows job rejected', { printerName, copies, platform: process.platform, error: 'API host is not Windows' });
     return Promise.reject(new Error('Windows installed printers can only be used when the POS API is running on Windows.'));
   }
+
+  const startedAt = Date.now();
+  logPrinterEvent('Windows job starting', { printerName, copies, characters: text.length });
 
   const script = [
     '$ErrorActionPreference = "Stop"',
@@ -37,10 +60,20 @@ export function sendToWindowsPrinter(printerName: string, text: string, copies: 
     let errorOutput = '';
     child.stderr.setEncoding('utf8');
     child.stderr.on('data', (chunk: string) => { errorOutput += chunk; });
-    child.once('error', (error) => reject(new Error(`Could not start Windows printing: ${error.message}`)));
-    child.once('close', (code) => code === 0
-      ? resolve()
-      : reject(new Error(`Windows printer "${printerName}" rejected the job${errorOutput.trim() ? `: ${errorOutput.trim()}` : '.'}`)));
+    child.once('error', (error) => {
+      console.error('[printer] Windows job failed to start', { printerName, copies, error: error.message });
+      reject(new Error(`Could not start Windows printing: ${error.message}`));
+    });
+    child.once('close', (code) => {
+      if (code === 0) {
+        logPrinterEvent('Windows job sent', { printerName, copies, durationMs: Date.now() - startedAt });
+        resolve();
+        return;
+      }
+      const error = `Windows printer "${printerName}" rejected the job${errorOutput.trim() ? `: ${errorOutput.trim()}` : '.'}`;
+      console.error('[printer] Windows job failed', { printerName, copies, durationMs: Date.now() - startedAt, exitCode: code, error });
+      reject(new Error(error));
+    });
     child.stdin.end(text, 'utf8');
   });
 }

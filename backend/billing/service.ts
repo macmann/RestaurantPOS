@@ -630,7 +630,27 @@ export async function printBillReceipt(input: {
   const assignedPrinter = settings.printers[settings.printerAssignments.receipt];
   if (!input.printerId && !assignedPrinter?.enabled) throw new Error('The printer assigned to billing is disabled or unavailable.');
   const printerId = input.printerId ?? assignedPrinter.printerId;
-  const result = await getReceiptPrinterAdapter().printReceipt({ payload, copies: input.copies ?? assignedPrinter.copies, printerId });
+  const copies = input.copies ?? assignedPrinter.copies;
+  console.info('[printer] receipt requested', {
+    tableSessionId: input.tableSessionId,
+    printerId,
+    assignedPrinterKey: settings.printerAssignments.receipt,
+    connectionType: assignedPrinter.connectionType,
+    copies,
+    locale: payload.locale,
+  });
+  let result: ReceiptPrintResult;
+  try {
+    result = await getReceiptPrinterAdapter().printReceipt({ payload, copies, printerId });
+  } catch (error) {
+    console.error('[printer] receipt request failed', {
+      tableSessionId: input.tableSessionId,
+      printerId,
+      connectionType: assignedPrinter.connectionType,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
   bill.receiptPayload = payload;
   await saveBill(bill);
   await appendBillingAuditEntry({
