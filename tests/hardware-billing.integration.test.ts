@@ -3,7 +3,7 @@ declare const process: { exitCode?: number };
 import { listBillingAuditByTableSessionId, type TableOrderItem } from '../backend/billing/repository';
 import { generateBillFromSessionItems, printBillReceipt, recordSplitPayment, refundSplitPayment, voidSplitPayment } from '../backend/billing/service';
 import { resetCashDrawerAdapter } from '../backend/hardware/cashDrawer';
-import { resetReceiptPrinterAdapter } from '../backend/hardware/receiptPrinter';
+import { renderReceiptPayload, resetReceiptPrinterAdapter } from '../backend/hardware/receiptPrinter';
 import { resetOrderPrinterAdapter } from '../backend/hardware/orderPrinter';
 import { buildNetworkPrinterTicket } from '../backend/hardware/printerTransport';
 import type { OrderRecord } from '../backend/orders/repository';
@@ -87,7 +87,22 @@ async function runHardwareBillingIntegration(): Promise<void> {
   assertEqual(printed.locale, 'my', 'Receipt printing should normalize my-MM to the Myanmar locale.');
   assert(printed.fontFamily.includes('Myanmar') || printed.fontFamily.includes('Padauk') || printed.fontFamily.includes('Pyidaungsu'), 'Myanmar receipt should select a Myanmar-capable print font.');
   assert(printed.renderedText.includes('ဘောင်ချာ'), 'Rendered receipt should include localized Myanmar labels.');
+  assert(!printed.renderedText.includes(cardFixture.session.id), 'Customer receipts must not expose the internal table session ID.');
+  assert(!printed.renderedText.includes('Locale:'), 'Customer receipts must not expose locale metadata.');
+  assert(!printed.renderedText.includes('Font:'), 'Customer receipts must not expose font metadata.');
+  assert(!printed.renderedText.includes('receipt_'), 'Customer receipts must not expose the internal receipt ID.');
+  assert(!printed.renderedText.includes('Split A'), 'An unsplit customer receipt must not display a split label.');
   assertEqual(printer.jobs.length, 1, 'Simulator printer should capture the receipt job.');
+
+  const splitFixture = await createBillFixture('split', 12);
+  const splitItem: TableOrderItem = { id: 'item-hw-split-b', orderId: 'order-hw-split-b', tableSessionId: splitFixture.session.id, name: 'Tea', quantity: 1, unitPrice: 8 };
+  const splitPayload = await import('../backend/billing/service').then(({ updateBillSplitItems, getPrintedReceiptPayload }) =>
+    updateBillSplitItems({ tableSessionId: splitFixture.session.id, actorUserId: splitFixture.cashier.id, itemsBySplit: { A: [{ id: 'item-hw-split', orderId: 'order-hw-split', tableSessionId: splitFixture.session.id, name: 'Mohinga', quantity: 1, unitPrice: 12 }], B: [splitItem] } }).then(() => getPrintedReceiptPayload(splitFixture.session.id)));
+  assert(renderReceiptPayload(splitPayload, 'A').includes('Mohinga'), 'Split A receipt should contain its assigned items.');
+  assert(!renderReceiptPayload(splitPayload, 'A').includes('Tea'), 'Split A receipt must not contain another guest\'s items.');
+  let combinedSplitRejected = false;
+  try { renderReceiptPayload(splitPayload); } catch { combinedSplitRejected = true; }
+  assert(combinedSplitRejected, 'A split bill must require selecting the guest split before printing.');
 
   updatePosOperationalSettings({ localization: { defaultLocale: 'my' } });
   const defaultLocaleFixture = await createBillFixture('default-locale', 15);

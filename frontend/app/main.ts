@@ -103,7 +103,7 @@ let healthTimer: number | undefined;
 let selectedTableId: string | undefined;
 let selectedSplitCount = 1;
 let splitDraftSelections: Record<string, Partial<Record<SplitLabel, TableOrderItem[]>>> = {};
-let pendingPrintPreview: { tableSessionId: string; receipt: ReceiptPayload } | undefined;
+let pendingPrintPreview: { tableSessionId: string; receipt: ReceiptPayload; splitLabel?: SplitLabel } | undefined;
 let activeUiLocale: SupportedLocale = normalizeLocale();
 let englishToMyanmarUiLabels: Record<string, string> = buildEnglishMyanmarLocalizationMap();
 let cachedPrepStations: SuperadminPrepStation[] = normalizePrepStations(undefined);
@@ -2377,11 +2377,14 @@ function renderSplitItemAssignment(tableSessionId: string, orders: OrderRecord[]
   return box;
 }
 
-function renderPrintPreview(tableSessionId: string, receipt: ReceiptPayload): HTMLElement {
+function renderPrintPreview(tableSessionId: string, receipt: ReceiptPayload, splitLabel?: SplitLabel): HTMLElement {
+  const activeSplits = receipt.splits.filter((split) => split.lines.length || split.calculationBreakdown.totalDue > 0);
+  const selectedSplit = splitLabel ? activeSplits.find((split) => split.label === splitLabel) : activeSplits[0];
+  const breakdown = selectedSplit?.calculationBreakdown ?? receipt.calculationBreakdown;
   const panel = el('section', 'pos-panel print-preview-panel');
-  panel.innerHTML = `<div class="pos-panel-heading"><h3>Print preview</h3><span>Confirm before printing</span></div><div class="receipt-preview-paper"><strong>${receipt.restaurant.restaurantName}</strong><span>Table ${receipt.tableSessionId}</span>${receipt.calculationBreakdown.lines.map((line) => `<div class="receipt-preview-paper__line">${line.quantity}× ${line.name} — ${money(line.lineTotal)}</div>`).join('')}<hr><span>Subtotal ${money(receipt.calculationBreakdown.subtotal)}</span><span>Discount ${money(receipt.calculationBreakdown.discounts.total)}</span><span>Tax ${money(receipt.calculationBreakdown.taxTotal)}</span><strong>Total ${money(receipt.calculationBreakdown.totalDue)}</strong></div><div class="billing-actions"><button type="button" class="secondary cancel-print">Cancel</button><button type="button" class="billing-action confirm-print">Confirm print</button></div>`;
+  panel.innerHTML = `<div class="pos-panel-heading"><h3>Print preview${activeSplits.length > 1 ? ` · Split ${splitLabel}` : ''}</h3><span>Confirm before printing</span></div><div class="receipt-preview-paper"><strong>${receipt.restaurant.restaurantName}</strong>${breakdown.lines.map((line) => `<div class="receipt-preview-paper__line">${line.quantity}× ${line.name} — ${money(line.lineTotal)}</div>`).join('')}<hr><span>Subtotal ${money(breakdown.subtotal)}</span><span>Discount ${money(breakdown.discounts.total)}</span><span>Tax ${money(breakdown.taxTotal)}</span><strong>Total ${money(breakdown.totalDue)}</strong></div><div class="billing-actions"><button type="button" class="secondary cancel-print">Cancel</button><button type="button" class="billing-action confirm-print">Confirm print</button></div>`;
   panel.querySelector<HTMLButtonElement>('.cancel-print')?.addEventListener('click', () => { pendingPrintPreview = undefined; render(); });
-  panel.querySelector<HTMLButtonElement>('.confirm-print')?.addEventListener('click', async () => { await apiClient.printReceipt(tableSessionId, { copies: 1 }, session!.user.id); pendingPrintPreview = undefined; render(); });
+  panel.querySelector<HTMLButtonElement>('.confirm-print')?.addEventListener('click', async () => { await apiClient.printReceipt(tableSessionId, { copies: 1, splitLabel }, session!.user.id); pendingPrintPreview = undefined; render(); });
   return panel;
 }
 
@@ -2710,9 +2713,12 @@ async function renderBillingDesk(): Promise<HTMLElement> {
       card.innerHTML = `
         <div><strong>Split ${split.label}</strong>${badge(balance <= 0 ? 'paid' : 'open', balance <= 0 ? 'ready' : 'warning').outerHTML}</div>
         <p>${split.lines.length} lines · Total ${money(split.calculationBreakdown.totalDue)} · Paid ${money(paid)} · Balance ${money(Math.max(balance, 0))}</p>
-        <button type="button" ${balance <= 0 || !cashierMode ? 'disabled' : ''}>${cashierMode ? 'Take cash payment' : 'Cashier payment only'}</button>
+        <div class="billing-actions">
+          <button type="button" class="take-payment" ${balance <= 0 || !cashierMode ? 'disabled' : ''}>${cashierMode ? 'Take cash payment' : 'Cashier payment only'}</button>
+          ${receipt.splits.filter((row) => row.lines.length || row.calculationBreakdown.totalDue > 0).length > 1 ? `<button type="button" class="secondary print-split" ${cashierMode ? '' : 'disabled'}>Print Split ${split.label}</button>` : ''}
+        </div>
       `;
-      card.querySelector<HTMLButtonElement>('button')?.addEventListener('click', async () => {
+      card.querySelector<HTMLButtonElement>('.take-payment')?.addEventListener('click', async () => {
         try {
           await apiClient.recordSplitPayment({
             tableSessionId: selectedSessionId,
@@ -2727,6 +2733,10 @@ async function renderBillingDesk(): Promise<HTMLElement> {
           status.textContent = caught instanceof Error ? caught.message : 'Unable to record payment.';
         }
       });
+      card.querySelector<HTMLButtonElement>('.print-split')?.addEventListener('click', () => {
+        pendingPrintPreview = { tableSessionId: selectedSessionId, receipt: receipt!, splitLabel: split.label };
+        render();
+      });
       splits.append(card);
     }
     billPanel.append(splits);
@@ -2739,7 +2749,7 @@ async function renderBillingDesk(): Promise<HTMLElement> {
       <button type="button" class="secondary update-splits" ${cashierMode ? '' : 'disabled'}>Update split items</button>
       <button type="button" class="secondary merge-splits" ${cashierMode ? '' : 'disabled'}>Merge splits</button>
       <button type="button" class="secondary tax-toggle" ${cashierMode ? '' : 'disabled'}>${receipt.calculationBreakdown.taxMode === 'taxable' ? 'Mark tax exempt' : 'Enable tax'}</button>
-      <button type="button" class="secondary print-receipt" ${cashierMode ? '' : 'disabled'}>Print receipt</button>
+      ${receipt.splits.filter((row) => row.lines.length || row.calculationBreakdown.totalDue > 0).length === 1 ? `<button type="button" class="secondary print-receipt" ${cashierMode ? '' : 'disabled'}>Print receipt</button>` : ''}
       <button type="button" class="billing-action close-table" ${receipt.balanceDue > 0 || !cashierMode ? 'disabled' : ''}>${cashierMode ? 'Close paid table' : 'Cashier closes table'}</button>
     `;
     billActions.querySelector<HTMLButtonElement>('.back-split')?.addEventListener('click', () => { window.history.back(); });
@@ -2798,7 +2808,7 @@ async function renderBillingDesk(): Promise<HTMLElement> {
       }
     });
     billPanel.append(billActions);
-    if (pendingPrintPreview?.tableSessionId === selectedSessionId) billPanel.append(renderPrintPreview(selectedSessionId, pendingPrintPreview.receipt));
+    if (pendingPrintPreview?.tableSessionId === selectedSessionId) billPanel.append(renderPrintPreview(selectedSessionId, pendingPrintPreview.receipt, pendingPrintPreview.splitLabel));
   }
 
   workspace.append(tablePanel, billPanel);

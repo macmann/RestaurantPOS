@@ -506,7 +506,7 @@ export class RestaurantApiClient {
     return this.request<ReceiptPayload>(`/api/billing/bills/${encodeURIComponent(tableSessionId)}/receipt${queryString({ locale })}`);
   }
 
-  printReceipt(tableSessionId: string, input: { locale?: string; copies?: number; printerId?: string } = {}, userId?: string) {
+  printReceipt(tableSessionId: string, input: { locale?: string; copies?: number; printerId?: string; splitLabel?: SplitLabel } = {}, userId?: string) {
     return this.request(`/api/billing/bills/${encodeURIComponent(tableSessionId)}/print`, { method: 'POST', userId, body: input, operationKind: 'idempotent_write' });
   }
 
