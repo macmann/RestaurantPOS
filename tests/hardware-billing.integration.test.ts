@@ -71,7 +71,10 @@ async function runHardwareBillingIntegration(): Promise<void> {
   assertEqual(tickets[0].copyCount, 2, 'Station copy configuration should be honored');
   assertEqual(tickets[0].printerId, 'bbq-printer', 'Kitchen printing should use the device assigned to that operation.');
   assert(tickets[0].renderedText.includes('Station: Kitchen'), 'Order ticket should identify the prep station.');
-  assert(tickets[0].renderedText.includes('Table: Table 7'), 'Order ticket should identify the table to serve.');
+  assert(tickets[0].renderedText.includes('*** TABLE: Table 7 ***'), 'Order ticket should prominently identify the table to serve.');
+  assert(tickets[0].renderedText.includes('Date & time:'), 'Order ticket should include its print date and time.');
+  assert(!tickets[0].renderedText.includes(ticketOrder.id), 'Order ticket should not expose an internal order number.');
+  assert(!tickets[0].renderedText.includes(ticketOrder.tableSessionId!), 'Order ticket should not expose an internal table session ID.');
 
   const cardFixture = await createBillFixture('card', 100);
   const paidByCard = await recordSplitPayment({ tableSessionId: cardFixture.session.id, splitLabel: 'A', amount: 100, method: 'card', actorUserId: cardFixture.cashier.id });
@@ -90,6 +93,8 @@ async function runHardwareBillingIntegration(): Promise<void> {
   assertEqual(printed.locale, 'my', 'Receipt printing should normalize my-MM to the Myanmar locale.');
   assert(printed.fontFamily.includes('Myanmar') || printed.fontFamily.includes('Padauk') || printed.fontFamily.includes('Pyidaungsu'), 'Myanmar receipt should select a Myanmar-capable print font.');
   assert(printed.renderedText.includes('ဘောင်ချာ'), 'Rendered receipt should include localized Myanmar labels.');
+  assert(printed.renderedText.includes('Date & time:'), 'Customer receipt should include its generation date and time.');
+  assert(printed.renderedText.includes(`*** TABLE: HW card ***`), 'Customer receipt should prominently identify the table.');
   assert(!printed.renderedText.includes(cardFixture.session.id), 'Customer receipts must not expose the internal table session ID.');
   assert(!printed.renderedText.includes('Locale:'), 'Customer receipts must not expose locale metadata.');
   assert(!printed.renderedText.includes('Font:'), 'Customer receipts must not expose font metadata.');

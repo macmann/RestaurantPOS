@@ -2,6 +2,7 @@ import { recordAuditEvent } from '../audit/service';
 import { getCurrentBranchId } from '../config/branch';
 import { getPosOperationalSettings } from '../config/posSettings';
 import { requireOpenTableSession } from '../tables/service';
+import { getTableById } from '../tables/repository';
 import { withTransaction } from '../db/client';
 import { getLocaleResource, getTypographyForLocale, normalizeLocale } from '../i18n/service';
 import { applyEnglishMyanmarLocalizationMap } from '../i18n/resources';
@@ -345,6 +346,7 @@ function buildReceiptPayload(bill: BillRecord, localeInput?: string): ReceiptPay
     receiptCss,
     billId: bill.id,
     tableSessionId: bill.tableSessionId,
+    tableName: bill.tableName,
     generatedAt: new Date().toISOString(),
     splits: SPLIT_LABELS.map((label) => ({
       label,
@@ -366,6 +368,7 @@ export async function generateBillFromSessionItems(
   branchId = getCurrentBranchId(),
 ): Promise<BillRecord> {
   const session = await requireOpenTableSession(tableSessionId);
+  const table = await getTableById(session.tableId);
   const now = new Date().toISOString();
   const existing = await getBillByTableSessionId(tableSessionId);
   if (existing) throw new Error(`Bill already exists for table session ${tableSessionId}.`);
@@ -402,6 +405,7 @@ export async function generateBillFromSessionItems(
     id: createId('bill'),
     branchId: session.branchId ?? branchId,
     tableSessionId,
+    tableName: table?.name,
     splits,
     state: 'open',
     pricing,

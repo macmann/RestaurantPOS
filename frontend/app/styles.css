@@ -461,6 +461,7 @@ button { min-height: var(--tap); touch-action: manipulation; }
 .receipt-preview-paper span, .receipt-preview-paper em { color: var(--muted); font-size: 0.88rem; line-height: 1.35; }
 .receipt-preview-paper hr { width: 100%; border: 0; border-top: 1px dashed #cbd5e1; }
 .receipt-preview-paper__line { padding: 0.45rem; border-radius: 0.55rem; background: var(--surface-soft); }
+.receipt-preview-paper .receipt-preview-paper__table { padding: 0.55rem; border: 2px solid var(--ink); border-radius: 0.55rem; background: #fef08a; color: #111827; font-size: 1.2rem; font-weight: 950; }
 .settings-help-card ol { margin: 0; padding-left: 1.15rem; color: var(--muted); line-height: 1.55; }
 
 

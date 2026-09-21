@@ -166,6 +166,7 @@ export interface ReceiptPayload {
   receiptCss: string;
   billId: string;
   tableSessionId: string;
+  tableName?: string;
   generatedAt: string;
   splits: Array<{
     label: SplitLabel;
@@ -206,6 +207,7 @@ export interface BillRecord {
   id: string;
   branchId: string;
   tableSessionId: string;
+  tableName?: string;
   splits: Record<SplitLabel, BillSplit>;
   state: BillingState;
   pricing: BillPricingOptions;
