@@ -6,6 +6,12 @@ function logPrinterEvent(event: string, details: Record<string, unknown>): void 
 }
 
 const CUT_FEED_LINES = 5;
+// A 9-point font is about 25 dots high on the 203-DPI print head used by
+// standard 80-mm receipt printers. System.Drawing bitmaps default to 96 DPI,
+// where the same point size is rasterized at only 12 pixels (roughly 50%).
+// Specify the physical pixel height so the ESC/POS raster is not shrunk into
+// the left half of the receipt.
+export const NETWORK_RASTER_FONT_HEIGHT_DOTS = 25;
 
 const MYANMAR_CHARACTER_PATTERN = /[\u1000-\u109f\uaa60-\uaa7f\ua9e0-\ua9ff]/u;
 
@@ -38,7 +44,7 @@ function buildWindowsRasterPrinterTicket(text: string, fontFamily: string): Prom
     '$available = @($installed.Families | ForEach-Object { $_.Name })',
     '$family = $requested | Where-Object { $available -contains $_ } | Select-Object -First 1',
     'if (-not $family) { throw "Install a Myanmar font (Noto Sans Myanmar, Myanmar Text, Padauk, or Pyidaungsu) on the POS computer." }',
-    '$font = New-Object Drawing.Font($family, 9)',
+    `$font = New-Object Drawing.Font($family, ${NETWORK_RASTER_FONT_HEIGHT_DOTS}, [Drawing.FontStyle]::Regular, [Drawing.GraphicsUnit]::Pixel)`,
     '$probe = New-Object Drawing.Bitmap(1, 1)',
     '$probeGraphics = [Drawing.Graphics]::FromImage($probe)',
     '$format = New-Object Drawing.StringFormat([Drawing.StringFormat]::GenericTypographic)',
