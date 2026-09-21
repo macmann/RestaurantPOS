@@ -5,6 +5,7 @@ import { generateBillFromSessionItems, printBillReceipt, recordSplitPayment, ref
 import { resetCashDrawerAdapter } from '../backend/hardware/cashDrawer';
 import { resetReceiptPrinterAdapter } from '../backend/hardware/receiptPrinter';
 import { resetOrderPrinterAdapter } from '../backend/hardware/orderPrinter';
+import { buildNetworkPrinterTicket } from '../backend/hardware/printerTransport';
 import type { OrderRecord } from '../backend/orders/repository';
 import { resetPaymentTerminalAdapter } from '../backend/integrations/paymentTerminal';
 import { updatePosOperationalSettings } from '../backend/config/posSettings';
@@ -37,6 +38,10 @@ async function createBillFixture(suffix: string, amount = 100) {
 }
 
 async function runHardwareBillingIntegration(): Promise<void> {
+  const networkTicket = buildNetworkPrinterTicket('LAST RECEIPT LINE');
+  const expectedCutSequence = Buffer.from('LAST RECEIPT LINE\n\n\n\n\n\x1dV\x00', 'utf8');
+  assert(networkTicket.subarray(2).equals(expectedCutSequence), 'Network print jobs should feed five lines after the content before cutting.');
+
   const terminal = resetPaymentTerminalAdapter();
   const drawer = resetCashDrawerAdapter();
   const printer = resetReceiptPrinterAdapter();
