@@ -113,7 +113,7 @@ export class ConfiguredReceiptPrinterAdapter extends SimulatorReceiptPrinterAdap
     });
     if (printer?.connectionType === 'network') {
       if (!printer.networkAddress) throw new Error(`Network address is required for ${printer.displayName}.`);
-      await sendToNetworkPrinter(printer.networkAddress, printer.networkPort, result.renderedText, result.copyCount);
+      await sendToNetworkPrinter(printer.networkAddress, printer.networkPort, result.renderedText, result.copyCount, result.fontFamily);
     } else if (printer?.connectionType === 'windows') {
       if (!printer.windowsPrinterName) throw new Error(`Windows printer name is required for ${printer.displayName}.`);
       await sendToWindowsPrinter(printer.windowsPrinterName, result.renderedText, result.copyCount, result.fontFamily);

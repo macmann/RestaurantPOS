@@ -92,6 +92,8 @@ The Windows printer driver controls the paper size and other device preferences,
 
 For environment-based configuration, set `POS_RECEIPT_PRINTER_TYPE=windows` and `POS_RECEIPT_WINDOWS_PRINTER_NAME` to the exact queue name before starting the API.
 
+Myanmar text needs both Unicode shaping and Myanmar glyphs; thermal printers' raw ESC/POS text mode normally provides neither. Install **Noto Sans Myanmar**, **Myanmar Text**, **Padauk**, or **Pyidaungsu** on the Windows computer running the API. Windows-printer jobs use that font through the installed driver, while network-printer jobs containing Myanmar text are automatically rasterized before being sent. Network Myanmar printing therefore also requires the API to run on Windows; ASCII-only network tickets continue to use native ESC/POS text mode.
+
 ### Type-check
 
 ```bash

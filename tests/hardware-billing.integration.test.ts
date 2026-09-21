@@ -5,7 +5,7 @@ import { generateBillFromSessionItems, printBillReceipt, recordSplitPayment, ref
 import { resetCashDrawerAdapter } from '../backend/hardware/cashDrawer';
 import { renderReceiptPayload, resetReceiptPrinterAdapter } from '../backend/hardware/receiptPrinter';
 import { resetOrderPrinterAdapter } from '../backend/hardware/orderPrinter';
-import { buildNetworkPrinterTicket } from '../backend/hardware/printerTransport';
+import { buildNetworkPrinterTicket, containsMyanmarText } from '../backend/hardware/printerTransport';
 import type { OrderRecord } from '../backend/orders/repository';
 import { resetPaymentTerminalAdapter } from '../backend/integrations/paymentTerminal';
 import { updatePosOperationalSettings } from '../backend/config/posSettings';
@@ -41,6 +41,8 @@ async function runHardwareBillingIntegration(): Promise<void> {
   const networkTicket = buildNetworkPrinterTicket('LAST RECEIPT LINE');
   const expectedCutSequence = Buffer.from('LAST RECEIPT LINE\n\n\n\n\n\x1dV\x00', 'utf8');
   assert(networkTicket.subarray(2).equals(expectedCutSequence), 'Network print jobs should feed five lines after the content before cutting.');
+  assert(containsMyanmarText('ရွှေယမင်း စားသောက်ဆိုင်'), 'Myanmar receipt text should be detected so it is rasterized instead of sent through an unsupported ESC/POS code page.');
+  assert(!containsMyanmarText('Shwe Ya Min Restaurant'), 'ASCII receipts should continue to use the compact native ESC/POS text path.');
 
   const terminal = resetPaymentTerminalAdapter();
   const drawer = resetCashDrawerAdapter();
