@@ -11,6 +11,7 @@ import { createTable, getTableSession, openTableSession } from '../backend/table
 import type { AuthenticatedUser } from '../backend/auth/policies';
 import { assert, assertEqual } from './helpers/assertions';
 import { getPosOperationalSettings, initializePosOperationalSettings, savePosOperationalSettings, updatePosOperationalSettings } from '../backend/config/posSettings';
+import { getDeductionTriggerPolicy, initializeInventorySettings, setDeductionTriggerPolicy } from '../backend/inventory/service';
 
 async function canLoadPg(): Promise<boolean> {
   try {
@@ -54,13 +55,40 @@ async function runDatabasePersistenceE2e(): Promise<void> {
       { id: 'kitchen', displayName: 'Kitchen', enabled: true, sortOrder: 10 },
       { id: 'deployment-station', displayName: 'Deployment station', enabled: true, sortOrder: 20 },
     ],
+    printers: {
+      receipt: {
+        enabled: true,
+        printerId: 'persistent-receipt-printer',
+        displayName: 'Persistent receipt printer',
+        connectionType: 'network',
+        networkAddress: '192.0.2.25',
+        networkPort: 9100,
+        copies: 2,
+        autoPrint: false,
+      },
+    },
   });
-  updatePosOperationalSettings({ prepStations: [{ id: 'kitchen', displayName: 'Kitchen', enabled: true, sortOrder: 10 }] });
+  updatePosOperationalSettings({
+    prepStations: [{ id: 'kitchen', displayName: 'Kitchen', enabled: true, sortOrder: 10 }],
+    printers: { receipt: { printerId: 'temporary-printer', networkAddress: '127.0.0.1' } },
+  });
   await initializePosOperationalSettings(true);
   assert(
     getPosOperationalSettings().prepStations.some((station) => station.id === 'deployment-station'),
     'Prep station settings should reload from PostgreSQL after an application restart.',
   );
+  assertEqual(getPosOperationalSettings().printers.receipt.printerId, 'persistent-receipt-printer', 'Printer settings should reload from PostgreSQL after an application restart.');
+  assertEqual(getPosOperationalSettings().printers.receipt.networkAddress, '192.0.2.25', 'Printer connection configuration should persist in PostgreSQL.');
+
+  const settingsManager: AuthenticatedUser = { id: 'settings-manager', branchId: 'main', role: 'manager', status: 'active' };
+  await setDeductionTriggerPolicy(settingsManager, 'manual');
+  const storedInventorySettings = await query<{ payload: { deductionTriggerPolicy: string } }>(
+    `SELECT payload FROM repository_records WHERE namespace = 'settings:inventory' AND record_key = $1`,
+    ['main'],
+  );
+  assertEqual(storedInventorySettings.rows[0]?.payload.deductionTriggerPolicy, 'manual', 'Inventory configuration should be stored in PostgreSQL.');
+  await initializeInventorySettings(true);
+  assertEqual(getDeductionTriggerPolicy(), 'manual', 'Inventory configuration should reload from PostgreSQL.');
 
   const branchId = 'db-e2e-main';
   const cashier: AuthenticatedUser = { id: 'cashier-db-e2e', branchId, role: 'cashier', status: 'active' };

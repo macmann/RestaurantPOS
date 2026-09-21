@@ -296,7 +296,7 @@ async function requestInProcess<T>(path: string, method: string, body: unknown, 
       const systemStatus = await backendModule<any>('../../backend/system/status.js');
       return systemStatus.getSystemStatus() as Promise<T>;
     }
-    if (method === 'PUT') return { branch: branch.getRuntimeSettings().branch, inventoryDeductionPolicy: await InventoryAdminApi.getDeductionPolicy(), pos: posSettings.updatePosOperationalSettings((body as any).pos ?? body) } as T;
+    if (method === 'PUT') return { branch: branch.getRuntimeSettings().branch, inventoryDeductionPolicy: await InventoryAdminApi.getDeductionPolicy(), pos: await posSettings.savePosOperationalSettings((body as any).pos ?? body) } as T;
     return { branch: branch.getRuntimeSettings().branch, inventoryDeductionPolicy: await InventoryAdminApi.getDeductionPolicy(), pos: posSettings.getPosOperationalSettings() } as T;
   }
 
