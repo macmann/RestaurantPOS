@@ -37,7 +37,7 @@ export class SimulatorOrderPrinterAdapter {
     ].join('\n');
     if (printer.connectionType === 'network') {
       if (!printer.networkAddress) throw new Error(`Network address is required for ${printer.displayName}.`);
-      await sendToNetworkPrinter(printer.networkAddress, printer.networkPort, renderedText, printer.copies);
+      await sendToNetworkPrinter(printer.networkAddress, printer.networkPort, renderedText, printer.copies, "'Noto Sans Myanmar', 'Padauk', 'Myanmar Text', 'Pyidaungsu', sans-serif");
     } else if (printer.connectionType === 'windows') {
       if (!printer.windowsPrinterName) throw new Error(`Windows printer name is required for ${printer.displayName}.`);
       await sendToWindowsPrinter(printer.windowsPrinterName, renderedText, printer.copies);

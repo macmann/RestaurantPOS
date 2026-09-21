@@ -7,15 +7,76 @@ function logPrinterEvent(event: string, details: Record<string, unknown>): void 
 
 const CUT_FEED_LINES = 5;
 
+const MYANMAR_CHARACTER_PATTERN = /[\u1000-\u109f\uaa60-\uaa7f\ua9e0-\ua9ff]/u;
+
+export function containsMyanmarText(text: string): boolean {
+  return MYANMAR_CHARACTER_PATTERN.test(text);
+}
+
 /** Build an ESC/POS job with enough trailing paper to clear the cutter. */
 export function buildNetworkPrinterTicket(text: string): Buffer {
   const trailingFeed = '\n'.repeat(CUT_FEED_LINES);
   return Buffer.from(`\x1b@${text}${trailingFeed}\x1dV\x00`, 'utf8');
 }
 
-export function sendToNetworkPrinter(host: string, port: number, text: string, copies: number): Promise<void> {
+/**
+ * Raw ESC/POS text mode has no Myanmar code page and therefore cannot shape
+ * sequences such as "ရွှေ". Render those jobs on Windows and send the resulting
+ * monochrome pixels to the network printer instead.
+ */
+function buildWindowsRasterPrinterTicket(text: string, fontFamily: string): Promise<Buffer> {
+  if (process.platform !== 'win32') {
+    return Promise.reject(new Error('Myanmar text cannot be sent in raw ESC/POS text mode. Run the POS API on Windows (with Noto Sans Myanmar, Myanmar Text, Padauk, or Pyidaungsu installed), or configure the printer as a Windows installed printer.'));
+  }
+
+  const script = [
+    '$ErrorActionPreference = "Stop"',
+    'Add-Type -AssemblyName System.Drawing',
+    '$text = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:POS_PRINT_TEXT))',
+    '$requested = $env:POS_PRINT_FONT -split "," | ForEach-Object { $_.Trim(" ", "\'", [char]34) }',
+    '$installed = New-Object Drawing.Text.InstalledFontCollection',
+    '$available = @($installed.Families | ForEach-Object { $_.Name })',
+    '$family = $requested | Where-Object { $available -contains $_ } | Select-Object -First 1',
+    'if (-not $family) { throw "Install a Myanmar font (Noto Sans Myanmar, Myanmar Text, Padauk, or Pyidaungsu) on the POS computer." }',
+    '$font = New-Object Drawing.Font($family, 9)',
+    '$probe = New-Object Drawing.Bitmap(1, 1)',
+    '$probeGraphics = [Drawing.Graphics]::FromImage($probe)',
+    '$format = New-Object Drawing.StringFormat([Drawing.StringFormat]::GenericTypographic)',
+    '$size = $probeGraphics.MeasureString($text, $font, 576, $format)',
+    '$height = [Math]::Max(1, [Math]::Ceiling($size.Height) + 8)',
+    '$probeGraphics.Dispose(); $probe.Dispose()',
+    '$bitmap = New-Object Drawing.Bitmap(576, $height)',
+    '$graphics = [Drawing.Graphics]::FromImage($bitmap)',
+    '$graphics.Clear([Drawing.Color]::White)',
+    '$graphics.TextRenderingHint = [Drawing.Text.TextRenderingHint]::AntiAliasGridFit',
+    '$graphics.DrawString($text, $font, [Drawing.Brushes]::Black, (New-Object Drawing.RectangleF(0, 0, 576, $height)), $format)',
+    '$stride = 72; $bytes = New-Object byte[] ($stride * $height)',
+    'for ($y = 0; $y -lt $height; $y++) { for ($x = 0; $x -lt 576; $x++) { $pixel = $bitmap.GetPixel($x, $y); if (($pixel.R + $pixel.G + $pixel.B) -lt 600) { $index = ($y * $stride) + [Math]::Floor($x / 8); $bytes[$index] = $bytes[$index] -bor (0x80 -shr ($x % 8)) } } }',
+    '$header = [byte[]](0x1b,0x40,0x1d,0x76,0x30,0x00,0x48,0x00,($height -band 0xff),(($height -shr 8) -band 0xff))',
+    '$footer = [byte[]](0x0a,0x0a,0x0a,0x0a,0x0a,0x1d,0x56,0x00)',
+    '$output = New-Object byte[] ($header.Length + $bytes.Length + $footer.Length)',
+    '[Array]::Copy($header, 0, $output, 0, $header.Length); [Array]::Copy($bytes, 0, $output, $header.Length, $bytes.Length); [Array]::Copy($footer, 0, $output, $header.Length + $bytes.Length, $footer.Length)',
+    '$graphics.Dispose(); $bitmap.Dispose(); $format.Dispose(); $font.Dispose(); $installed.Dispose()',
+    '[Console]::Out.Write([Convert]::ToBase64String($output))',
+  ].join('; ');
+
+  return new Promise((resolve, reject) => {
+    const child = spawn('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script], {
+      env: { ...process.env, POS_PRINT_FONT: fontFamily, POS_PRINT_TEXT: Buffer.from(text, 'utf8').toString('base64') },
+      stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
+    });
+    let output = ''; let errorOutput = '';
+    child.stdout.setEncoding('ascii'); child.stdout.on('data', (chunk: string) => { output += chunk; });
+    child.stderr.setEncoding('utf8'); child.stderr.on('data', (chunk: string) => { errorOutput += chunk; });
+    child.once('error', (error) => reject(new Error(`Could not start Myanmar receipt rendering: ${error.message}`)));
+    child.once('close', (code) => code === 0 ? resolve(Buffer.from(output.trim(), 'base64')) : reject(new Error(`Could not render Myanmar receipt${errorOutput.trim() ? `: ${errorOutput.trim()}` : '.'}`)));
+  });
+}
+
+export async function sendToNetworkPrinter(host: string, port: number, text: string, copies: number, fontFamily = "'Noto Sans Myanmar', 'Padauk', 'Myanmar Text', 'Pyidaungsu', sans-serif"): Promise<void> {
   const startedAt = Date.now();
   logPrinterEvent('network job starting', { host, port, copies, bytes: Buffer.byteLength(text, 'utf8') });
+  const ticket = containsMyanmarText(text) ? await buildWindowsRasterPrinterTicket(text, fontFamily) : buildNetworkPrinterTicket(text);
   return new Promise((resolve, reject) => {
     const socket = createConnection({ host, port });
     let settled = false;
@@ -27,7 +88,6 @@ export function sendToNetworkPrinter(host: string, port: number, text: string, c
     };
     socket.setTimeout(5000);
     socket.once('connect', () => {
-      const ticket = buildNetworkPrinterTicket(text);
       logPrinterEvent('network connection established', { host, port, copies, ticketBytes: ticket.length });
       for (let copy = 0; copy < copies; copy += 1) socket.write(ticket);
       socket.end();
@@ -59,7 +119,11 @@ export function sendToWindowsPrinter(printerName: string, text: string, copies: 
     '$ErrorActionPreference = "Stop"',
     'Add-Type -AssemblyName System.Drawing',
     '$text = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:POS_PRINT_TEXT))',
-    '$preferred = ($env:POS_PRINT_FONT -split ",")[0].Trim(" ", "\'", [char]34)',
+    '$requested = $env:POS_PRINT_FONT -split "," | ForEach-Object { $_.Trim(" ", "\'", [char]34) }',
+    '$installed = New-Object Drawing.Text.InstalledFontCollection',
+    '$available = @($installed.Families | ForEach-Object { $_.Name })',
+    '$preferred = $requested | Where-Object { $available -contains $_ } | Select-Object -First 1',
+    'if (-not $preferred) { throw "None of the configured receipt fonts are installed. Install Noto Sans Myanmar, Myanmar Text, Padauk, or Pyidaungsu." }',
     '$font = New-Object Drawing.Font($preferred, 9)',
     '$doc = New-Object Drawing.Printing.PrintDocument',
     '$doc.PrinterSettings.PrinterName = $env:POS_PRINTER_NAME',
@@ -67,7 +131,7 @@ export function sendToWindowsPrinter(printerName: string, text: string, copies: 
     '$doc.DefaultPageSettings.Margins = New-Object Drawing.Printing.Margins(4, 4, 4, 4)',
     '$doc.add_PrintPage({ param($sender, $e); $format = New-Object Drawing.StringFormat; $format.FormatFlags = [Drawing.StringFormatFlags]::LineLimit; $e.Graphics.DrawString($text, $font, [Drawing.Brushes]::Black, $e.MarginBounds, $format); $e.HasMorePages = $false })',
     '$doc.Print()',
-    '$doc.Dispose(); $font.Dispose()',
+    '$doc.Dispose(); $font.Dispose(); $installed.Dispose()',
   ].join('; ');
 
   return new Promise((resolve, reject) => {
