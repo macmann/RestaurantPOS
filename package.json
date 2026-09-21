@@ -18,7 +18,7 @@
     "build:api": "tsc -p tsconfig.json --outDir dist",
     "db:migrate": "tsx scripts/migrate-database.ts",
     "test:integration": "npm run build:api -- --noEmit false && node dist/tests/sql-repositories.integration.test.js && node dist/tests/hardware-billing.integration.test.js && node dist/tests/api-server.integration.test.js",
-    "test:unit": "npm run build:api -- --noEmit false && node dist/tests/order-authoritative-menu.unit.test.js",
+    "test:unit": "npm run build:api -- --noEmit false && node dist/tests/order-authoritative-menu.unit.test.js && node dist/tests/environment-config.unit.test.js",
     "test:api": "npm run build:api -- --noEmit false && node dist/tests/api-server.integration.test.js",
     "test:db:e2e": "npm run build:api -- --noEmit false && node dist/tests/database-persistence.e2e.test.js",
     "test:concurrency": "npm run build:api -- --noEmit false && node dist/tests/concurrency.e2e.test.js",

@@ -2,6 +2,7 @@ declare const process: { env: Record<string, string | undefined>; cwd(): string 
 declare const require: { main?: unknown };
 declare const module: unknown;
 declare const __dirname: string;
+import './config/environment';
 import express, { type NextFunction, type Request, type Response, type Router } from 'express';
 import { createReadStream, existsSync, statSync } from 'node:fs';
 import { extname, join, normalize, resolve } from 'node:path';
