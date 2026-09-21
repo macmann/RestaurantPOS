@@ -482,7 +482,8 @@ export function startServer(): unknown {
   const host = process.env.HOST ?? DEFAULT_HOST;
   const app = createApp();
   const server = app.listen(port, host, () => {
-    console.log(`SYM POS API listening on http://${host}:${port}`);
+    const browserHost = host === '0.0.0.0' || host === '::' ? 'localhost' : host;
+    console.log(`SYM POS application listening on http://${browserHost}:${port} (bound to ${host}:${port})`);
   });
   return server;
 }
