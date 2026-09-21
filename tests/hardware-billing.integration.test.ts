@@ -5,7 +5,7 @@ import { generateBillFromSessionItems, printBillReceipt, recordSplitPayment, ref
 import { resetCashDrawerAdapter } from '../backend/hardware/cashDrawer';
 import { renderReceiptPayload, resetReceiptPrinterAdapter } from '../backend/hardware/receiptPrinter';
 import { resetOrderPrinterAdapter } from '../backend/hardware/orderPrinter';
-import { buildNetworkPrinterTicket, containsMyanmarText } from '../backend/hardware/printerTransport';
+import { buildNetworkPrinterTicket, containsMyanmarText, NETWORK_RASTER_FONT_HEIGHT_DOTS } from '../backend/hardware/printerTransport';
 import type { OrderRecord } from '../backend/orders/repository';
 import { resetPaymentTerminalAdapter } from '../backend/integrations/paymentTerminal';
 import { updatePosOperationalSettings } from '../backend/config/posSettings';
@@ -43,6 +43,7 @@ async function runHardwareBillingIntegration(): Promise<void> {
   assert(networkTicket.subarray(2).equals(expectedCutSequence), 'Network print jobs should feed five lines after the content before cutting.');
   assert(containsMyanmarText('ရွှေယမင်း စားသောက်ဆိုင်'), 'Myanmar receipt text should be detected so it is rasterized instead of sent through an unsupported ESC/POS code page.');
   assert(!containsMyanmarText('Shwe Ya Min Restaurant'), 'ASCII receipts should continue to use the compact native ESC/POS text path.');
+  assertEqual(NETWORK_RASTER_FONT_HEIGHT_DOTS, 25, 'Rasterized Unicode receipts should render nine-point text at the physical 203-DPI print-head size rather than the 96-DPI bitmap default.');
 
   const terminal = resetPaymentTerminalAdapter();
   const drawer = resetCashDrawerAdapter();
