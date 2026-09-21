@@ -51,7 +51,8 @@ async function runHardwareBillingIntegration(): Promise<void> {
   });
   assertEqual(windowsSettings.printers.receipt.connectionType, 'windows', 'Settings should accept a Windows installed printer connection.');
   assertEqual(windowsSettings.printers.receipt.windowsPrinterName, 'USB Receipt Printer', 'Settings should retain the exact Windows printer queue name.');
-  updatePosOperationalSettings({ printers: { receipt: { connectionType: 'simulator' } } });
+  const simulatorSettings = updatePosOperationalSettings({ printers: { receipt: { connectionType: 'simulator' } } });
+  assertEqual(simulatorSettings.printers.receipt.connectionType, 'simulator', 'Settings should allow a physical printer to be changed back to simulator mode.');
   const ticketOrder: OrderRecord = {
     id: 'ord-hardware-ticket', branchId: 'branch-hw', serviceMode: 'dine_in', tableId: 'table-7', tableName: 'Table 7', tableSessionId: 'session-7',
     status: 'pending', subtotal: 12, version: 1, createdBy: 'waiter-1', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), changeLog: [],

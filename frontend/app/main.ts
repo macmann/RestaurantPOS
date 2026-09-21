@@ -1625,7 +1625,14 @@ async function renderBillSettings(): Promise<HTMLElement> {
         enabled: card.querySelector<HTMLInputElement>('input[name="printerEnabled"]')?.checked ?? true,
         printerId: card.querySelector<HTMLInputElement>('input[name="printerId"]')?.value ?? '',
         displayName: card.querySelector<HTMLInputElement>('input[name="printerDisplayName"]')?.value ?? '',
-        connectionType: (() => { const value = card.querySelector<HTMLSelectElement>('select[name="printerConnection"]')?.value; return value === 'network' || value === 'windows' ? value : 'simulator'; })(),
+        connectionType: (() => {
+          const value = card.querySelector<HTMLSelectElement>('select[name="printerConnection"]')?.value;
+          const address = card.querySelector<HTMLInputElement>('input[name="printerAddress"]')?.value.trim();
+          // An entered IP is an unambiguous physical-printer configuration. This also
+          // repairs older setups that retained the default Simulator selection.
+          if (value === 'network' || (value === 'simulator' && address)) return 'network';
+          return value === 'windows' ? 'windows' : 'simulator';
+        })(),
         windowsPrinterName: card.querySelector<HTMLInputElement>('input[name="windowsPrinterName"]')?.value ?? '',
         networkAddress: card.querySelector<HTMLInputElement>('input[name="printerAddress"]')?.value ?? '',
         networkPort: Number(card.querySelector<HTMLInputElement>('input[name="printerPort"]')?.value ?? 9100),
