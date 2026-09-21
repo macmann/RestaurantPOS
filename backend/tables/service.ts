@@ -166,10 +166,9 @@ export async function assertTableSessionCanClose(tableSessionId: string): Promis
   const linkedOrders = (await listOrders()).filter((order) => order.tableSessionId === tableSessionId);
   const incompleteOrder = linkedOrders.find((order) => !['delivered', 'cancelled'].includes(order.status));
   if (incompleteOrder) throw new Error(`Cannot close table session while order ${incompleteOrder.id} is ${incompleteOrder.status}.`);
-  if (linkedOrders.length) {
-    const bill = await getBillByTableSessionId(tableSessionId);
-    if (!isBillComplete(bill)) throw new Error('Cannot close table session until the linked bill is paid, void, or moved to debt.');
-  }
+  const bill = await getBillByTableSessionId(tableSessionId);
+  if (bill && !isBillComplete(bill)) throw new Error('Cannot close table session until every split is paid, void, or moved to debt.');
+  if (linkedOrders.length && !bill) throw new Error('Cannot close table session until the linked bill is paid, void, or moved to debt.');
 }
 
 export async function closeTableSession(user: AuthenticatedUser, tableSessionId: string): Promise<TableSessionRecord> {

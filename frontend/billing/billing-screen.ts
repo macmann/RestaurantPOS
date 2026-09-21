@@ -49,7 +49,12 @@ export async function closePaidTableFromBillingScreen(input: {
   locale?: string;
 }): Promise<ClosePaidTableResult> {
   const receipt = await apiClient.getReceipt(input.tableSessionId, input.locale);
-  if (receipt.balanceDue > 0) throw new Error('Cannot close table until the bill is fully paid or moved to debt.');
+  const unpaidSplits = receipt.splits.filter((split) => split.lines.length > 0 && split.calculationBreakdown.totalDue > split.payments.reduce((sum, payment) => {
+    if (payment.type === 'refund') return sum - payment.amount;
+    if (payment.type === 'void' || payment.status === 'voided' || payment.status === 'failed') return sum;
+    return sum + payment.amount;
+  }, 0));
+  if (unpaidSplits.length > 0) throw new Error(`Cannot close table until every split is paid. Unpaid: ${unpaidSplits.map((split) => `Split ${split.label}`).join(', ')}.`);
 
   const closedSession = await apiClient.closeTableSession(input.user.id, input.tableSessionId);
   if (closedSession.status !== 'closed') throw new Error('Table session did not close. Please refresh and try again.');
