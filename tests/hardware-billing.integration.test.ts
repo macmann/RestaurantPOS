@@ -9,7 +9,7 @@ import { buildNetworkPrinterTicket, containsMyanmarText, NETWORK_RASTER_FONT_HEI
 import type { OrderRecord } from '../backend/orders/repository';
 import { resetPaymentTerminalAdapter } from '../backend/integrations/paymentTerminal';
 import { updatePosOperationalSettings } from '../backend/config/posSettings';
-import { createTable, openTableSession } from '../backend/tables/service';
+import { closeTableSession, createTable, openTableSession } from '../backend/tables/service';
 import type { AuthenticatedUser } from '../backend/auth/policies';
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -112,6 +112,42 @@ async function runHardwareBillingIntegration(): Promise<void> {
   try { renderReceiptPayload(splitPayload); } catch { combinedSplitRejected = true; }
   assert(combinedSplitRejected, 'A split bill must require selecting the guest split before printing.');
 
+  const threeWayFixture = await createBillFixture('three-way-split', 10);
+  const splitItemFor = (label: string, amount: number): TableOrderItem => ({
+    id: `item-hw-three-${label.toLowerCase()}`,
+    orderId: `order-hw-three-${label.toLowerCase()}`,
+    tableSessionId: threeWayFixture.session.id,
+    name: `Guest ${label} meal`,
+    quantity: 1,
+    unitPrice: amount,
+  });
+  const { updateBillSplitItems, getPrintedReceiptPayload } = await import('../backend/billing/service');
+  await updateBillSplitItems({
+    tableSessionId: threeWayFixture.session.id,
+    actorUserId: threeWayFixture.cashier.id,
+    itemsBySplit: { A: [splitItemFor('A', 10)], B: [splitItemFor('B', 20)], C: [splitItemFor('C', 30)] },
+  });
+  const printJobStart = printer.jobs.length;
+  for (const label of ['A', 'B', 'C'] as const) {
+    const result = await printBillReceipt({ tableSessionId: threeWayFixture.session.id, actorUserId: threeWayFixture.cashier.id, splitLabel: label });
+    assert(result.renderedText.includes(`Guest ${label} meal`), `Split ${label} receipt should contain that guest's items.`);
+    for (const other of ['A', 'B', 'C'].filter((candidate) => candidate !== label)) {
+      assert(!result.renderedText.includes(`Guest ${other} meal`), `Split ${label} receipt must exclude Guest ${other}'s items.`);
+    }
+  }
+  assertEqual(printer.jobs.length - printJobStart, 3, 'A three-person split should create three individual receipt print jobs.');
+
+  await recordSplitPayment({ tableSessionId: threeWayFixture.session.id, splitLabel: 'A', amount: 100, method: 'cash', actorUserId: threeWayFixture.cashier.id });
+  const partlyPaidReceipt = await getPrintedReceiptPayload(threeWayFixture.session.id);
+  assertEqual(partlyPaidReceipt.balanceDue, 50, 'Overpaying one guest split must not offset the other guests balances.');
+  let earlyCloseRejected = false;
+  try { await closeTableSession(threeWayFixture.cashier, threeWayFixture.session.id); } catch { earlyCloseRejected = true; }
+  assert(earlyCloseRejected, 'A table must remain open until every active split is paid.');
+  await recordSplitPayment({ tableSessionId: threeWayFixture.session.id, splitLabel: 'B', amount: 20, method: 'cash', actorUserId: threeWayFixture.cashier.id });
+  await recordSplitPayment({ tableSessionId: threeWayFixture.session.id, splitLabel: 'C', amount: 30, method: 'cash', actorUserId: threeWayFixture.cashier.id });
+  const closedThreeWaySession = await closeTableSession(threeWayFixture.cashier, threeWayFixture.session.id);
+  assertEqual(closedThreeWaySession.status, 'closed', 'The table should close after all three individual splits are paid.');
+
   updatePosOperationalSettings({ localization: { defaultLocale: 'my' } });
   const defaultLocaleFixture = await createBillFixture('default-locale', 15);
   const defaultLocalePrint = await printBillReceipt({ tableSessionId: defaultLocaleFixture.session.id, actorUserId: defaultLocaleFixture.cashier.id });
@@ -125,9 +161,10 @@ async function runHardwareBillingIntegration(): Promise<void> {
 
   updatePosOperationalSettings({ localization: { defaultLocale: 'en' } });
 
+  const cashDrawerOpensBefore = drawer.openEvents.length;
   const cashFixture = await createBillFixture('cash', 25);
   await recordSplitPayment({ tableSessionId: cashFixture.session.id, splitLabel: 'A', amount: 25, method: 'cash', actorUserId: cashFixture.cashier.id });
-  assertEqual(drawer.openEvents.length, 1, 'Cash payments should open the cash drawer exactly once.');
+  assertEqual(drawer.openEvents.length, cashDrawerOpensBefore + 1, 'Each cash payment should open the cash drawer exactly once.');
   const cashAudit = await listBillingAuditByTableSessionId(cashFixture.session.id);
   assert(cashAudit.some((event) => event.action === 'cash_drawer_opened'), 'Cash drawer openings should be written to billing audit.');
 

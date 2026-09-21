@@ -325,7 +325,9 @@ function updateBillStateAndBreakdown(bill: BillRecord): BillRecord {
 
 function buildReceiptPayload(bill: BillRecord, localeInput?: string): ReceiptPayload {
   const totalPaid = round2(SPLIT_LABELS.reduce((sum, label) => sum + bill.splits[label].payments.reduce((paymentSum, payment) => paymentSum + getPaymentContribution(payment), 0), 0));
-  const balanceDue = round2(Math.max(bill.calculationBreakdown.totalDue - totalPaid, 0));
+  // Keep each guest's balance independent. An overpayment on one split must never
+  // make another guest's unpaid split appear settled at the bill level.
+  const balanceDue = round2(SPLIT_LABELS.reduce((sum, label) => sum + bill.splits[label].unpaidBalance, 0));
   const settings = getPosOperationalSettings();
   const locale = normalizeLocale(localeInput ?? settings.localization.defaultLocale);
   const resource = applyEnglishMyanmarLocalizationMap(getLocaleResource(locale), settings.localization.englishToMyanmar);
@@ -630,6 +632,7 @@ export async function printBillReceipt(input: {
 }): Promise<ReceiptPrintResult> {
   const bill = await getBillByTableSessionId(input.tableSessionId);
   if (!bill) throw new Error('Bill not found for table session.');
+  if (input.splitLabel && !SPLIT_LABELS.includes(input.splitLabel)) throw new Error('Invalid split label. Use A, B, or C.');
   const payload = buildReceiptPayload(bill, input.locale);
   const settings = getPosOperationalSettings();
   const assignedPrinter = settings.printers[settings.printerAssignments.receipt];
