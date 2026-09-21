@@ -36,6 +36,7 @@ import {
   settleDebt,
 } from './billing/service';
 import { InventoryAdminApi } from './inventory/controller';
+import { initializeInventorySettings } from './inventory/service';
 import { ReportsApi } from './reports/controller';
 import { AdminAuditApi } from './audit/controller';
 import { ensureStarterRestaurantData } from './bootstrap/demoData';
@@ -441,7 +442,10 @@ function errorHandler(error: unknown, _req: Request, res: Response, _next: NextF
 }
 
 export function createApp() {
-  const settingsReady = initializePosOperationalSettings();
+  const settingsReady = Promise.all([
+    initializePosOperationalSettings(),
+    initializeInventorySettings(),
+  ]);
   void (async () => {
     await ensureDefaultSuperadmin();
     await ensureStarterRestaurantData();

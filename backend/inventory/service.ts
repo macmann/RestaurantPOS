@@ -2,6 +2,8 @@ import { recordAuditEvent } from '../audit/service';
 import { can, type AuthenticatedUser } from '../auth/policies';
 import { Actions } from '../auth/permissions';
 import { getCurrentBranchId } from '../config/branch';
+import { isSqlRepositoryEnabled } from '../db/client';
+import { getRecord, putRecord } from '../db/repositoryStore';
 import {
   createInventoryItem,
   createInventoryDeduction,
@@ -63,6 +65,48 @@ export interface LowStockAlert {
 
 let deductionTriggerPolicy: DeductionTriggerPolicy = 'on_in_preparation';
 let negativeStockPolicy: NegativeStockPolicy = 'prevent';
+let settingsInitialization: Promise<void> | null = null;
+
+interface InventorySettings {
+  deductionTriggerPolicy: DeductionTriggerPolicy;
+  negativeStockPolicy: NegativeStockPolicy;
+}
+
+function currentInventorySettings(): InventorySettings {
+  return { deductionTriggerPolicy, negativeStockPolicy };
+}
+
+function isDeductionTriggerPolicy(value: unknown): value is DeductionTriggerPolicy {
+  return value === 'on_in_preparation' || value === 'on_completed' || value === 'manual';
+}
+
+function isNegativeStockPolicy(value: unknown): value is NegativeStockPolicy {
+  return value === 'prevent' || value === 'allow';
+}
+
+async function persistInventorySettings(previous: InventorySettings): Promise<void> {
+  if (!isSqlRepositoryEnabled()) return;
+  try {
+    await putRecord('settings:inventory', getCurrentBranchId(), currentInventorySettings());
+  } catch (error) {
+    deductionTriggerPolicy = previous.deductionTriggerPolicy;
+    negativeStockPolicy = previous.negativeStockPolicy;
+    throw error;
+  }
+}
+
+/** Load branch-scoped inventory configuration before requests are served. */
+export function initializeInventorySettings(forceReload = false): Promise<void> {
+  if (!isSqlRepositoryEnabled()) return Promise.resolve();
+  if (settingsInitialization && !forceReload) return settingsInitialization;
+  settingsInitialization = (async () => {
+    const saved = await getRecord<InventorySettings>('settings:inventory', getCurrentBranchId());
+    if (!saved) return;
+    if (isDeductionTriggerPolicy(saved.deductionTriggerPolicy)) deductionTriggerPolicy = saved.deductionTriggerPolicy;
+    if (isNegativeStockPolicy(saved.negativeStockPolicy)) negativeStockPolicy = saved.negativeStockPolicy;
+  })();
+  return settingsInitialization;
+}
 
 function createId(prefix: string): string {
   return `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
@@ -171,7 +215,10 @@ export async function getCurrentBalance(itemId: string): Promise<number> {
 
 export async function setDeductionTriggerPolicy(user: AuthenticatedUser, policy: DeductionTriggerPolicy): Promise<DeductionTriggerPolicy> {
   if (!can(user, Actions.AdjustStock)) throw new Error('Forbidden: cannot configure inventory policy.');
+  if (!isDeductionTriggerPolicy(policy)) throw new Error('policy must be on_in_preparation, on_completed, or manual.');
+  const previous = currentInventorySettings();
   deductionTriggerPolicy = policy;
+  await persistInventorySettings(previous);
   return deductionTriggerPolicy;
 }
 
@@ -181,7 +228,10 @@ export function getDeductionTriggerPolicy(): DeductionTriggerPolicy {
 
 export async function setNegativeStockPolicy(user: AuthenticatedUser, policy: NegativeStockPolicy): Promise<NegativeStockPolicy> {
   if (!can(user, Actions.AdjustStock)) throw new Error('Forbidden: cannot configure inventory policy.');
+  if (!isNegativeStockPolicy(policy)) throw new Error('policy must be prevent or allow.');
+  const previous = currentInventorySettings();
   negativeStockPolicy = policy;
+  await persistInventorySettings(previous);
   return negativeStockPolicy;
 }
 
