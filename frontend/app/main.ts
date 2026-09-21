@@ -6,7 +6,7 @@ import { loadOrderProgressForWaiter } from '../waiter/order-progress';
 import { orderItemPreparationStatus } from '../orders/order-screen';
 import { loadAdminMenuDashboard } from '../admin/menu-management';
 import { loadAdminAuditViewer } from '../admin/audit-viewer';
-import { ApiClientError, apiClient, type PrinterStatus } from '../api/client';
+import { ApiClientError, apiClient, type PrinterStatus, type SystemStatus } from '../api/client';
 import { loadCashierTableFloor } from '../cashier/table-floor';
 import { closePaidTableFromBillingScreen } from '../billing/billing-screen';
 import type { OrderRecord, OrderStatus } from '../../backend/orders/repository';
@@ -780,6 +780,42 @@ function printerStatusCard(label: string, printer: SuperadminPrinterSettings, li
   `;
 }
 
+function systemMonitorCards(status?: SystemStatus, error?: string): string {
+  if (!status) return `
+    <div class="superadmin-monitor-card">
+      <span class="badge critical">Unavailable</span>
+      <strong>System monitor</strong>
+      <small>${escapeHtml(error ?? 'The live system check could not be loaded.')}</small>
+    </div>
+  `;
+
+  const databaseTone = status.database.status === 'operational' ? 'ready' : status.database.status === 'unavailable' ? 'critical' : 'warning';
+  const databaseLabel = status.database.status === 'operational' ? 'Connected' : status.database.status === 'unavailable' ? 'Not working' : 'Not configured';
+  const latency = status.database.latencyMs === undefined ? '' : ` · ${status.database.latencyMs} ms`;
+  return `
+    <div class="superadmin-monitor-card">
+      <span class="badge ready">Working</span>
+      <strong>POS API</strong>
+      <span>Uptime: ${formatUptime(status.api.uptimeSeconds)}</span>
+      <small>${escapeHtml(status.api.detail)}</small>
+    </div>
+    <div class="superadmin-monitor-card">
+      <span class="badge ${databaseTone}">${databaseLabel}</span>
+      <strong>Database</strong>
+      <span>${escapeHtml(status.database.backend === 'postgres' ? 'PostgreSQL' : 'Memory only')}${latency}</span>
+      <small>${escapeHtml(status.database.target)}</small>
+      <small>${escapeHtml(status.database.detail)}</small>
+    </div>
+  `;
+}
+
+function formatUptime(totalSeconds: number): string {
+  const days = Math.floor(totalSeconds / 86_400);
+  const hours = Math.floor((totalSeconds % 86_400) / 3_600);
+  const minutes = Math.floor((totalSeconds % 3_600) / 60);
+  return [days ? `${days}d` : '', hours ? `${hours}h` : '', `${minutes}m`].filter(Boolean).join(' ');
+}
+
 
 function localeOptionsHtml(selectedLocale: SupportedLocale): string {
   return listLocaleOptions().map((option) => `
@@ -877,10 +913,15 @@ async function renderStaffSettings(isSuperadminPanel = false): Promise<HTMLEleme
   if (isSuperadminPanel) section.classList.add('superadmin-page');
 
   const panel = el('section', isSuperadminPanel ? 'admin-panel superadmin-panel' : 'admin-panel');
+  let systemStatus: SystemStatus | undefined;
+  let systemStatusError: string | undefined;
   const [users, settingsResponse, printerStatuses] = await Promise.all([
     apiClient.listUsers(),
     apiClient.getSettings(),
     isSuperadminPanel ? apiClient.getPrinterStatuses().catch(() => ({} as Record<string, PrinterStatus>)) : Promise.resolve({} as Record<string, PrinterStatus>),
+    isSuperadminPanel ? apiClient.getSystemStatus().then((value) => { systemStatus = value; }).catch((caught) => {
+      systemStatusError = caught instanceof Error ? caught.message : 'The live system check failed.';
+    }) : Promise.resolve(),
   ]);
   const settings = normalizeOperationalSettings(settingsResponse);
   const typography = getTypographyForLocale(settings.localization.defaultLocale);
@@ -922,6 +963,9 @@ async function renderStaffSettings(isSuperadminPanel = false): Promise<HTMLEleme
           <div><strong>${activeUsers}</strong><span>Active users</span></div>
           <div><strong>${inactiveUsers}</strong><span>Inactive users</span></div>
           <div><strong>${roleCount}</strong><span>Roles in use</span></div>
+        </div>
+        <div class="superadmin-monitor" aria-label="Live system monitor">
+          ${systemMonitorCards(systemStatus, systemStatusError)}
         </div>
         <div class="superadmin-printers">
           ${printerStatusCard('Receipts', settings.printers[settings.printerAssignments.receipt], printerStatuses[settings.printerAssignments.receipt])}

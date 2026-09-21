@@ -54,6 +54,18 @@ export interface PrinterStatus {
   detail: string;
 }
 
+export interface SystemStatus {
+  checkedAt: string;
+  api: { status: 'operational'; uptimeSeconds: number; detail: string };
+  database: {
+    status: 'operational' | 'unavailable' | 'not_configured';
+    backend: 'postgres' | 'memory';
+    target: string;
+    latencyMs?: number;
+    detail: string;
+  };
+}
+
 export class ApiClientError extends Error {
   constructor(
     message: string,
@@ -279,6 +291,10 @@ async function requestInProcess<T>(path: string, method: string, body: unknown, 
     if (parts[2] === 'printers' && parts[3] === 'status' && method === 'GET') {
       const printerStatus = await backendModule<any>('../../backend/hardware/printerStatus.js');
       return printerStatus.getPrinterStatuses() as Promise<T>;
+    }
+    if (parts[2] === 'system' && parts[3] === 'status' && method === 'GET') {
+      const systemStatus = await backendModule<any>('../../backend/system/status.js');
+      return systemStatus.getSystemStatus() as Promise<T>;
     }
     if (method === 'PUT') return { branch: branch.getRuntimeSettings().branch, inventoryDeductionPolicy: await InventoryAdminApi.getDeductionPolicy(), pos: posSettings.updatePosOperationalSettings((body as any).pos ?? body) } as T;
     return { branch: branch.getRuntimeSettings().branch, inventoryDeductionPolicy: await InventoryAdminApi.getDeductionPolicy(), pos: posSettings.getPosOperationalSettings() } as T;
@@ -612,6 +628,10 @@ export class RestaurantApiClient {
 
   getPrinterStatuses(): Promise<Record<string, PrinterStatus>> {
     return this.request('/api/settings/printers/status');
+  }
+
+  getSystemStatus(): Promise<SystemStatus> {
+    return this.request('/api/settings/system/status');
   }
 
   updateSettings(input: unknown) {

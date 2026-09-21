@@ -93,6 +93,15 @@ async function runApiIntegration(): Promise<void> {
     const unauthorizedPrinterStatus = await apiRequest(server.baseUrl, '/api/settings/printers/status', { token: manager.token });
     assert(unauthorizedPrinterStatus.status === 403, `Printer connection details should remain superadmin-only, got ${unauthorizedPrinterStatus.status}.`);
 
+    const systemStatusResponse = await apiRequest<{ data: { api: { status: string; uptimeSeconds: number }; database: { status: string; backend: string; detail: string }; checkedAt: string } }>(server.baseUrl, '/api/settings/system/status', { token: superadmin.token });
+    assert(systemStatusResponse.status === 200, `Superadmin should load the live system monitor, got ${systemStatusResponse.status}.`);
+    assert(systemStatusResponse.body.data.api.status === 'operational', 'System monitor should report the API request as operational.');
+    assert(systemStatusResponse.body.data.api.uptimeSeconds >= 0, 'System monitor should expose actual process uptime.');
+    assert(systemStatusResponse.body.data.database.backend === 'memory', 'Default test runtime should accurately identify its in-memory repository backend.');
+    assert(systemStatusResponse.body.data.database.status === 'not_configured', 'In-memory persistence must not be presented as a connected database.');
+    const unauthorizedSystemStatus = await apiRequest(server.baseUrl, '/api/settings/system/status', { token: manager.token });
+    assert(unauthorizedSystemStatus.status === 403, `Database connection details should remain superadmin-only, got ${unauthorizedSystemStatus.status}.`);
+
     const superadminMenuItem = await apiRequest<{ data: { id: string; name: string } }>(server.baseUrl, '/api/menu/items', {
       method: 'POST',
       token: superadmin.token,

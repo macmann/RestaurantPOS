@@ -510,11 +510,12 @@ button { min-height: var(--tap); touch-action: manipulation; }
 .superadmin-overview-card h3 { margin-bottom: 0.35rem; font-size: clamp(1.45rem, 3vw, 2.1rem); }
 .superadmin-overview-card p { margin: 0.2rem 0; }
 .superadmin-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.65rem; }
-.superadmin-metrics div, .superadmin-printer-card { border: 1px solid rgb(255 255 255 / 14%); border-radius: 1rem; background: rgb(255 255 255 / 10%); padding: 0.85rem; backdrop-filter: blur(12px); }
+.superadmin-metrics div, .superadmin-printer-card, .superadmin-monitor-card { border: 1px solid rgb(255 255 255 / 14%); border-radius: 1rem; background: rgb(255 255 255 / 10%); padding: 0.85rem; backdrop-filter: blur(12px); }
 .superadmin-metrics strong { display: block; font-size: clamp(1.45rem, 4vw, 2.1rem); letter-spacing: -0.06em; }
 .superadmin-metrics span { display: block; margin-top: 0.1rem; font-size: 0.78rem; font-weight: 850; }
 .superadmin-printers { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.65rem; }
-.superadmin-printer-card { display: grid; gap: 0.35rem; }
+.superadmin-monitor { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.65rem; }
+.superadmin-printer-card, .superadmin-monitor-card { display: grid; gap: 0.35rem; }
 .superadmin-printer-card strong { font-size: 1rem; }
 .superadmin-printer-card .badge { width: fit-content; }
 .superadmin-printer-card small { overflow-wrap: anywhere; }
@@ -563,5 +564,5 @@ button { min-height: var(--tap); touch-action: manipulation; }
 }
 
 @media (max-width: 520px) {
-  .superadmin-metrics, .superadmin-printers { grid-template-columns: 1fr; }
+  .superadmin-metrics, .superadmin-printers, .superadmin-monitor { grid-template-columns: 1fr; }
 }
