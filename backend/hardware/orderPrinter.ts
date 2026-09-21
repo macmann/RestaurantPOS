@@ -13,8 +13,15 @@ export interface OrderPrintResult {
 }
 
 function orderDestinationLine(order: OrderRecord): string {
-  if (order.serviceMode === 'dine_in') return `Table: ${order.tableName ?? order.tableId ?? order.tableSessionId ?? 'Unassigned table'}`;
+  if (order.serviceMode === 'dine_in') return `*** TABLE: ${order.tableName ?? order.tableId ?? 'UNASSIGNED'} ***`;
   return order.takeoutName?.trim() ? `Takeout: ${order.takeoutName.trim()}` : 'Takeout: Guest';
+}
+
+function ticketDateTime(iso: string): string {
+  return new Intl.DateTimeFormat('en-GB', {
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  }).format(new Date(iso));
 }
 
 export class SimulatorOrderPrinterAdapter {
@@ -30,9 +37,10 @@ export class SimulatorOrderPrinterAdapter {
     const renderedText = [
       `${station.toUpperCase()} ORDER SLIP`,
       `Station: ${settings.prepStations.find((row) => row.id === station)?.displayName ?? station}`,
-      `Order: ${order.id}`,
+      `Date & time: ${ticketDateTime(printedAt)}`,
+      '='.repeat(42),
       orderDestinationLine(order),
-      ...(order.tableSessionId ? [`Table session: ${order.tableSessionId}`] : []),
+      '='.repeat(42),
       ...items.map((item) => `${item.quantity} x ${item.name}${item.note ? ` — ${item.note}` : ''}`),
     ].join('\n');
     if (printer.connectionType === 'network') {

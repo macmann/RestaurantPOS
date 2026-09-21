@@ -133,6 +133,7 @@ async function runEndToEndPosFlow(): Promise<void> {
   const tableSession = await openTableSession(cashier, { tableId: table.id, guestCount: 4, branchId });
   await assertRejects(() => openTableSession(cashier, { tableId: table.id, guestCount: 2, branchId }), 'active session already exists');
 
+  const draftOrderPrinter = resetOrderPrinterAdapter();
   let order = await createOrderDraft(waiter, {
     branchId,
     serviceMode: 'dine_in',
@@ -141,6 +142,7 @@ async function runEndToEndPosFlow(): Promise<void> {
   });
   assertEqual(order.subtotal, 15, 'Order subtotal should reflect seeded cart items');
   assertEqual(order.tableName, table.name, 'Dine-in orders should carry the table name for prep and printer routing.');
+  assertEqual(draftOrderPrinter.jobs.length, 0, 'Adding the first product must not print a prep ticket before order save.');
   await assertRejects(() => closeTableSession(cashier, tableSession.id), 'Cannot close table session while order');
 
   order = await editOrderBeforePayment(waiter, order.id, {
@@ -149,6 +151,7 @@ async function runEndToEndPosFlow(): Promise<void> {
     reason: 'Guest added one more portion',
   });
   assertEqual(order.subtotal, 22.5, 'Edited order subtotal should be recalculated');
+  assertEqual(draftOrderPrinter.jobs.length, 0, 'Editing draft products must not print a prep ticket before order save.');
 
   order = await transitionOrderStatus(waiter, order.id, order.version, 'in_preparation');
   const inventoryAfterPrep = await listInventoryWithBalances();
@@ -163,8 +166,10 @@ async function runEndToEndPosFlow(): Promise<void> {
   const printedTickets = await orderPrinter.printOrderForConfiguredStations(order);
   const kitchenSlip = printedTickets.find((ticket) => ticket.station === 'kitchen');
   assert(kitchenSlip, 'Kitchen print slip should be generated for kitchen order items.');
-  assert(kitchenSlip.renderedText.includes(`Order: ${order.id}`), 'Kitchen print slip should include the order number.');
-  assert(kitchenSlip.renderedText.includes(`Table: ${table.name}`), 'Kitchen print slip should include the table name.');
+  assert(!kitchenSlip.renderedText.includes(order.id), 'Kitchen print slip should omit the internal order number.');
+  assert(!kitchenSlip.renderedText.includes(tableSession.id), 'Kitchen print slip should omit the internal table session ID.');
+  assert(kitchenSlip.renderedText.includes(`*** TABLE: ${table.name} ***`), 'Kitchen print slip should prominently include the table name.');
+  assert(kitchenSlip.renderedText.includes('Date & time:'), 'Kitchen print slip should include its print date and time.');
   await updateKdsItemProgress(kitchen, order.id, kitchenTicket.orderItemId, 'ready');
   const activeKitchenQueue = await getKdsSnapshot('kitchen', 'active');
   const kitchenHistory = await getKdsSnapshot('kitchen', 'history');
