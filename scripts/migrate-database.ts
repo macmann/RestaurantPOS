@@ -1,3 +1,4 @@
+import '../backend/config/environment';
 import { closeDatabasePool } from '../backend/db/client';
 import { runInitialRestaurantPosMigration } from '../backend/db/migrations';
 
