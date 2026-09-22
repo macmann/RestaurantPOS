@@ -2,6 +2,10 @@ import { isSqlRepositoryEnabled } from '../db/client';
 import { getRecord, listRecords, putRecord } from '../db/repositoryStore';
 
 export type StockMovementType = 'sale_deduction' | 'manual_adjustment' | 'wastage' | 'restock';
+export type StockMovementReasonCode =
+  | 'sale' | 'initial_stock' | 'purchase_receipt' | 'count_correction'
+  | 'spoilage' | 'damage' | 'expired' | 'staff_meal' | 'complimentary'
+  | 'transfer' | 'return_to_supplier' | 'other';
 
 export interface InventoryItemRecord {
   id: string;
@@ -23,8 +27,17 @@ export interface StockMovementRecord {
   movementType: StockMovementType;
   quantityDelta: number;
   reason?: string;
+  /** Machine-readable reason used for filtering and grouping; reason remains the human note. */
+  reasonCode?: StockMovementReasonCode;
+  reasonNote?: string;
   referenceId?: string;
+  supplierId?: string;
+  receivingReference?: string;
+  /** Purchase/standard cost snapshot for this movement, in the branch currency. */
+  unitCost?: number;
+  totalCost?: number;
   actorUserId?: string;
+  approverUserId?: string;
   createdAt: string;
 }
 

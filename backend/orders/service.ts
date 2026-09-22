@@ -359,6 +359,7 @@ async function deductInventoryForOrder(order: OrderRecord, trigger: string, acto
           movementType: 'sale_deduction',
           quantityDelta: -requirement.quantity,
           reason: `Auto deduction for order ${order.id}, order item ${item.id}`,
+          reasonCode: 'sale',
           referenceId: order.id,
           idempotencyKey: `${order.id}:${item.id}:${trigger}:${requirement.inventoryItemId}`,
         },

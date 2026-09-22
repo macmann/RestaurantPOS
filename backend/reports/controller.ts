@@ -7,6 +7,12 @@ import {
   getExceptionReport,
   getStationReport,
   getProductMixReport,
+  getInventoryControlReport,
+  getStockValuationReport,
+  getRestockHistoryReport,
+  getWastageReport,
+  getUsageVarianceReport,
+  getOperationsReport,
   type ReportFilters,
   type SalesPeriod,
 } from './service';
@@ -22,4 +28,10 @@ export const ReportsApi = {
   exceptions: (user: AuthenticatedUser, filters?: ReportFilters) => getExceptionReport(user, filters),
   stations: (user: AuthenticatedUser, filters?: ReportFilters) => getStationReport(user, filters),
   productMix: (user: AuthenticatedUser, filters?: ReportFilters) => getProductMixReport(user, filters),
+  inventoryControl: (user: AuthenticatedUser, filters?: ReportFilters) => getInventoryControlReport(user, filters),
+  stockValuation: (user: AuthenticatedUser, filters?: ReportFilters) => getStockValuationReport(user, filters),
+  restockHistory: (user: AuthenticatedUser, filters?: ReportFilters) => getRestockHistoryReport(user, filters),
+  wastage: (user: AuthenticatedUser, filters?: ReportFilters) => getWastageReport(user, filters),
+  usageVariance: (user: AuthenticatedUser, filters?: ReportFilters) => getUsageVarianceReport(user, filters),
+  operations: (user: AuthenticatedUser, filters?: ReportFilters) => getOperationsReport(user, filters),
 };

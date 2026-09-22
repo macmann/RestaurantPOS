@@ -29,6 +29,8 @@ type SalesReport = Awaited<ReturnType<typeof import('../../backend/reports/contr
 type ExceptionReport = Awaited<ReturnType<typeof import('../../backend/reports/controller').ReportsApi.exceptions>>;
 type StationReport = Awaited<ReturnType<typeof import('../../backend/reports/controller').ReportsApi.stations>>;
 type ProductMixReport = Awaited<ReturnType<typeof import('../../backend/reports/controller').ReportsApi.productMix>>;
+type InventoryControlReport = Awaited<ReturnType<typeof import('../../backend/reports/controller').ReportsApi.inventoryControl>>;
+type OperationsReport = Awaited<ReturnType<typeof import('../../backend/reports/controller').ReportsApi.operations>>;
 type ReportFilters = import('../../backend/reports/service').ReportFilters;
 
 declare global {
@@ -311,6 +313,8 @@ async function requestInProcess<T>(path: string, method: string, body: unknown, 
     if (parts[2] === 'product-mix') return ReportsApi.productMix(await userFor(userId), Object.fromEntries(url.searchParams.entries())) as Promise<T>;
     if (parts[2] === 'sales') return ReportsApi.sales(await userFor(userId), parts[3], Object.fromEntries(url.searchParams.entries())) as Promise<T>;
     if (parts[2] === 'inventory-usage') return ReportsApi.inventoryUsage(await userFor(userId), Object.fromEntries(url.searchParams.entries())) as Promise<T>;
+    if (parts[2] === 'inventory-control') return ReportsApi.inventoryControl(await userFor(userId), Object.fromEntries(url.searchParams.entries())) as Promise<T>;
+    if (parts[2] === 'operations') return ReportsApi.operations(await userFor(userId), Object.fromEntries(url.searchParams.entries())) as Promise<T>;
     if (parts[2] === 'financial-summary') return ReportsApi.financialSummary(await userFor(userId), Object.fromEntries(url.searchParams.entries())) as Promise<T>;
     if (parts[2] === 'exceptions') return ReportsApi.exceptions(await userFor(userId), Object.fromEntries(url.searchParams.entries())) as Promise<T>;
   }
@@ -656,6 +660,14 @@ export class RestaurantApiClient {
 
   getInventoryUsageReport(): Promise<InventoryUsageReport> {
     return this.request<InventoryUsageReport>('/api/reports/inventory-usage');
+  }
+
+  getInventoryControlReport(filters: ReportFilters = {}): Promise<InventoryControlReport> {
+    return this.request<InventoryControlReport>(`/api/reports/inventory-control${queryString(filters as Record<string, unknown>)}`);
+  }
+
+  getOperationsReport(filters: ReportFilters = {}): Promise<OperationsReport> {
+    return this.request<OperationsReport>(`/api/reports/operations${queryString(filters as Record<string, unknown>)}`);
   }
 
   getFinancialSummaryReport(): Promise<FinancialSummaryReport> {

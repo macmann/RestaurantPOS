@@ -123,6 +123,8 @@ export async function ensureStarterRestaurantData(): Promise<void> {
             movementType: 'restock',
             quantityDelta: 500,
             reason: 'Starter POS stock top-up',
+            reasonCode: 'purchase_receipt',
+            receivingReference: `starter:${inventoryItem.id}`,
             idempotencyKey: `starter:${inventoryItem.id}:${Math.floor(Date.now() / 86_400_000)}`,
           });
         }
