@@ -3,6 +3,10 @@ import { getPosOperationalSettings, listPrepStations } from '../config/posSettin
 import type { Station } from '../kds/repository';
 import { MYANMAR_PRINT_FONT_FAMILY, sendToNetworkPrinter, sendToWindowsPrinter } from './printerTransport';
 
+// Unicode tickets are rasterized with a wider font than the printer's native
+// text mode, so a 42-character rule wraps on common 80 mm paper.
+const ORDER_SLIP_SEPARATOR = '='.repeat(32);
+
 export interface OrderPrintResult {
   printJobId: string;
   printerId: string;
@@ -38,9 +42,9 @@ export class SimulatorOrderPrinterAdapter {
       `${station.toUpperCase()} ORDER SLIP`,
       `Station: ${settings.prepStations.find((row) => row.id === station)?.displayName ?? station}`,
       `Date & time: ${ticketDateTime(printedAt)}`,
-      '='.repeat(42),
+      ORDER_SLIP_SEPARATOR,
       orderDestinationLine(order),
-      '='.repeat(42),
+      ORDER_SLIP_SEPARATOR,
       ...items.map((item) => `${item.quantity} x ${item.name}${item.note ? ` — ${item.note}` : ''}`),
     ].join('\n');
     if (printer.connectionType === 'network') {
