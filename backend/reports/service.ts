@@ -1,10 +1,12 @@
 import { can, type AuthenticatedUser } from '../auth/policies';
 import { Actions } from '../auth/permissions';
 import { getCurrentBranchId } from '../config/branch';
+import { getRuntimeSettings } from '../config/branch';
 import { t, normalizeLocale, getTypographyForLocale } from '../i18n/service';
 import { listBills, type BillLineItem, type BillRecord, type BillSplit } from '../billing/repository';
 import { listInventoryItems, listStockMovements, type InventoryItemRecord, type StockMovementRecord } from '../inventory/repository';
 import { listOrders, type OrderItem, type OrderRecord } from '../orders/repository';
+import { getBusinessDate } from '../../shared/business-day';
 
 export type SalesPeriod = 'day' | 'week' | 'month';
 export type ReportExportFormat = 'csv' | 'print';
@@ -62,6 +64,7 @@ export interface SalesReportRow {
   orderCount: number;
   quantitySold: number;
   revenue: number;
+  metrics: ReportSalesMetrics;
   invoiceCount: number;
   invoiceTotal: number;
   invoices: SalesInvoiceRow[];
@@ -72,6 +75,20 @@ export interface SalesReportRow {
     grossSales: number;
     orderIds: string[];
   }>;
+}
+
+export interface ReportSalesMetrics {
+  grossOrderedSales: number;
+  discounts: number;
+  tax: number;
+  netSales: number;
+  collectedPayments: number;
+  refunds: number;
+  voids: number;
+  outstandingBalance: number;
+  recognizedRevenue: number;
+  cancelledOrderCount: number;
+  cancelledOrderValue: number;
 }
 
 export interface InventoryUsageReportRow {
@@ -89,7 +106,7 @@ export interface InventoryUsageReportRow {
 }
 
 export interface FinancialSummaryRow {
-  metric: 'revenue' | 'cogs' | 'gross_profit' | 'gross_margin_percent';
+  metric: keyof ReportSalesMetrics | 'revenue' | 'cogs' | 'gross_profit' | 'gross_margin_percent';
   amount: number;
 }
 
@@ -178,9 +195,11 @@ function orderMatchesFilters(order: OrderRecord, filters: NormalizedFilters, bil
 }
 
 function periodKey(dateIso: string, period: SalesPeriod): string {
-  const date = new Date(dateIso);
-  if (period === 'day') return date.toISOString().slice(0, 10);
-  if (period === 'month') return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
+  const branch = getRuntimeSettings().branch;
+  const businessDate = getBusinessDate(dateIso, { timezone: branch.timezone, businessDayCutoff: branch.businessDayCutoff });
+  const date = new Date(`${businessDate}T00:00:00.000Z`);
+  if (period === 'day') return businessDate;
+  if (period === 'month') return businessDate.slice(0, 7);
 
   const weekDate = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
   const day = weekDate.getUTCDay() || 7;
@@ -188,6 +207,23 @@ function periodKey(dateIso: string, period: SalesPeriod): string {
   const yearStart = new Date(Date.UTC(weekDate.getUTCFullYear(), 0, 1));
   const weekNo = Math.ceil(((weekDate.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
   return `${weekDate.getUTCFullYear()}-W${String(weekNo).padStart(2, '0')}`;
+}
+
+function emptySalesMetrics(): ReportSalesMetrics {
+  return { grossOrderedSales: 0, discounts: 0, tax: 0, netSales: 0, collectedPayments: 0, refunds: 0, voids: 0, outstandingBalance: 0, recognizedRevenue: 0, cancelledOrderCount: 0, cancelledOrderValue: 0 };
+}
+
+function ledgerAmounts(bill: BillRecord, filters: NormalizedFilters) {
+  let payments = 0;
+  let refunds = 0;
+  let voids = 0;
+  for (const payment of flattenBillSplits(bill).flatMap((split) => split.payments).filter((entry) => isWithinRange(entry.paidAt, filters))) {
+    const type = payment.type ?? 'payment';
+    if (type === 'refund' && payment.status !== 'failed') refunds += payment.amount;
+    else if (type === 'void' && payment.status !== 'failed') voids += payment.amount;
+    else if (type === 'payment' && payment.status !== 'failed' && payment.status !== 'authorized') payments += payment.amount;
+  }
+  return { collectedPayments: roundMoney(payments - refunds - voids), refunds: roundMoney(refunds), voids: roundMoney(voids) };
 }
 
 function lineRevenue(item: Pick<OrderItem, 'lineTotal'> | Pick<BillLineItem, 'lineTotal'>): number {
@@ -260,16 +296,24 @@ export async function getSalesReport(user: AuthenticatedUser, period: SalesPerio
       orderCount: 0,
       quantitySold: 0,
       revenue: 0,
+      metrics: emptySalesMetrics(),
       invoiceCount: 0,
       invoiceTotal: 0,
       invoices: [],
       items: [],
     };
+    if (order.status === 'cancelled') {
+      bucket.metrics.cancelledOrderCount += 1;
+      bucket.metrics.cancelledOrderValue = roundMoney(bucket.metrics.cancelledOrderValue + order.items.reduce((sum, item) => sum + lineRevenue(item), 0));
+      buckets.set(key, bucket);
+      continue;
+    }
     bucket.orderCount += 1;
 
     for (const item of order.items) {
       bucket.quantitySold = roundQuantity(bucket.quantitySold + item.quantity);
       bucket.revenue = roundMoney(bucket.revenue + lineRevenue(item));
+      bucket.metrics.grossOrderedSales = roundMoney(bucket.metrics.grossOrderedSales + lineRevenue(item));
       const drilldown = bucket.items.find((row) => row.menuItemId === item.menuItemId) ?? {
         menuItemId: item.menuItemId,
         itemName: item.name,
@@ -294,6 +338,7 @@ export async function getSalesReport(user: AuthenticatedUser, period: SalesPerio
       orderCount: 0,
       quantitySold: 0,
       revenue: 0,
+      metrics: emptySalesMetrics(),
       invoiceCount: 0,
       invoiceTotal: 0,
       invoices: [],
@@ -303,6 +348,21 @@ export async function getSalesReport(user: AuthenticatedUser, period: SalesPerio
     bucket.invoiceCount += 1;
     bucket.invoiceTotal = roundMoney(bucket.invoiceTotal + invoice.amount);
     bucket.invoices.push(invoice);
+    const ledger = ledgerAmounts(bill, normalized);
+    bucket.metrics.collectedPayments = roundMoney(bucket.metrics.collectedPayments + ledger.collectedPayments);
+    bucket.metrics.refunds = roundMoney(bucket.metrics.refunds + ledger.refunds);
+    bucket.metrics.voids = roundMoney(bucket.metrics.voids + ledger.voids);
+    if (bill.state !== 'void') {
+      const splits = flattenBillSplits(bill).filter((split) => split.state !== 'void');
+      const gross = splits.reduce((sum, split) => sum + split.subtotal, 0);
+      const discounts = splits.reduce((sum, split) => sum + split.discountTotal, 0);
+      const tax = splits.reduce((sum, split) => sum + split.taxTotal, 0);
+      bucket.metrics.discounts = roundMoney(bucket.metrics.discounts + discounts);
+      bucket.metrics.tax = roundMoney(bucket.metrics.tax + tax);
+      bucket.metrics.netSales = roundMoney(bucket.metrics.netSales + gross - discounts);
+      bucket.metrics.recognizedRevenue = roundMoney(bucket.metrics.recognizedRevenue + gross - discounts + tax);
+      bucket.metrics.outstandingBalance = roundMoney(bucket.metrics.outstandingBalance + splits.reduce((sum, split) => sum + split.unpaidBalance, 0));
+    }
     buckets.set(key, bucket);
   }
 
@@ -320,13 +380,20 @@ export async function getSalesReport(user: AuthenticatedUser, period: SalesPerio
       { key: 'revenue', label: t(normalized.locale, 'reportHeadings', 'revenue'), type: 'currency' },
     ],
     rows,
-    {
+    (() => {
+      const metrics = rows.reduce<ReportSalesMetrics>((total, row) => {
+        for (const key of Object.keys(total) as Array<keyof ReportSalesMetrics>) total[key] = roundMoney(total[key] + row.metrics[key]);
+        return total;
+      }, emptySalesMetrics());
+      return {
       orderCount: rows.reduce((sum, row) => sum + row.orderCount, 0),
       quantitySold: roundQuantity(rows.reduce((sum, row) => sum + row.quantitySold, 0)),
       revenue: roundMoney(rows.reduce((sum, row) => sum + row.revenue, 0)),
       invoiceCount: rows.reduce((sum, row) => sum + row.invoiceCount, 0),
       invoiceTotal: roundMoney(rows.reduce((sum, row) => sum + row.invoiceTotal, 0)),
-    },
+      ...metrics,
+      };
+    })(),
   );
 }
 
@@ -410,16 +477,13 @@ export async function getInventoryUsageReport(user: AuthenticatedUser, filters: 
   );
 }
 
-function billRevenue(bill: BillRecord): number {
-  return roundMoney(flattenBillSplits(bill).reduce((sum, split) => sum + split.totalDue, 0));
-}
-
 export async function getFinancialSummaryReport(user: AuthenticatedUser, filters: ReportFilters = {}) {
   assertCanViewReports(user);
   const normalized = normalizeFilters(filters);
-  const [bills, movements, orders] = await Promise.all([listBills(), listStockMovements(), listOrders()]);
+  const [bills, movements, orders, sales] = await Promise.all([listBills(), listStockMovements(), listOrders(), getSalesReport(user, 'day', filters)]);
   const matchedBills = bills.filter((bill) => billMatchesFilters(bill, normalized, orders));
-  const revenue = roundMoney(matchedBills.reduce((sum, bill) => sum + billRevenue(bill), 0));
+  // Cash revenue is a ledger measure; totalDue is recognized revenue and can remain unpaid.
+  const revenue = sales.summary.collectedPayments;
   const cogs = roundMoney(
     movements
       .filter((movement) => movement.movementType === 'sale_deduction' && isWithinRange(movement.createdAt, normalized) && matchesBranch(movement, normalized))
@@ -429,6 +493,15 @@ export async function getFinancialSummaryReport(user: AuthenticatedUser, filters
   const grossMarginPercent = revenue === 0 ? 0 : roundMoney((grossProfit / revenue) * 100);
   const rows: FinancialSummaryRow[] = [
     { metric: 'revenue', amount: revenue },
+    { metric: 'grossOrderedSales', amount: sales.summary.grossOrderedSales },
+    { metric: 'discounts', amount: sales.summary.discounts },
+    { metric: 'tax', amount: sales.summary.tax },
+    { metric: 'netSales', amount: sales.summary.netSales },
+    { metric: 'collectedPayments', amount: sales.summary.collectedPayments },
+    { metric: 'refunds', amount: sales.summary.refunds },
+    { metric: 'voids', amount: sales.summary.voids },
+    { metric: 'outstandingBalance', amount: sales.summary.outstandingBalance },
+    { metric: 'recognizedRevenue', amount: sales.summary.recognizedRevenue },
     { metric: 'cogs', amount: cogs },
     { metric: 'gross_profit', amount: grossProfit },
     { metric: 'gross_margin_percent', amount: grossMarginPercent },
@@ -445,6 +518,15 @@ export async function getFinancialSummaryReport(user: AuthenticatedUser, filters
     rows,
     {
       revenue,
+      grossOrderedSales: sales.summary.grossOrderedSales,
+      discounts: sales.summary.discounts,
+      tax: sales.summary.tax,
+      netSales: sales.summary.netSales,
+      collectedPayments: sales.summary.collectedPayments,
+      refunds: sales.summary.refunds,
+      voids: sales.summary.voids,
+      outstandingBalance: sales.summary.outstandingBalance,
+      recognizedRevenue: sales.summary.recognizedRevenue,
       cogs,
       grossProfit,
       grossMarginPercent,
