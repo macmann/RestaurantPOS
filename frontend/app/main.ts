@@ -3,7 +3,7 @@ import { appRoutes, canAccessRoute, defaultRoute, superadminSettingsRoutes, visi
 import type { AuthenticatedUser } from '../../backend/auth/policies';
 import { Actions, RolePermissions, type Action } from '../../backend/auth/permissions';
 import { loadOrderProgressForWaiter } from '../waiter/order-progress';
-import { orderItemPreparationStatus } from '../orders/order-screen';
+import { buildMenuItemAddition, orderItemPreparationStatus } from '../orders/order-screen';
 import { loadAdminMenuDashboard } from '../admin/menu-management';
 import { loadAdminAuditViewer } from '../admin/audit-viewer';
 import { ApiClientError, apiClient, type PrinterStatus, type SystemStatus } from '../api/client';
@@ -2195,11 +2195,7 @@ async function addMenuItemToOrder(tableSessionId: string, menuItemId: string, ac
       items: [{ menuItemId, quantity: 1 }],
     });
   } else {
-    await apiClient.editOrder(session.user.id, activeOrder.id, {
-      expectedVersion: activeOrder.version,
-      addItems: [{ menuItemId, quantity: 1 }],
-      reason: 'POS quick add',
-    });
+    await apiClient.editOrder(session.user.id, activeOrder.id, buildMenuItemAddition(activeOrder, menuItemId));
   }
   render();
 }

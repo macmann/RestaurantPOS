@@ -7,6 +7,25 @@ import type { OrderRecord, OrderStatus } from '../../backend/orders/repository';
 
 export type OrderScreenItemSelection = Pick<OrderMenuItemInput, 'menuItemId' | 'quantity' | 'note' | 'modifiers' | 'allowUnavailableOverride' | 'overrideReason'>;
 
+/**
+ * Build the edit made by tapping a menu tile. Repeated taps represent another
+ * unit of the same cart line, rather than a new, visually duplicated line.
+ */
+export function buildMenuItemAddition(order: OrderRecord, menuItemId: string): EditOrderInput {
+  const existingItem = order.items.find((item) => item.menuItemId === menuItemId);
+  return existingItem
+    ? {
+      expectedVersion: order.version,
+      modifyItems: [{ id: existingItem.id, quantity: existingItem.quantity + 1 }],
+      reason: 'POS quick add',
+    }
+    : {
+      expectedVersion: order.version,
+      addItems: [{ menuItemId, quantity: 1 }],
+      reason: 'POS quick add',
+    };
+}
+
 export async function startDineInOrder(user: AuthenticatedUser, tableSessionId: string, seed?: OrderScreenItemSelection[]) {
   return apiClient.createOrder(user.id, { serviceMode: 'dine_in', tableSessionId, items: seed });
 }
