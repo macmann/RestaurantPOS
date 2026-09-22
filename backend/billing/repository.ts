@@ -128,6 +128,8 @@ export interface BillPayment {
   externalReference?: ExternalPaymentReference;
   linkedPaymentId?: string;
   reason?: string;
+  /** Immutable manager approval captured when the exception is posted. */
+  approvedByUserId?: string;
 }
 
 export interface BillSplit {

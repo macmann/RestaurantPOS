@@ -21,6 +21,9 @@ export const AUDIT_ACTIONS = [
   'cash_drawer_opened',
   'payment_refunded',
   'payment_voided',
+  'item_removed',
+  'item_comped',
+  'price_overridden',
 ] as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
@@ -48,6 +51,10 @@ export interface AuditEventRecord {
   after?: unknown;
   reason?: string;
   metadata?: Record<string, unknown>;
+  /** Immutable exception facts; populated for manager-approved value changes. */
+  originalValue?: unknown;
+  finalValue?: unknown;
+  approverUserId?: string;
 }
 
 export interface AuditEventFilter {

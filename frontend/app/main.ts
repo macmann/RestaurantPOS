@@ -1998,11 +1998,14 @@ async function renderReports(): Promise<HTMLElement> {
   const form = el('form', 'staff-form report-filter-form');
   form.innerHTML = `
     <label>Business date<input type="date" name="businessDate" value="${escapeHtml(params.get('businessDate') ?? defaultDate)}" required></label>
+    <label>Branch<input name="branchId" value="${escapeHtml(params.get('branchId') ?? session?.user.branchId ?? '')}" placeholder="All branches"></label>
     <label>Shift<input name="shiftId" value="${escapeHtml(params.get('shiftId') ?? '')}" placeholder="All shifts"></label>
     <label>Cashier<input name="cashierUserId" value="${escapeHtml(params.get('cashierUserId') ?? '')}" placeholder="All cashiers"></label>
     <label>Waiter<input name="waiterUserId" value="${escapeHtml(params.get('waiterUserId') ?? '')}" placeholder="All waiters"></label>
     <label>Service mode<select name="serviceMode"><option value="">All modes</option><option value="dine_in" ${params.get('serviceMode') === 'dine_in' ? 'selected' : ''}>Dine in</option><option value="takeout" ${params.get('serviceMode') === 'takeout' ? 'selected' : ''}>Takeout</option></select></label>
     <label>Payment method<select name="paymentMethod"><option value="">All methods</option>${['cash', 'card', 'wallet', 'bank_transfer', 'wave_money', 'kbzpay'].map((method) => `<option value="${method}" ${params.get('paymentMethod') === method ? 'selected' : ''}>${method.replace(/_/g, ' ')}</option>`).join('')}</select></label>
+    <label>Exception type<select name="eventType"><option value="">All exceptions</option>${['payment_voids', 'refunds', 'order_cancellations', 'item_removals', 'comps_price_overrides'].map((type) => `<option value="${type}" ${params.get('eventType') === type ? 'selected' : ''}>${type.replace(/_/g, ' ')}</option>`).join('')}</select></label>
+    <label>Reason<input name="reason" value="${escapeHtml(params.get('reason') ?? '')}" placeholder="Reason contains…"></label>
     <button type="submit">Run report</button>`;
   form.addEventListener('submit', (event) => {
     event.preventDefault();
@@ -2053,6 +2056,15 @@ async function renderReports(): Promise<HTMLElement> {
   operations.innerHTML = `<h2>Day activity</h2><p><strong>${summary.orderCount}</strong> orders · <strong>${summary.invoiceCount}</strong> invoices${summary.guestCount === undefined ? '' : ` · <strong>${summary.guestCount}</strong> guests`}</p><p>Average check: <strong>${money(summary.averageCheck)}</strong></p><p>Debts: ${money(summary.debts)} · Outstanding: ${money(summary.outstandingBalances)}</p><p>First transaction: ${summary.firstTransactionAt ? new Date(summary.firstTransactionAt).toLocaleString() : '—'}<br>Last transaction: ${summary.lastTransactionAt ? new Date(summary.lastTransactionAt).toLocaleString() : '—'}</p>`;
   reportBody.append(grossToNet, tender, operations);
   section.append(reportBody);
+
+  const exceptions = await apiClient.getExceptionReport(filters);
+  const exceptionPanel = el('article', 'card report-card exception-report');
+  exceptionPanel.innerHTML = `<h2>Exceptions</h2><p class="muted">Manager review of voids, refunds, cancellations, removals, comps, and overrides.</p>
+    <div class="exception-totals">${Object.entries(exceptions.summary.categoryTotals).map(([category, total]: [string, any]) => `<div><strong>${category.replace(/_/g, ' ')}</strong><span>${total.count} · ${money(total.amount)}</span></div>`).join('')}</div>
+    <div class="table-scroll"><table><thead><tr><th>When</th><th>Type</th><th>Order / invoice</th><th>Table</th><th>Item / payment</th><th>Qty</th><th>Amount</th><th>Reason</th><th>Actor</th><th>Approver</th><th>Original ref.</th></tr></thead><tbody>
+    ${exceptions.rows.map((row: any) => `<tr><td>${new Date(row.occurredAt).toLocaleString()}</td><td>${escapeHtml(row.category.replace(/_/g, ' '))}</td><td>${escapeHtml(row.orderId ?? '—')}<br><small>${escapeHtml(row.invoiceId ?? '')}</small></td><td>${escapeHtml(row.table ?? '—')}</td><td>${escapeHtml(row.itemOrPaymentMethod ?? '—')}</td><td>${row.quantity ?? '—'}</td><td>${money(row.amount)}</td><td>${escapeHtml(row.reason ?? '—')}</td><td>${escapeHtml(row.initiatingUserId ?? '—')}</td><td>${escapeHtml(row.approvingManagerId ?? '—')}</td><td>${escapeHtml(row.originalTransactionReference ?? '—')}</td></tr>`).join('') || '<tr><td colspan="11">No exceptions match these filters.</td></tr>'}
+    </tbody></table></div>`;
+  section.append(exceptionPanel);
   return section;
 }
 

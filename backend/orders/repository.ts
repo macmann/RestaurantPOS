@@ -20,11 +20,16 @@ export interface OrderItem {
 }
 
 export interface OrderChangeEntry {
-  at: string;
-  actorUserId: string;
-  actorRole: string;
-  action: 'item_added' | 'item_modified' | 'item_removed' | 'status_transition' | 'order_cancelled';
-  details: Record<string, unknown>;
+  readonly at: string;
+  readonly actorUserId: string;
+  readonly actorRole: string;
+  readonly approverUserId?: string;
+  readonly action: 'item_added' | 'item_modified' | 'item_removed' | 'status_transition' | 'order_cancelled' | 'item_comped' | 'price_overridden';
+  /** Append-only snapshot. Exception reports must never reconstruct old values from the current order. */
+  readonly details: Readonly<Record<string, unknown>>;
+  readonly originalValue?: unknown;
+  readonly finalValue?: unknown;
+  readonly reason?: string;
 }
 
 export interface OrderRecord {

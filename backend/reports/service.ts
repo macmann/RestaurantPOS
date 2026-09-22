@@ -6,6 +6,7 @@ import { t, normalizeLocale, getTypographyForLocale } from '../i18n/service';
 import { listBills, type BillLineItem, type BillRecord, type BillSplit } from '../billing/repository';
 import { listInventoryItems, listStockMovements, type InventoryItemRecord, type StockMovementRecord } from '../inventory/repository';
 import { listOrders, type OrderItem, type OrderRecord } from '../orders/repository';
+import { listAuditEvents, type AuditEventRecord } from '../audit/repository';
 import { getBusinessDate, getBusinessDayRange } from '../../shared/business-day';
 
 export type SalesPeriod = 'day' | 'week' | 'month';
@@ -22,6 +23,37 @@ export interface ReportFilters {
   serviceMode?: 'dine_in' | 'takeout';
   paymentMethod?: string;
   locale?: string;
+  eventType?: ExceptionCategory;
+  reason?: string;
+}
+
+export type ExceptionCategory = 'payment_voids' | 'refunds' | 'order_cancellations' | 'item_removals' | 'comps_price_overrides';
+
+export interface ExceptionReportRow {
+  id: string;
+  category: ExceptionCategory;
+  businessDate: string;
+  occurredAt: string;
+  branchId: string;
+  orderId?: string;
+  invoiceId?: string;
+  table?: string;
+  itemOrPaymentMethod?: string;
+  quantity?: number;
+  amount: number;
+  reason?: string;
+  initiatingUserId?: string;
+  approvingManagerId?: string;
+  originalTransactionReference?: string;
+  originalValue?: unknown;
+  finalValue?: unknown;
+}
+
+export interface ExceptionReportSummary {
+  count: number;
+  amount: number;
+  categoryTotals: Record<ExceptionCategory, { count: number; amount: number }>;
+  reconciliation: { paymentExceptions: number; cancelledSales: number; itemExceptions: number };
 }
 
 export interface DailySummary {
@@ -205,6 +237,19 @@ function matchesBranch(row: unknown, filters: NormalizedFilters): boolean {
   if (!filters.branchId) return true;
   const branchId = optionalRecordField(row, 'branchId');
   return branchId === filters.branchId;
+}
+
+function exceptionBusinessDate(at: string): string {
+  return getBusinessDate(at, getRuntimeSettings().branch);
+}
+
+function valueFrom(record: unknown, key: string): unknown {
+  return record && typeof record === 'object' ? (record as Record<string, unknown>)[key] : undefined;
+}
+
+function numericValue(record: unknown, key: string): number | undefined {
+  const value = Number(valueFrom(record, key));
+  return Number.isFinite(value) ? value : undefined;
 }
 
 function flattenBillSplits(bill: BillRecord): BillSplit[] {
@@ -681,4 +726,116 @@ export async function getFinancialSummaryReport(user: AuthenticatedUser, filters
       billCount: matchedBills.length,
     },
   );
+}
+
+function exceptionOrderMatches(order: OrderRecord, filters: NormalizedFilters, bills: BillRecord[]): boolean {
+  if (!matchesBranch(order, filters)) return false;
+  if (filters.waiterUserId && order.createdBy !== filters.waiterUserId) return false;
+  if (filters.shiftId && !matchesOptionalField(order, 'shiftId', filters.shiftId)) return false;
+  if (filters.cashierUserId && !bills.some((bill) => billOrders(bill, [order]).length && billCashierIds(bill).has(filters.cashierUserId!))) return false;
+  return true;
+}
+
+function reportReasonMatches(reason: string | undefined, filter: string | undefined): boolean {
+  return !filter || !!reason?.toLocaleLowerCase().includes(filter.trim().toLocaleLowerCase());
+}
+
+function auditAmount(event: AuditEventRecord): number {
+  const metadataAmount = numericValue(event.metadata, 'amount');
+  if (metadataAmount !== undefined) return Math.abs(metadataAmount);
+  const beforeBreakdown = valueFrom(valueFrom(event.before, 'calculationBreakdown'), 'totalDue');
+  const afterBreakdown = valueFrom(valueFrom(event.after, 'calculationBreakdown'), 'totalDue');
+  const before = Number(beforeBreakdown ?? numericValue(event.before, 'amount') ?? numericValue(event.originalValue, 'amount'));
+  const after = Number(afterBreakdown ?? numericValue(event.after, 'amount') ?? numericValue(event.finalValue, 'amount'));
+  return Number.isFinite(before) && Number.isFinite(after) ? Math.abs(roundMoney(before - after)) : 0;
+}
+
+/** Manager-only exception ledger assembled from immutable payment, order-history, and audit facts. */
+export async function getExceptionReport(user: AuthenticatedUser, filters: ReportFilters = {}): Promise<ExportReadyReport<ExceptionReportSummary, ExceptionReportRow> & { categories: Record<ExceptionCategory, ExceptionReportRow[]> }> {
+  assertCanViewReports(user);
+  const normalized = normalizeFilters(filters);
+  const [bills, orders, auditEvents] = await Promise.all([listBills(), listOrders(), listAuditEvents({ from: normalized.dateFrom, to: normalized.dateTo })]);
+  const rows: ExceptionReportRow[] = [];
+  const add = (row: ExceptionReportRow) => {
+    if (normalized.eventType && row.category !== normalized.eventType) return;
+    if (!reportReasonMatches(row.reason, normalized.reason)) return;
+    rows.push(row);
+  };
+
+  for (const bill of bills) {
+    const relatedOrders = billOrders(bill, orders);
+    if (!matchesBranch(bill, normalized) || (normalized.shiftId && !matchesOptionalField(bill, 'shiftId', normalized.shiftId) && !relatedOrders.some((order) => matchesOptionalField(order, 'shiftId', normalized.shiftId)))) continue;
+    if (normalized.waiterUserId && !relatedOrders.some((order) => order.createdBy === normalized.waiterUserId)) continue;
+    for (const payment of flattenBillSplits(bill).flatMap((split) => split.payments)) {
+      if (!isWithinRange(payment.paidAt, normalized) || (normalized.cashierUserId && payment.receivedByUserId !== normalized.cashierUserId)) continue;
+      const type = payment.type ?? 'payment';
+      if ((type !== 'void' && type !== 'refund') || payment.status === 'failed') continue;
+      const order = relatedOrders[0];
+      add({
+        id: payment.id,
+        category: type === 'void' ? 'payment_voids' : 'refunds',
+        businessDate: exceptionBusinessDate(payment.paidAt), occurredAt: payment.paidAt, branchId: bill.branchId,
+        orderId: order?.id, invoiceId: bill.id, table: bill.tableName ?? order?.tableName ?? bill.tableSessionId,
+        itemOrPaymentMethod: payment.method, amount: roundMoney(payment.amount), reason: payment.reason,
+        initiatingUserId: payment.receivedByUserId, approvingManagerId: payment.approvedByUserId,
+        originalTransactionReference: payment.linkedPaymentId ?? payment.externalReference?.reference,
+        originalValue: payment.linkedPaymentId, finalValue: payment,
+      });
+    }
+  }
+
+  for (const order of orders) {
+    if (!exceptionOrderMatches(order, normalized, bills)) continue;
+    const invoice = bills.find((bill) => billOrders(bill, [order]).length);
+    for (const entry of order.changeLog) {
+      if (!isWithinRange(entry.at, normalized) || (entry.action !== 'order_cancelled' && entry.action !== 'item_removed')) continue;
+      const item = entry.originalValue as Partial<OrderItem> | undefined;
+      const category: ExceptionCategory = entry.action === 'order_cancelled' ? 'order_cancellations' : 'item_removals';
+      add({ id: `${order.id}:${entry.at}:${entry.action}`, category, businessDate: exceptionBusinessDate(entry.at), occurredAt: entry.at,
+        branchId: order.branchId, orderId: order.id, invoiceId: invoice?.id, table: order.tableName ?? order.tableId ?? order.tableSessionId,
+        itemOrPaymentMethod: category === 'item_removals' ? String(valueFrom(entry.details, 'itemName') ?? item?.name ?? '') : undefined,
+        quantity: category === 'item_removals' ? Number(valueFrom(entry.details, 'quantity') ?? item?.quantity ?? 0) : order.items.reduce((sum, row) => sum + row.quantity, 0),
+        amount: roundMoney(category === 'item_removals' ? Number(valueFrom(entry.details, 'amount') ?? item?.lineTotal ?? 0) : Number(valueFrom(entry.originalValue, 'subtotal') ?? order.subtotal)),
+        reason: entry.reason ?? optionalRecordField(entry.details, 'reason'), initiatingUserId: entry.actorUserId, approvingManagerId: entry.approverUserId,
+        originalTransactionReference: order.id, originalValue: entry.originalValue, finalValue: entry.finalValue });
+    }
+  }
+
+  const valueChangeActions = new Set(['discount_applied', 'item_comped', 'price_overridden']);
+  for (const event of auditEvents.filter((row) => valueChangeActions.has(row.action))) {
+    const metadata = event.metadata ?? {};
+    const branchId = optionalRecordField(metadata, 'branchId') ?? orders.find((order) => order.id === event.entity.id)?.branchId ?? bills.find((bill) => bill.id === event.entity.id)?.branchId ?? normalized.branchId;
+    if (normalized.branchId && branchId !== normalized.branchId) continue;
+    const orderId = optionalRecordField(metadata, 'orderId') ?? (event.entity.type === 'order' ? event.entity.id : undefined);
+    const order = orders.find((row) => row.id === orderId);
+    const bill = bills.find((row) => row.id === event.entity.id || row.tableSessionId === optionalRecordField(metadata, 'tableSessionId'));
+    if (normalized.waiterUserId && order?.createdBy !== normalized.waiterUserId) continue;
+    if (normalized.shiftId && !matchesOptionalField(order ?? bill, 'shiftId', normalized.shiftId)) continue;
+    if (normalized.cashierUserId && event.actor.userId !== normalized.cashierUserId && (!bill || !billCashierIds(bill).has(normalized.cashierUserId))) continue;
+    add({ id: event.id, category: 'comps_price_overrides', businessDate: exceptionBusinessDate(event.timestamp), occurredAt: event.timestamp,
+      branchId: branchId ?? '', orderId, invoiceId: bill?.id, table: order?.tableName ?? bill?.tableName ?? optionalRecordField(metadata, 'tableSessionId'),
+      itemOrPaymentMethod: optionalRecordField(metadata, 'itemName') ?? event.entity.label, quantity: numericValue(metadata, 'quantity'), amount: auditAmount(event), reason: event.reason,
+      initiatingUserId: event.actor.userId, approvingManagerId: event.approverUserId ?? optionalRecordField(metadata, 'approverUserId'),
+      originalTransactionReference: optionalRecordField(metadata, 'originalTransactionReference') ?? event.entity.id,
+      originalValue: event.originalValue ?? event.before, finalValue: event.finalValue ?? event.after });
+  }
+
+  rows.sort((a, b) => b.occurredAt.localeCompare(a.occurredAt));
+  const categoryTotals = Object.fromEntries((['payment_voids', 'refunds', 'order_cancellations', 'item_removals', 'comps_price_overrides'] as ExceptionCategory[]).map((category) => {
+    const categoryRows = rows.filter((row) => row.category === category);
+    return [category, { count: categoryRows.length, amount: roundMoney(categoryRows.reduce((sum, row) => sum + row.amount, 0)) }];
+  })) as ExceptionReportSummary['categoryTotals'];
+  const summary: ExceptionReportSummary = { count: rows.length, amount: roundMoney(rows.reduce((sum, row) => sum + row.amount, 0)), categoryTotals,
+    reconciliation: { paymentExceptions: roundMoney(categoryTotals.payment_voids.amount + categoryTotals.refunds.amount), cancelledSales: categoryTotals.order_cancellations.amount, itemExceptions: roundMoney(categoryTotals.item_removals.amount + categoryTotals.comps_price_overrides.amount) } };
+  const report = makeReport('exception_report', 'exception_report', normalized, [
+    { key: 'category', label: 'Event type', type: 'string' }, { key: 'businessDate', label: 'Business date', type: 'date' }, { key: 'occurredAt', label: 'Time', type: 'date' },
+    { key: 'branchId', label: 'Branch', type: 'string' }, { key: 'orderId', label: 'Order', type: 'string' }, { key: 'invoiceId', label: 'Invoice', type: 'string' },
+    { key: 'table', label: 'Table', type: 'string' }, { key: 'itemOrPaymentMethod', label: 'Item / payment', type: 'string' }, { key: 'quantity', label: 'Quantity', type: 'number' },
+    { key: 'amount', label: 'Amount', type: 'currency' }, { key: 'reason', label: 'Reason', type: 'string' }, { key: 'initiatingUserId', label: 'Initiated by', type: 'string' },
+    { key: 'approvingManagerId', label: 'Approved by', type: 'string' }, { key: 'originalTransactionReference', label: 'Original reference', type: 'string' },
+  ], rows, summary);
+  return {
+    ...report,
+    categories: Object.fromEntries((Object.keys(categoryTotals) as ExceptionCategory[]).map((category) => [category, rows.filter((row) => row.category === category)])) as Record<ExceptionCategory, ExceptionReportRow[]>,
+  };
 }

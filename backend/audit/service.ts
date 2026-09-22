@@ -22,6 +22,9 @@ export interface RecordAuditEventInput {
   after?: unknown;
   reason?: string;
   metadata?: Record<string, unknown>;
+  originalValue?: unknown;
+  finalValue?: unknown;
+  approverUserId?: string;
 }
 
 export interface AuditSearchInput extends AuditEventFilter {
@@ -84,6 +87,9 @@ export async function recordAuditEvent(input: RecordAuditEventInput): Promise<Au
     after: input.after === undefined ? undefined : structuredClone(input.after),
     reason: input.reason?.trim() || undefined,
     metadata: input.metadata ? structuredClone(input.metadata) : undefined,
+    originalValue: input.originalValue === undefined ? undefined : structuredClone(input.originalValue),
+    finalValue: input.finalValue === undefined ? undefined : structuredClone(input.finalValue),
+    approverUserId: input.approverUserId,
   });
 }
 

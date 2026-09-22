@@ -834,6 +834,7 @@ export async function refundSplitPayment(input: {
   amount: number;
   actorUserId: string;
   reason: string;
+  approvedByUserId?: string;
 }): Promise<BillRecord> {
   return withTransaction(async () => {
     const bill = await getBillByTableSessionId(input.tableSessionId);
@@ -865,6 +866,7 @@ export async function refundSplitPayment(input: {
       status: 'refunded',
       linkedPaymentId: original.id,
       reason,
+      approvedByUserId: input.approvedByUserId,
     };
 
     if (isExternalPaymentMethod(original.method)) {
@@ -955,6 +957,7 @@ export async function voidSplitPayment(input: {
   paymentId: string;
   actorUserId: string;
   reason: string;
+  approvedByUserId?: string;
 }): Promise<BillRecord> {
   return withTransaction(async () => {
     const bill = await getBillByTableSessionId(input.tableSessionId);
@@ -982,6 +985,7 @@ export async function voidSplitPayment(input: {
       status: 'voided',
       linkedPaymentId: original.id,
       reason,
+      approvedByUserId: input.approvedByUserId,
     };
 
     if (isExternalPaymentMethod(original.method)) {
