@@ -51,11 +51,13 @@ export interface EditOrderInput {
   modifyItems?: Array<Pick<OrderItem, 'id'> & Partial<Pick<OrderItem, 'quantity' | 'note' | 'modifiers'>>>;
   removeItemIds?: string[];
   reason?: string;
+  approvedByUserId?: string;
 }
 
 export interface CancelOrderInput {
   expectedVersion: number;
   reason: string;
+  approvedByUserId?: string;
 }
 
 const FRONT_OF_HOUSE_STATUS_FLOW: Array<{ from: OrderStatus; to: OrderStatus }> = [
@@ -214,6 +216,7 @@ export async function editOrderBeforePayment(user: AuthenticatedUser, orderId: s
     for (const mod of input.modifyItems ?? []) {
       const target = draft.items.find((it) => it.id === mod.id);
       if (!target) throw new Error(`Order item ${mod.id} not found.`);
+      const originalValue = structuredClone(target);
       if (typeof mod.quantity === 'number') {
         assertValidQuantity(mod.quantity);
         target.quantity = mod.quantity;
@@ -221,7 +224,7 @@ export async function editOrderBeforePayment(user: AuthenticatedUser, orderId: s
       if (typeof mod.note === 'string') target.note = mod.note;
       if (Array.isArray(mod.modifiers)) target.modifiers = normalizeModifiers(mod.modifiers);
       target.lineTotal = calcLineTotal(target.quantity, target.unitPrice);
-      draft.changeLog.push({ at: new Date().toISOString(), actorUserId: user.id, actorRole: String(user.role), action: 'item_modified', details: { itemId: target.id } });
+      draft.changeLog.push({ at: new Date().toISOString(), actorUserId: user.id, actorRole: String(user.role), approverUserId: input.approvedByUserId, action: 'item_modified', details: { itemId: target.id }, originalValue, finalValue: structuredClone(target), reason: normalizeReason(input.reason, '') });
     }
 
     if (input.removeItemIds?.length) {
@@ -229,7 +232,7 @@ export async function editOrderBeforePayment(user: AuthenticatedUser, orderId: s
       draft.items = draft.items.filter((item) => {
         const shouldRemove = removed.has(item.id);
         if (shouldRemove) {
-          draft.changeLog.push({ at: new Date().toISOString(), actorUserId: user.id, actorRole: String(user.role), action: 'item_removed', details: { itemId: item.id } });
+          draft.changeLog.push({ at: new Date().toISOString(), actorUserId: user.id, actorRole: String(user.role), approverUserId: input.approvedByUserId, action: 'item_removed', details: { itemId: item.id, menuItemId: item.menuItemId, itemName: item.name, quantity: item.quantity, amount: item.lineTotal }, originalValue: structuredClone(item), finalValue: null, reason: normalizeReason(input.reason, '') });
         }
         return !shouldRemove;
       });
@@ -270,8 +273,12 @@ export async function cancelOrder(user: AuthenticatedUser, orderId: string, inpu
       at: new Date().toISOString(),
       actorUserId: user.id,
       actorRole: String(user.role),
+      approverUserId: input.approvedByUserId,
       action: 'order_cancelled',
       details: { from: draft.status, to: 'cancelled', reason },
+      originalValue: { status: draft.status, subtotal: draft.subtotal, items: structuredClone(draft.items) },
+      finalValue: { status: 'cancelled', subtotal: 0 },
+      reason,
     });
     draft.status = 'cancelled';
     return draft;

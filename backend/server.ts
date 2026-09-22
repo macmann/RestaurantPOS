@@ -338,6 +338,7 @@ function buildReportsRouter(): Router {
   router.get('/sales/month', viewSalesHistory, send((req) => ReportsApi.salesByMonth(requireUser(req), queryObject(req) as any)));
   router.get('/inventory-usage', authorize(Actions.ViewReports), send((req) => ReportsApi.inventoryUsage(requireUser(req), queryObject(req) as any)));
   router.get('/financial-summary', authorize(Actions.ViewReports), send((req) => ReportsApi.financialSummary(requireUser(req), queryObject(req) as any)));
+  router.get('/exceptions', authorize(Actions.ViewReports), send((req) => ReportsApi.exceptions(requireUser(req), queryObject(req) as any)));
   return router;
 }
 

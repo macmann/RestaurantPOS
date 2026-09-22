@@ -26,6 +26,7 @@ type InventoryUsageReport = Awaited<ReturnType<typeof import('../../backend/repo
 type FinancialSummaryReport = Awaited<ReturnType<typeof import('../../backend/reports/controller').ReportsApi.financialSummary>>;
 type DailySummaryReport = Awaited<ReturnType<typeof import('../../backend/reports/controller').ReportsApi.dailySummary>>;
 type SalesReport = Awaited<ReturnType<typeof import('../../backend/reports/controller').ReportsApi.sales>>;
+type ExceptionReport = Awaited<ReturnType<typeof import('../../backend/reports/controller').ReportsApi.exceptions>>;
 type ReportFilters = import('../../backend/reports/service').ReportFilters;
 
 declare global {
@@ -307,6 +308,7 @@ async function requestInProcess<T>(path: string, method: string, body: unknown, 
     if (parts[2] === 'sales') return ReportsApi.sales(await userFor(userId), parts[3], Object.fromEntries(url.searchParams.entries())) as Promise<T>;
     if (parts[2] === 'inventory-usage') return ReportsApi.inventoryUsage(await userFor(userId), Object.fromEntries(url.searchParams.entries())) as Promise<T>;
     if (parts[2] === 'financial-summary') return ReportsApi.financialSummary(await userFor(userId), Object.fromEntries(url.searchParams.entries())) as Promise<T>;
+    if (parts[2] === 'exceptions') return ReportsApi.exceptions(await userFor(userId), Object.fromEntries(url.searchParams.entries())) as Promise<T>;
   }
 
   throw new ApiClientError('Route not found.', 404);
@@ -654,6 +656,10 @@ export class RestaurantApiClient {
 
   getFinancialSummaryReport(): Promise<FinancialSummaryReport> {
     return this.request<FinancialSummaryReport>('/api/reports/financial-summary');
+  }
+
+  getExceptionReport(filters: ReportFilters = {}): Promise<ExceptionReport> {
+    return this.request<ExceptionReport>(`/api/reports/exceptions${queryString(filters as Record<string, unknown>)}`);
   }
 }
 
