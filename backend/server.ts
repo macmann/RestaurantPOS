@@ -339,14 +339,20 @@ function buildReportsRouter(): Router {
   router.get('/sales/week', viewSalesHistory, send((req) => ReportsApi.salesByWeek(requireUser(req), queryObject(req) as any)));
   router.get('/sales/month', viewSalesHistory, send((req) => ReportsApi.salesByMonth(requireUser(req), queryObject(req) as any)));
   router.get('/inventory-usage', authorize(Actions.ViewReports), send((req) => ReportsApi.inventoryUsage(requireUser(req), queryObject(req) as any)));
-  router.get('/inventory-control', authorize(Actions.ViewReports), send((req) => ReportsApi.inventoryControl(requireUser(req), queryObject(req) as any)));
-  router.get('/stock-valuation', authorize(Actions.ViewReports), send((req) => ReportsApi.stockValuation(requireUser(req), queryObject(req) as any)));
-  router.get('/restock-history', authorize(Actions.ViewReports), send((req) => ReportsApi.restockHistory(requireUser(req), queryObject(req) as any)));
-  router.get('/wastage', authorize(Actions.ViewReports), send((req) => ReportsApi.wastage(requireUser(req), queryObject(req) as any)));
-  router.get('/usage-variance', authorize(Actions.ViewReports), send((req) => ReportsApi.usageVariance(requireUser(req), queryObject(req) as any)));
-  router.get('/operations', authorize(Actions.ViewReports), send((req) => ReportsApi.operations(requireUser(req), queryObject(req) as any)));
-  router.get('/financial-summary', authorize(Actions.ViewReports), send((req) => ReportsApi.financialSummary(requireUser(req), queryObject(req) as any)));
-  router.get('/exceptions', authorize(Actions.ViewReports), send((req) => ReportsApi.exceptions(requireUser(req), queryObject(req) as any)));
+  router.get('/inventory-control', authorize(Actions.ViewInventoryCostReports), send((req) => ReportsApi.inventoryControl(requireUser(req), queryObject(req) as any)));
+  router.get('/stock-valuation', authorize(Actions.ViewInventoryCostReports), send((req) => ReportsApi.stockValuation(requireUser(req), queryObject(req) as any)));
+  router.get('/restock-history', authorize(Actions.ViewInventoryCostReports), send((req) => ReportsApi.restockHistory(requireUser(req), queryObject(req) as any)));
+  router.get('/wastage', authorize(Actions.ViewInventoryCostReports), send((req) => ReportsApi.wastage(requireUser(req), queryObject(req) as any)));
+  router.get('/usage-variance', authorize(Actions.ViewInventoryCostReports), send((req) => ReportsApi.usageVariance(requireUser(req), queryObject(req) as any)));
+  router.get('/operations', authorize(Actions.ViewEmployeePerformanceReports), send((req) => ReportsApi.operations(requireUser(req), queryObject(req) as any)));
+  router.get('/financial-summary', authorize(Actions.ViewFinancialReports), send((req) => ReportsApi.financialSummary(requireUser(req), queryObject(req) as any)));
+  router.get('/exceptions', authorize(Actions.ViewVoidReports), send((req) => ReportsApi.exceptions(requireUser(req), queryObject(req) as any)));
+  router.post('/:reportId/exports', send((req) => {
+    const body = bodyObject(req);
+    const format = requiredString(body.format, 'format');
+    if (format !== 'csv' && format !== 'print') throw new HttpError(400, 'format must be csv or print.');
+    return ReportsApi.auditExport(requireUser(req), stringParam(req, 'reportId'), format, (body.filters ?? {}) as any);
+  }));
   return router;
 }
 
