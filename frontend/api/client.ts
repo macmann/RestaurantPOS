@@ -685,6 +685,10 @@ export class RestaurantApiClient {
   getProductMixReport(filters: ReportFilters = {}): Promise<ProductMixReport> {
     return this.request<ProductMixReport>(`/api/reports/product-mix${queryString(filters as Record<string, unknown>)}`);
   }
+
+  auditReportExport(reportId: string, format: 'csv' | 'print', filters: ReportFilters = {}): Promise<{ recorded: boolean }> {
+    return this.request(`/api/reports/${encodeURIComponent(reportId)}/exports`, { method: 'POST', body: { format, filters } });
+  }
 }
 
 export const apiClient = new RestaurantApiClient();

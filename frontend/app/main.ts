@@ -16,6 +16,7 @@ import type { ReceiptPayload, SplitLabel, TableOrderItem } from '../../backend/b
 import { buildLocaleSwitchState, getLocaleResource, getTypographyForLocale, listLocaleOptions, normalizeLocale, setActiveLocale, verifyUnicodeCompatibility } from '../i18n/locale-switcher';
 import { buildEnglishMyanmarLocalizationMap, listEnglishMyanmarTranslationEntries, type EnglishMyanmarTranslationEntry, type SupportedLocale } from '../../backend/i18n/resources';
 import { getBusinessDayRange } from '../../shared/business-day';
+import { downloadReportCsv, printReport } from '../reports/export';
 
 const APP_NAME = 'SYM POS';
 
@@ -1995,8 +1996,11 @@ async function renderReports(): Promise<HTMLElement> {
   const todayRange = await loadCurrentBusinessDayRange();
   const defaultDate = todayRange.businessDate;
   const params = new URLSearchParams(route.split('?')[1] ?? '');
-  const operationalSettings = normalizeOperationalSettings(await apiClient.getSettings());
-  const form = el('form', 'staff-form report-filter-form');
+  const settingsResponse = await apiClient.getSettings() as RuntimeSettingsResponse;
+  const operationalSettings = normalizeOperationalSettings(settingsResponse);
+  const reportTimezone = settingsResponse.branch?.timezone ?? 'UTC';
+  const form = el('form', 'staff-form report-filter-form report-toolbar');
+  form.setAttribute('aria-label', 'Report filters');
   form.innerHTML = `
     <label>Business date<input type="date" name="businessDate" value="${escapeHtml(params.get('businessDate') ?? defaultDate)}" required></label>
     <label>From<input type="datetime-local" name="dateFrom" value="${escapeHtml(params.get('dateFrom') ?? '')}"></label>
@@ -2031,18 +2035,15 @@ async function renderReports(): Promise<HTMLElement> {
   const actions = el('div', 'page-actions daily-summary-actions');
   const printButton = el('button', 'secondary-button', 'Print report');
   printButton.type = 'button';
-  printButton.addEventListener('click', () => window.print());
+  printButton.addEventListener('click', async () => {
+    await apiClient.auditReportExport(report.reportId, 'print', filters);
+    if (!printReport(report.export as any, reportTimezone)) window.alert('Allow pop-ups to print this report.');
+  });
   const csvButton = el('button', 'secondary-button', 'Download CSV');
   csvButton.type = 'button';
-  csvButton.addEventListener('click', () => {
-    const quote = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`;
-    const columns = report.export.columns;
-    const csv = [columns.map((column) => quote(column.label)).join(','), ...report.export.rows.map((row: any) => columns.map((column) => quote(row[column.key])).join(','))].join('\r\n');
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-    link.download = `daily-summary-${summary.businessDate}.csv`;
-    link.click();
-    URL.revokeObjectURL(link.href);
+  csvButton.addEventListener('click', async () => {
+    await apiClient.auditReportExport(report.reportId, 'csv', filters);
+    downloadReportCsv(report.export as any, `daily-summary-${summary.businessDate}.csv`);
   });
   actions.append(printButton, csvButton);
   section.append(actions);
@@ -2090,11 +2091,13 @@ async function renderReports(): Promise<HTMLElement> {
     tableHost.querySelectorAll<HTMLButtonElement>('[data-sort]').forEach((button) => button.addEventListener('click', () => { const next = button.dataset.sort!; sortDirection = sortKey === next ? -sortDirection : (next === 'label' || next === 'costDataStatus' ? 1 : -1); sortKey = next; renderMixTable(); }));
   };
   dimensionSelect.addEventListener('change', renderMixTable); viewSelect.addEventListener('change', renderMixTable);
-  mixPanel.querySelector<HTMLButtonElement>('[data-mix-print]')!.addEventListener('click', () => window.print());
-  mixPanel.querySelector<HTMLButtonElement>('[data-mix-csv]')!.addEventListener('click', () => {
-    const quote = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`; const rows = visibleMixRows();
-    const csv = [mixColumns.map(([,label]) => quote(label)).join(','), ...rows.map((row: any) => mixColumns.map(([key]) => quote(row[key])).join(','))].join('\r\n');
-    const link = document.createElement('a'); link.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' })); link.download = `product-mix-${dimensionSelect.value}.csv`; link.click(); URL.revokeObjectURL(link.href);
+  mixPanel.querySelector<HTMLButtonElement>('[data-mix-print]')!.addEventListener('click', async () => {
+    await apiClient.auditReportExport(productMix.reportId, 'print', filters);
+    if (!printReport(productMix.export as any, reportTimezone)) window.alert('Allow pop-ups to print this report.');
+  });
+  mixPanel.querySelector<HTMLButtonElement>('[data-mix-csv]')!.addEventListener('click', async () => {
+    await apiClient.auditReportExport(productMix.reportId, 'csv', filters);
+    downloadReportCsv(productMix.export as any, `product-mix-${dimensionSelect.value}.csv`);
   });
   renderMixTable(); section.append(mixPanel);
 
@@ -2105,11 +2108,9 @@ async function renderReports(): Promise<HTMLElement> {
     <div class="table-scroll"><table><thead><tr><th>Station</th><th>Category</th><th>Item</th><th>Quantity</th><th>Sales</th><th>Orders</th></tr></thead><tbody>${stationReport.rows.map((row) => `<tr><td>${escapeHtml(row.stationId)}</td><td>${escapeHtml(row.categoryName)}</td><td>${escapeHtml(row.itemName)}</td><td>${row.quantitySold}</td><td>${money(row.grossSales)}</td><td>${row.orderCount}</td></tr>`).join('') || '<tr><td colspan="6">No station sales match these filters.</td></tr>'}</tbody></table></div>`;
   const stationCsv = el('button', 'secondary-button', 'Download station CSV');
   stationCsv.type = 'button';
-  stationCsv.addEventListener('click', () => {
-    const columns = stationReport.export.columns;
-    const quote = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`;
-    const csv = [columns.map((column) => quote(column.label)).join(','), ...stationReport.rows.map((row: any) => columns.map((column) => quote(row[column.key])).join(','))].join('\r\n');
-    const link = document.createElement('a'); link.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' })); link.download = `station-report-${params.get('stationId') ?? 'all'}.csv`; link.click(); URL.revokeObjectURL(link.href);
+  stationCsv.addEventListener('click', async () => {
+    await apiClient.auditReportExport(stationReport.reportId, 'csv', filters);
+    downloadReportCsv(stationReport.export as any, `station-report-${params.get('stationId') ?? 'all'}.csv`);
   });
   stationPanel.prepend(stationCsv);
   section.append(stationPanel);
@@ -3418,6 +3419,7 @@ async function renderRoute(generation: number): Promise<void> {
       content = await renderInventoryAlerts();
       break;
     case '#/reports':
+      renderShell(page('Reports', 'Loading report data…'));
       content = await renderReports();
       break;
     case '#/audit':
@@ -3458,6 +3460,15 @@ function render(): Promise<void> {
       return;
     }
 
+    if (route.split('?')[0] === '#/reports') {
+      const failed = page('Reports unavailable', 'The report data could not be loaded. Check your permissions or connection, then try again.');
+      const detail = el('p', 'pos-status report-failure', caught instanceof Error ? caught.message : 'Unknown report error.');
+      const retry = el('button', 'secondary-button', 'Retry');
+      retry.addEventListener('click', () => void render());
+      failed.append(detail, retry);
+      renderShell(failed);
+      return;
+    }
     throw caught;
   });
 }

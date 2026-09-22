@@ -29,7 +29,7 @@ export const appRoutes: AppRoute[] = [
   { path: '#/menu-admin', label: 'Menu admin', section: 'admin', requiredPermissions: [Actions.ManageMenu] },
   { path: '#/table-admin', label: 'Table layout admin', section: 'admin', requiredPermissions: [Actions.ManageStaff] },
   { path: '#/inventory-alerts', label: 'Inventory alerts', section: 'admin', requiredPermissions: [Actions.AdjustStock] },
-  { path: '#/reports', label: 'Reports', section: 'admin', requiredPermissions: [Actions.ViewReports] },
+  { path: '#/reports', label: 'Reports', section: 'admin', requiredPermissions: [Actions.ViewReports, Actions.ViewFinancialReports, Actions.ViewEmployeePerformanceReports, Actions.ViewVoidReports, Actions.ViewInventoryCostReports] },
   { path: '#/audit', label: 'Audit', section: 'admin', requiredPermissions: [Actions.ViewAudit] },
   { path: '#/superadmin', label: 'Super admin panel', section: 'admin', requiredPermissions: [Actions.ManageSystem] },
   { path: '#/localization', label: 'Localization', section: 'admin', requiredPermissions: [Actions.ManageSystem], navigationScope: 'superadmin_settings' },

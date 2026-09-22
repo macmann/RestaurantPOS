@@ -304,8 +304,12 @@ function assertCanViewReports(user: AuthenticatedUser): void {
   if (!can(user, Actions.ViewReports)) throw new Error('Forbidden: cannot view reports.');
 }
 
+function assertCanViewSensitiveReport(user: AuthenticatedUser, action: typeof Actions.ViewFinancialReports | typeof Actions.ViewEmployeePerformanceReports | typeof Actions.ViewVoidReports | typeof Actions.ViewInventoryCostReports, label: string): void {
+  if (!can(user, action)) throw new Error(`Forbidden: cannot view ${label} reports.`);
+}
+
 function assertCanViewSalesHistory(user: AuthenticatedUser): void {
-  if (!can(user, Actions.ViewReports) && !can(user, Actions.ViewSalesHistory)) throw new Error('Forbidden: cannot view sales history.');
+  if (!can(user, Actions.ViewReports) && !can(user, Actions.ViewSalesHistory) && !can(user, Actions.ViewFinancialReports)) throw new Error('Forbidden: cannot view sales history.');
 }
 
 function optionalRecordField(row: unknown, key: string): string | undefined {
@@ -846,7 +850,7 @@ function movementCost(movement: StockMovementRecord): number {
 }
 
 export async function getInventoryUsageReport(user: AuthenticatedUser, filters: ReportFilters = {}) {
-  assertCanViewReports(user);
+  if (!can(user, Actions.ViewReports) && !can(user, Actions.ViewInventoryCostReports)) throw new Error('Forbidden: cannot view inventory reports.');
   const normalized = normalizeFilters(filters);
   const [items, movements] = await Promise.all([listInventoryItems(), listStockMovements()]);
 
@@ -917,7 +921,7 @@ export async function getInventoryUsageReport(user: AuthenticatedUser, filters: 
 /** Inventory valuation and usage reconciliation. Unknown mappings remain null and are
  * surfaced as exceptions so managers never mistake incomplete data for a zero cost. */
 export async function getInventoryControlReport(user: AuthenticatedUser, filters: ReportFilters = {}) {
-  assertCanViewReports(user);
+  assertCanViewSensitiveReport(user, Actions.ViewInventoryCostReports, 'inventory cost');
   const normalized = normalizeFilters(filters);
   const [base, items, movements, recipes, orders] = await Promise.all([
     getInventoryUsageReport(user, filters), listInventoryItems(), listStockMovements(), listMenuInventoryRecipes(), listOrders(),
@@ -967,7 +971,7 @@ export async function getWastageReport(user: AuthenticatedUser, filters: ReportF
 export async function getUsageVarianceReport(user: AuthenticatedUser, filters: ReportFilters = {}) { const report = await getInventoryControlReport(user, filters); return { ...report, rows: report.usageVariance }; }
 
 export async function getOperationsReport(user: AuthenticatedUser, filters: ReportFilters = {}) {
-  assertCanViewReports(user);
+  assertCanViewSensitiveReport(user, Actions.ViewEmployeePerformanceReports, 'employee performance');
   const normalized = normalizeFilters(filters);
   const [orders, sessions, history] = await Promise.all([listOrders(), listTableSessions(), listKdsProgressHistory()]);
   const matchedOrders = orders.filter((order) => orderMatchesFilters(order, normalized, [])).filter((order) => order.items.some((line) =>
@@ -1010,7 +1014,7 @@ export async function getOperationsReport(user: AuthenticatedUser, filters: Repo
 }
 
 export async function getFinancialSummaryReport(user: AuthenticatedUser, filters: ReportFilters = {}) {
-  assertCanViewReports(user);
+  assertCanViewSensitiveReport(user, Actions.ViewFinancialReports, 'financial');
   const normalized = normalizeFilters(filters);
   const [bills, movements, orders, sales, inventoryControl] = await Promise.all([listBills(), listStockMovements(), listOrders(), getSalesReport(user, 'day', filters), getInventoryControlReport(user, filters)]);
   const matchedBills = bills.filter((bill) => billMatchesFilters(bill, normalized, orders));
@@ -1096,7 +1100,7 @@ function auditAmount(event: AuditEventRecord): number {
 
 /** Manager-only exception ledger assembled from immutable payment, order-history, and audit facts. */
 export async function getExceptionReport(user: AuthenticatedUser, filters: ReportFilters = {}): Promise<ExportReadyReport<ExceptionReportSummary, ExceptionReportRow> & { categories: Record<ExceptionCategory, ExceptionReportRow[]> }> {
-  assertCanViewReports(user);
+  assertCanViewSensitiveReport(user, Actions.ViewVoidReports, 'void and exception');
   const normalized = normalizeFilters(filters);
   const [bills, orders, auditEvents] = await Promise.all([listBills(), listOrders(), listAuditEvents({ from: normalized.dateFrom, to: normalized.dateTo })]);
   const rows: ExceptionReportRow[] = [];
