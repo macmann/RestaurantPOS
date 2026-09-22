@@ -22,7 +22,19 @@ export interface KdsItemState {
   updatedAt: string;
 }
 
+/** Durable, append-only evidence of every KDS lifecycle transition. */
+export interface KdsProgressHistoryRecord {
+  id: string;
+  branchId: string;
+  orderId: string;
+  orderItemId: string;
+  station: Station;
+  progress: KdsProgress | 'cancelled';
+  at: string;
+}
+
 const itemStates = new Map<string, KdsItemState>();
+const progressHistory = new Map<string, KdsProgressHistoryRecord>();
 
 function key(orderId: string, orderItemId: string): string {
   return `${orderId}:${orderItemId}`;
@@ -43,4 +55,17 @@ export async function getKdsItemState(orderId: string, orderItemId: string): Pro
   if (isSqlRepositoryEnabled()) return getRecord<KdsItemState>('kds:items', key(orderId, orderItemId));
   const row = itemStates.get(key(orderId, orderItemId));
   return row ? structuredClone(row) : null;
+}
+
+export async function appendKdsProgressHistory(record: KdsProgressHistoryRecord): Promise<KdsProgressHistoryRecord> {
+  if (isSqlRepositoryEnabled()) return putRecord('kds:progress-history', record.id, record);
+  progressHistory.set(record.id, structuredClone(record));
+  return structuredClone(record);
+}
+
+export async function listKdsProgressHistory(): Promise<KdsProgressHistoryRecord[]> {
+  const rows = isSqlRepositoryEnabled()
+    ? await listRecords<KdsProgressHistoryRecord>('kds:progress-history')
+    : [...progressHistory.values()];
+  return rows.map((row) => structuredClone(row)).sort((a, b) => a.at.localeCompare(b.at));
 }

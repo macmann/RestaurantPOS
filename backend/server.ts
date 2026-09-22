@@ -332,6 +332,7 @@ function buildReportsRouter(): Router {
   const router = express.Router();
   const viewSalesHistory = authorizeAny(Actions.ViewReports, Actions.ViewSalesHistory);
   router.get('/daily-summary', authorize(Actions.ViewReports), send((req) => ReportsApi.dailySummary(requireUser(req), queryObject(req) as any)));
+  router.get('/stations', authorize(Actions.ViewReports), send((req) => ReportsApi.stations(requireUser(req), queryObject(req) as any)));
   router.get('/sales/:period', viewSalesHistory, send((req) => ReportsApi.sales(requireUser(req), stringParam(req, 'period') as any, queryObject(req) as any)));
   router.get('/sales/day', viewSalesHistory, send((req) => ReportsApi.salesByDay(requireUser(req), queryObject(req) as any)));
   router.get('/sales/week', viewSalesHistory, send((req) => ReportsApi.salesByWeek(requireUser(req), queryObject(req) as any)));

@@ -1995,14 +1995,20 @@ async function renderReports(): Promise<HTMLElement> {
   const todayRange = await loadCurrentBusinessDayRange();
   const defaultDate = todayRange.businessDate;
   const params = new URLSearchParams(route.split('?')[1] ?? '');
+  const operationalSettings = normalizeOperationalSettings(await apiClient.getSettings());
   const form = el('form', 'staff-form report-filter-form');
   form.innerHTML = `
     <label>Business date<input type="date" name="businessDate" value="${escapeHtml(params.get('businessDate') ?? defaultDate)}" required></label>
+    <label>From<input type="datetime-local" name="dateFrom" value="${escapeHtml(params.get('dateFrom') ?? '')}"></label>
+    <label>To<input type="datetime-local" name="dateTo" value="${escapeHtml(params.get('dateTo') ?? '')}"></label>
     <label>Branch<input name="branchId" value="${escapeHtml(params.get('branchId') ?? session?.user.branchId ?? '')}" placeholder="All branches"></label>
     <label>Shift<input name="shiftId" value="${escapeHtml(params.get('shiftId') ?? '')}" placeholder="All shifts"></label>
     <label>Cashier<input name="cashierUserId" value="${escapeHtml(params.get('cashierUserId') ?? '')}" placeholder="All cashiers"></label>
     <label>Waiter<input name="waiterUserId" value="${escapeHtml(params.get('waiterUserId') ?? '')}" placeholder="All waiters"></label>
     <label>Service mode<select name="serviceMode"><option value="">All modes</option><option value="dine_in" ${params.get('serviceMode') === 'dine_in' ? 'selected' : ''}>Dine in</option><option value="takeout" ${params.get('serviceMode') === 'takeout' ? 'selected' : ''}>Takeout</option></select></label>
+    <label>Station<select name="stationId"><option value="">All stations</option>${operationalSettings.prepStations.filter((station) => station.enabled).map((station) => `<option value="${escapeHtml(station.id)}" ${params.get('stationId') === station.id ? 'selected' : ''}>${escapeHtml(station.displayName)}</option>`).join('')}</select></label>
+    <label>Category<input name="category" value="${escapeHtml(params.get('category') ?? '')}" placeholder="All categories"></label>
+    <label>Order status<select name="orderStatus"><option value="">All statuses</option>${['pending', 'in_preparation', 'completed', 'delivered', 'cancelled'].map((status) => `<option value="${status}" ${params.get('orderStatus') === status ? 'selected' : ''}>${status.replace(/_/g, ' ')}</option>`).join('')}</select></label>
     <label>Payment method<select name="paymentMethod"><option value="">All methods</option>${['cash', 'card', 'wallet', 'bank_transfer', 'wave_money', 'kbzpay'].map((method) => `<option value="${method}" ${params.get('paymentMethod') === method ? 'selected' : ''}>${method.replace(/_/g, ' ')}</option>`).join('')}</select></label>
     <label>Exception type<select name="eventType"><option value="">All exceptions</option>${['payment_voids', 'refunds', 'order_cancellations', 'item_removals', 'comps_price_overrides'].map((type) => `<option value="${type}" ${params.get('eventType') === type ? 'selected' : ''}>${type.replace(/_/g, ' ')}</option>`).join('')}</select></label>
     <label>Reason<input name="reason" value="${escapeHtml(params.get('reason') ?? '')}" placeholder="Reason contains…"></label>
@@ -2056,6 +2062,22 @@ async function renderReports(): Promise<HTMLElement> {
   operations.innerHTML = `<h2>Day activity</h2><p><strong>${summary.orderCount}</strong> orders · <strong>${summary.invoiceCount}</strong> invoices${summary.guestCount === undefined ? '' : ` · <strong>${summary.guestCount}</strong> guests`}</p><p>Average check: <strong>${money(summary.averageCheck)}</strong></p><p>Debts: ${money(summary.debts)} · Outstanding: ${money(summary.outstandingBalances)}</p><p>First transaction: ${summary.firstTransactionAt ? new Date(summary.firstTransactionAt).toLocaleString() : '—'}<br>Last transaction: ${summary.lastTransactionAt ? new Date(summary.lastTransactionAt).toLocaleString() : '—'}</p>`;
   reportBody.append(grossToNet, tender, operations);
   section.append(reportBody);
+
+  const stationReport = await apiClient.getStationReport(filters);
+  const stationPanel = el('article', 'card report-card station-report');
+  stationPanel.innerHTML = `<h2>Station performance</h2><p class="muted">Sales use each order item's recorded station; KDS durations use durable progress timestamps.</p>
+    <div class="exception-totals"><div><strong>Tickets</strong><span>${stationReport.summary.ticketCount}</span></div><div><strong>Average prep</strong><span>${stationReport.summary.averagePreparationSeconds}s</span></div><div><strong>P90 prep</strong><span>${stationReport.summary.p90PreparationSeconds}s</span></div><div><strong>Longest wait</strong><span>${stationReport.summary.longestWaitSeconds}s</span></div><div><strong>Active backlog</strong><span>${stationReport.summary.activeBacklog}</span></div><div><strong>Completed items</strong><span>${stationReport.summary.completedItems}</span></div><div><strong>Cancelled after prep</strong><span>${stationReport.summary.cancellationsAfterPreparation}</span></div><div><strong>Ready → delivered</strong><span>${stationReport.summary.averageReadyToDeliveredSeconds}s</span></div></div>
+    <div class="table-scroll"><table><thead><tr><th>Station</th><th>Category</th><th>Item</th><th>Quantity</th><th>Sales</th><th>Orders</th></tr></thead><tbody>${stationReport.rows.map((row) => `<tr><td>${escapeHtml(row.stationId)}</td><td>${escapeHtml(row.categoryName)}</td><td>${escapeHtml(row.itemName)}</td><td>${row.quantitySold}</td><td>${money(row.grossSales)}</td><td>${row.orderCount}</td></tr>`).join('') || '<tr><td colspan="6">No station sales match these filters.</td></tr>'}</tbody></table></div>`;
+  const stationCsv = el('button', 'secondary-button', 'Download station CSV');
+  stationCsv.type = 'button';
+  stationCsv.addEventListener('click', () => {
+    const columns = stationReport.export.columns;
+    const quote = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`;
+    const csv = [columns.map((column) => quote(column.label)).join(','), ...stationReport.rows.map((row: any) => columns.map((column) => quote(row[column.key])).join(','))].join('\r\n');
+    const link = document.createElement('a'); link.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' })); link.download = `station-report-${params.get('stationId') ?? 'all'}.csv`; link.click(); URL.revokeObjectURL(link.href);
+  });
+  stationPanel.prepend(stationCsv);
+  section.append(stationPanel);
 
   const exceptions = await apiClient.getExceptionReport(filters);
   const exceptionPanel = el('article', 'card report-card exception-report');
