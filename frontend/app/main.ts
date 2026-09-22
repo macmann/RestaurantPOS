@@ -15,6 +15,7 @@ import type { TableFloorState } from '../../backend/tables/service';
 import type { ReceiptPayload, SplitLabel, TableOrderItem } from '../../backend/billing/repository';
 import { buildLocaleSwitchState, getLocaleResource, getTypographyForLocale, listLocaleOptions, normalizeLocale, setActiveLocale, verifyUnicodeCompatibility } from '../i18n/locale-switcher';
 import { buildEnglishMyanmarLocalizationMap, listEnglishMyanmarTranslationEntries, type EnglishMyanmarTranslationEntry, type SupportedLocale } from '../../backend/i18n/resources';
+import { getBusinessDayRange } from '../../shared/business-day';
 
 const APP_NAME = 'SYM POS';
 
@@ -68,11 +69,21 @@ interface RuntimeSettingsResponse {
     branchName?: string;
     address?: string;
     contactNumber?: string;
+    timezone?: string;
+    businessDayCutoff?: string;
   };
   pos?: Partial<SuperadminOperationalSettings>;
   restaurantBillInfo?: Partial<RestaurantBillInfo>;
   printers?: Partial<Record<string, Partial<SuperadminPrinterSettings>>>;
   localization?: Partial<SuperadminOperationalSettings['localization']>;
+}
+
+async function loadCurrentBusinessDayRange(): Promise<{ dateFrom: string; dateTo: string }> {
+  const settings = await apiClient.getSettings() as RuntimeSettingsResponse;
+  return getBusinessDayRange(new Date(), {
+    timezone: settings.branch?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone ?? 'UTC',
+    businessDayCutoff: settings.branch?.businessDayCutoff ?? '00:00',
+  });
 }
 
 const rootElement = document.querySelector<HTMLDivElement>('#app');
@@ -681,7 +692,7 @@ async function renderDashboard(): Promise<HTMLElement> {
   }
 
   if (permissions.includes(Actions.ViewSalesHistory) || permissions.includes(Actions.ViewReports)) {
-    metricLoaders.push(apiClient.getSalesReport('day').then((sales) => {
+    metricLoaders.push(loadCurrentBusinessDayRange().then((range) => apiClient.getSalesReport('day', range)).then((sales) => {
       metrics.push({ label: 'Today’s sales', value: money(sales.summary.revenue), detail: `${sales.summary.orderCount} orders · ${sales.summary.invoiceCount} invoices`, tone: 'ready' });
     }).catch(() => { metrics.push({ label: 'Today’s sales', value: '—', detail: 'Sales summary unavailable right now.', tone: 'warning' }); }));
   }
@@ -1981,7 +1992,8 @@ async function renderSalesHistory(): Promise<HTMLElement> {
 
 async function renderReports(): Promise<HTMLElement> {
   const section = page('Reports', 'Review sales, inventory usage, and financial summary without reading raw API payloads.');
-  const [sales, inventory, financial] = await Promise.all([apiClient.getSalesReport('day') as Promise<any>, apiClient.getInventoryUsageReport(), apiClient.getFinancialSummaryReport()]);
+  const businessDay = await loadCurrentBusinessDayRange();
+  const [sales, inventory, financial] = await Promise.all([apiClient.getSalesReport('day', businessDay) as Promise<any>, apiClient.getInventoryUsageReport(), apiClient.getFinancialSummaryReport()]);
   const cards = el('div', 'report-grid');
   const salesCard = el('article', 'card report-card');
   salesCard.innerHTML = `<h3>Daily sales</h3><p><strong>${money(sales.summary?.revenue ?? 0)}</strong> revenue · ${sales.summary?.orderCount ?? 0} orders</p>`;
