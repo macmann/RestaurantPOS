@@ -579,3 +579,14 @@ button { min-height: var(--tap); touch-action: manipulation; }
 @media (max-width: 520px) {
   .superadmin-metrics, .superadmin-printers, .superadmin-monitor { grid-template-columns: 1fr; }
 }
+
+/* Daily close report */
+.daily-summary-actions { display: flex; gap: .75rem; justify-content: flex-end; margin: 1rem 0; }
+.daily-summary-report { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+.daily-summary-report .report-card:last-child { grid-column: 1 / -1; }
+.summary-ledger { margin: 0; }
+.summary-ledger > div { display: flex; justify-content: space-between; gap: 1rem; padding: .55rem 0; border-bottom: 1px solid var(--border-color, #e5e7eb); text-transform: capitalize; }
+.summary-ledger dd { margin: 0; font-variant-numeric: tabular-nums; }
+.summary-ledger .ledger-total { font-size: 1.08rem; font-weight: 700; border-top: 2px solid currentColor; }
+@media (max-width: 760px) { .daily-summary-report { grid-template-columns: 1fr; } .daily-summary-report .report-card:last-child { grid-column: auto; } }
+@media print { .app-sidebar, .app-header, .network-banner, .report-filter-form, .daily-summary-actions { display: none !important; } .daily-summary-report { display: block; } .daily-summary-report .card { break-inside: avoid; box-shadow: none; margin-bottom: 1rem; } }
