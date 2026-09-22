@@ -75,6 +75,8 @@ async function runHardwareBillingIntegration(): Promise<void> {
   assert(tickets[0].renderedText.includes('Station: Kitchen'), 'Order ticket should identify the prep station.');
   assert(tickets[0].renderedText.includes('*** TABLE: Table 7 ***'), 'Order ticket should prominently identify the table to serve.');
   assert(tickets[0].renderedText.includes('Date & time:'), 'Order ticket should include its print date and time.');
+  const ticketSeparators = tickets[0].renderedText.split('\n').filter((line) => /^=+$/.test(line));
+  assert(ticketSeparators.length > 0 && ticketSeparators.every((line) => line.length === 32), 'Order ticket separators should fit on one physical print line.');
   assert(tickets[0].renderedText.includes('မုန့်ဟင်းခါး') && tickets[0].renderedText.includes('အကြော်ထည့်ပါ'), 'Kitchen and bar tickets should preserve Myanmar item names and notes.');
   assert(!tickets[0].renderedText.includes(ticketOrder.id), 'Order ticket should not expose an internal order number.');
   assert(!tickets[0].renderedText.includes(ticketOrder.tableSessionId!), 'Order ticket should not expose an internal table session ID.');
