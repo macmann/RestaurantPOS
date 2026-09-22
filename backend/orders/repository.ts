@@ -9,6 +9,10 @@ export interface OrderItem {
   menuItemId: string;
   name: string;
   station?: string;
+  /** Immutable reporting snapshots; do not replace these with the current menu setup. */
+  categoryId?: string;
+  categoryName?: string;
+  isPromotional?: boolean;
   quantity: number;
   unitPrice: number;
   note?: string;

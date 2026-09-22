@@ -4,7 +4,7 @@ import { getCurrentBranchId } from '../config/branch';
 import { getRuntimeSettings } from '../config/branch';
 import { t, normalizeLocale, getTypographyForLocale } from '../i18n/service';
 import { listBills, type BillLineItem, type BillRecord, type BillSplit } from '../billing/repository';
-import { listInventoryItems, listStockMovements, type InventoryItemRecord, type StockMovementRecord } from '../inventory/repository';
+import { listInventoryItems, listMenuInventoryRecipes, listStockMovements, type InventoryItemRecord, type StockMovementRecord } from '../inventory/repository';
 import { listOrders, type OrderItem, type OrderRecord } from '../orders/repository';
 import { listAuditEvents, type AuditEventRecord } from '../audit/repository';
 import { getBusinessDate, getBusinessDayRange } from '../../shared/business-day';
@@ -33,6 +33,37 @@ export interface ReportFilters {
   locale?: string;
   eventType?: ExceptionCategory;
   reason?: string;
+  promotionId?: string;
+  intervalMinutes?: number;
+}
+
+export type ProductMixDimension = 'menu_item' | 'category' | 'station' | 'service_mode' | 'weekday' | 'hour';
+
+export interface ProductMixRow {
+  dimension: ProductMixDimension;
+  key: string;
+  label: string;
+  quantity: number;
+  grossSales: number;
+  discounts: number;
+  netSales: number;
+  percentageOfTotalSales: number;
+  averageSellingPrice: number;
+  orderPenetration: number;
+  estimatedContributionMargin: number | null;
+  estimatedItemCost: number | null;
+  costDataStatus: 'complete' | 'missing_recipe' | 'missing_cost';
+  orderCount: number;
+}
+
+export interface ProductMixSummary {
+  quantity: number;
+  grossSales: number;
+  discounts: number;
+  netSales: number;
+  orderCount: number;
+  missingRecipeItemIds: string[];
+  missingCostItemIds: string[];
 }
 
 export type ExceptionCategory = 'payment_voids' | 'refunds' | 'order_cancellations' | 'item_removals' | 'comps_price_overrides';
@@ -406,6 +437,107 @@ function makeReport<TSummary, TRow>(reportId: string, titleKey: string, filters:
     summary,
     rows,
   };
+}
+
+function productMixTimeParts(at: string, intervalMinutes: number): { weekday: string; hour: string } {
+  const timezone = getRuntimeSettings().branch.timezone;
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone, weekday: 'long', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(new Date(at));
+  const part = (type: string) => parts.find((row) => row.type === type)?.value ?? '';
+  const hour = Number(part('hour')) % 24;
+  const minute = Number(part('minute'));
+  const start = Math.floor((hour * 60 + minute) / intervalMinutes) * intervalMinutes;
+  const end = (start + intervalMinutes) % 1440;
+  const clock = (value: number) => `${String(Math.floor(value / 60)).padStart(2, '0')}:${String(value % 60).padStart(2, '0')}`;
+  return { weekday: part('weekday'), hour: `${clock(start)}–${clock(end)}` };
+}
+
+/** Product mix uses immutable order-line names/stations/categories and the actual billed price. */
+export async function getProductMixReport(user: AuthenticatedUser, filters: ReportFilters = {}) {
+  assertCanViewReports(user);
+  const normalized = normalizeFilters(filters);
+  const intervalMinutes = Math.min(1440, Math.max(1, Number(filters.intervalMinutes) || 60));
+  const [orders, bills, menuItems, categories, recipes, inventoryItems, movements] = await Promise.all([
+    listOrders(), listBills(), listItems(), listCategories(), listMenuInventoryRecipes(), listInventoryItems(), listStockMovements(),
+  ]);
+  const menuById = new Map(menuItems.map((row) => [row.id, row]));
+  const categoryById = new Map(categories.map((row) => [row.id, row]));
+  const inventoryById = new Map(inventoryItems.map((row) => [row.id, row]));
+  const recipesByMenu = new Map<string, typeof recipes>();
+  for (const recipe of recipes) recipesByMenu.set(recipe.menuItemId, [...(recipesByMenu.get(recipe.menuItemId) ?? []), recipe]);
+  const filteredOrders = orders.filter((order) => orderMatchesFilters(order, normalized, bills));
+  const eligibleOrders = filteredOrders.filter((order) => {
+    if (!normalized.promotionId || normalized.promotionId === 'promotional') return true;
+    const bill = bills.find((row) => row.tableSessionId === order.tableSessionId || row.tableSessionId === order.tableId);
+    return !!bill && flattenBillSplits(bill).some((split) => split.calculationBreakdown.appliedPromotions.some((promotion) => promotion.promotionId === normalized.promotionId));
+  });
+  type Fact = { orderId: string; menuItemId: string; itemName: string; categoryId: string; categoryName: string; station: string; serviceMode: string; weekday: string; hour: string; quantity: number; gross: number; discount: number; net: number; cost: number | null; costStatus: ProductMixRow['costDataStatus'] };
+  const facts: Fact[] = [];
+  for (const order of eligibleOrders) {
+    const bill = bills.find((row) => row.tableSessionId === order.tableSessionId || row.tableSessionId === order.tableId);
+    const billLines = bill ? flattenBillSplits(bill).flatMap((split) => split.lineItems) : [];
+    const time = productMixTimeParts(order.createdAt, intervalMinutes);
+    for (const item of order.items) {
+      const current = menuById.get(item.menuItemId);
+      const categoryId = item.categoryId ?? current?.categoryId ?? '';
+      const categoryName = item.categoryName ?? categoryById.get(categoryId)?.name ?? 'Uncategorized';
+      if (normalized.stationId && item.station !== normalized.stationId) continue;
+      if (normalized.categoryId && categoryId !== normalized.categoryId) continue;
+      if (normalized.category && categoryName.toLowerCase() !== normalized.category.toLowerCase()) continue;
+      if (normalized.promotionId === 'promotional' && !(item.isPromotional ?? current?.isPromotional)) continue;
+      const gross = roundMoney(item.quantity * item.unitPrice);
+      const billed = billLines.find((line) => line.orderItemId === item.id);
+      const net = billed ? roundMoney(billed.lineTotal - (billed.lineTax ?? 0)) : roundMoney(item.lineTotal);
+      const discount = roundMoney(Math.max(0, gross - net));
+      const itemRecipes = recipesByMenu.get(item.menuItemId) ?? [];
+      let costStatus: ProductMixRow['costDataStatus'] = itemRecipes.length ? 'complete' : 'missing_recipe';
+      let unitCost = 0;
+      for (const recipe of itemRecipes) {
+        const inventory = inventoryById.get(recipe.inventoryItemId);
+        const pricedMovement = movements.filter((movement) => movement.itemId === recipe.inventoryItemId && movement.createdAt <= order.createdAt)
+          .reverse().find((movement) => typeof (movement as StockMovementRecord & { unitCost?: number }).unitCost === 'number') as (StockMovementRecord & { unitCost?: number }) | undefined;
+        const ingredientCost = inventory?.unitCost ?? pricedMovement?.unitCost;
+        if (ingredientCost === undefined) costStatus = 'missing_cost';
+        else unitCost += recipe.quantityPerUnit * ingredientCost;
+      }
+      facts.push({ orderId: order.id, menuItemId: item.menuItemId, itemName: item.name, categoryId, categoryName, station: item.station ?? 'Unassigned', serviceMode: order.serviceMode, ...time,
+        quantity: item.quantity, gross, discount, net, cost: costStatus === 'complete' ? roundMoney(unitCost * item.quantity) : null, costStatus });
+    }
+  }
+  const totalNet = roundMoney(facts.reduce((sum, fact) => sum + fact.net, 0));
+  const totalOrders = new Set(facts.map((fact) => fact.orderId)).size;
+  const dimensions: Array<[ProductMixDimension, (fact: Fact) => [string, string]]> = [
+    ['menu_item', (fact) => [fact.menuItemId, fact.itemName]], ['category', (fact) => [fact.categoryId || 'uncategorized', fact.categoryName]],
+    ['station', (fact) => [fact.station, fact.station]], ['service_mode', (fact) => [fact.serviceMode, fact.serviceMode.replace('_', ' ')]],
+    ['weekday', (fact) => [fact.weekday, fact.weekday]], ['hour', (fact) => [fact.hour, fact.hour]],
+  ];
+  const groups = Object.fromEntries(dimensions.map(([dimension, identify]) => {
+    const buckets = new Map<string, { label: string; facts: Fact[] }>();
+    for (const fact of facts) { const [key, label] = identify(fact); const bucket = buckets.get(key) ?? { label, facts: [] }; bucket.facts.push(fact); buckets.set(key, bucket); }
+    const rows: ProductMixRow[] = [...buckets].map(([key, bucket]) => {
+      const quantity = roundQuantity(bucket.facts.reduce((sum, fact) => sum + fact.quantity, 0));
+      const grossSales = roundMoney(bucket.facts.reduce((sum, fact) => sum + fact.gross, 0));
+      const discounts = roundMoney(bucket.facts.reduce((sum, fact) => sum + fact.discount, 0));
+      const netSales = roundMoney(bucket.facts.reduce((sum, fact) => sum + fact.net, 0));
+      const orderCount = new Set(bucket.facts.map((fact) => fact.orderId)).size;
+      const costDataStatus: ProductMixRow['costDataStatus'] = bucket.facts.some((fact) => fact.costStatus === 'missing_recipe') ? 'missing_recipe' : bucket.facts.some((fact) => fact.costStatus === 'missing_cost') ? 'missing_cost' : 'complete';
+      const estimatedItemCost = costDataStatus === 'complete' ? roundMoney(bucket.facts.reduce((sum, fact) => sum + (fact.cost ?? 0), 0)) : null;
+      return { dimension, key, label: bucket.label, quantity, grossSales, discounts, netSales, percentageOfTotalSales: totalNet ? roundMoney(netSales / totalNet * 100) : 0,
+        averageSellingPrice: quantity ? roundMoney(netSales / quantity) : 0, orderPenetration: totalOrders ? roundMoney(orderCount / totalOrders * 100) : 0,
+        estimatedContributionMargin: estimatedItemCost === null ? null : roundMoney(netSales - estimatedItemCost), estimatedItemCost, costDataStatus, orderCount };
+    }).sort((a, b) => b.netSales - a.netSales || a.label.localeCompare(b.label));
+    return [dimension, rows];
+  })) as Record<ProductMixDimension, ProductMixRow[]>;
+  const summary: ProductMixSummary = { quantity: roundQuantity(facts.reduce((sum, fact) => sum + fact.quantity, 0)), grossSales: roundMoney(facts.reduce((sum, fact) => sum + fact.gross, 0)), discounts: roundMoney(facts.reduce((sum, fact) => sum + fact.discount, 0)), netSales: totalNet, orderCount: totalOrders,
+    missingRecipeItemIds: [...new Set(facts.filter((fact) => fact.costStatus === 'missing_recipe').map((fact) => fact.menuItemId))], missingCostItemIds: [...new Set(facts.filter((fact) => fact.costStatus === 'missing_cost').map((fact) => fact.menuItemId))] };
+  const rows = groups.menu_item;
+  return { ...makeReport('product_mix', 'product_mix', normalized, [
+    { key: 'label', label: 'Item', type: 'string' }, { key: 'quantity', label: 'Quantity', type: 'number' }, { key: 'grossSales', label: 'Gross sales', type: 'currency' },
+    { key: 'discounts', label: 'Discounts', type: 'currency' }, { key: 'netSales', label: 'Net sales', type: 'currency' }, { key: 'percentageOfTotalSales', label: '% total sales', type: 'number' },
+    { key: 'averageSellingPrice', label: 'Average selling price', type: 'currency' }, { key: 'orderPenetration', label: 'Order penetration %', type: 'number' },
+    { key: 'estimatedContributionMargin', label: 'Estimated contribution margin', type: 'currency' }, { key: 'costDataStatus', label: 'Cost data', type: 'string' },
+  ], rows, summary), groups, intervalMinutes };
 }
 
 export async function getSalesReport(user: AuthenticatedUser, period: SalesPeriod, filters: ReportFilters = {}) {

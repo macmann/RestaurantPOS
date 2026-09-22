@@ -10,6 +10,8 @@ export interface InventoryItemRecord {
   name: string;
   unit: string;
   minimumThreshold: number;
+  /** Current standard purchase cost per inventory unit, when maintained. */
+  unitCost?: number;
   createdAt: string;
   updatedAt: string;
 }
