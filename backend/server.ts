@@ -339,6 +339,12 @@ function buildReportsRouter(): Router {
   router.get('/sales/week', viewSalesHistory, send((req) => ReportsApi.salesByWeek(requireUser(req), queryObject(req) as any)));
   router.get('/sales/month', viewSalesHistory, send((req) => ReportsApi.salesByMonth(requireUser(req), queryObject(req) as any)));
   router.get('/inventory-usage', authorize(Actions.ViewReports), send((req) => ReportsApi.inventoryUsage(requireUser(req), queryObject(req) as any)));
+  router.get('/inventory-control', authorize(Actions.ViewReports), send((req) => ReportsApi.inventoryControl(requireUser(req), queryObject(req) as any)));
+  router.get('/stock-valuation', authorize(Actions.ViewReports), send((req) => ReportsApi.stockValuation(requireUser(req), queryObject(req) as any)));
+  router.get('/restock-history', authorize(Actions.ViewReports), send((req) => ReportsApi.restockHistory(requireUser(req), queryObject(req) as any)));
+  router.get('/wastage', authorize(Actions.ViewReports), send((req) => ReportsApi.wastage(requireUser(req), queryObject(req) as any)));
+  router.get('/usage-variance', authorize(Actions.ViewReports), send((req) => ReportsApi.usageVariance(requireUser(req), queryObject(req) as any)));
+  router.get('/operations', authorize(Actions.ViewReports), send((req) => ReportsApi.operations(requireUser(req), queryObject(req) as any)));
   router.get('/financial-summary', authorize(Actions.ViewReports), send((req) => ReportsApi.financialSummary(requireUser(req), queryObject(req) as any)));
   router.get('/exceptions', authorize(Actions.ViewReports), send((req) => ReportsApi.exceptions(requireUser(req), queryObject(req) as any)));
   return router;

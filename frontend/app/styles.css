@@ -344,6 +344,9 @@ button { min-height: var(--tap); touch-action: manipulation; }
 .table-scroll { overflow-x: auto; }
 .exception-report table { width: 100%; border-collapse: collapse; font-size: .875rem; }
 .exception-report th, .exception-report td { padding: .65rem; border-bottom: 1px solid #d9e2ec; text-align: left; white-space: nowrap; }
+.report-exception { border-left: .3rem solid #c2410c; background: #fff7ed; color: #9a3412; padding: .75rem; }
+.report-ok { border-left: .3rem solid #15803d; background: #f0fdf4; color: #166534; padding: .75rem; }
+.exception-row { background: #fff7ed; }
 
 @media (max-width: 1400px) {
   .pos-workspace, .billing-workspace, .table-admin-panel, .order-entry-workspace.table-selection-collapsed { grid-template-columns: minmax(0, 1fr); }

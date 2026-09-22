@@ -19,6 +19,7 @@ import {
   type InventoryItemRecord,
   type MenuInventoryRecipeRecord,
   type StockMovementRecord,
+  type StockMovementReasonCode,
   type StockMovementType,
 } from './repository';
 
@@ -32,6 +33,7 @@ export interface InventoryItemInput {
   unit: string;
   minimumThreshold: number;
   currentStock: number;
+  unitCost?: number;
 }
 
 export interface StockMovementInput {
@@ -40,7 +42,13 @@ export interface StockMovementInput {
   movementType: StockMovementType;
   quantityDelta: number;
   reason?: string;
+  reasonCode?: StockMovementReasonCode;
+  reasonNote?: string;
   referenceId?: string;
+  supplierId?: string;
+  receivingReference?: string;
+  unitCost?: number;
+  approverUserId?: string;
   idempotencyKey?: string;
 }
 
@@ -140,6 +148,7 @@ export async function createInventoryMasterItem(input: InventoryItemInput): Prom
   const unit = normalizeText(input.unit, 'unit');
   validateNonNegative(input.minimumThreshold, 'minimumThreshold');
   validateNonNegative(input.currentStock, 'currentStock');
+  if (input.unitCost !== undefined) validateNonNegative(input.unitCost, 'unitCost');
 
   const duplicate = await getInventoryItemBySku(sku);
   if (duplicate) throw new Error(`Inventory SKU '${sku}' already exists.`);
@@ -152,6 +161,7 @@ export async function createInventoryMasterItem(input: InventoryItemInput): Prom
     name,
     unit,
     minimumThreshold: input.minimumThreshold,
+    unitCost: input.unitCost,
     createdAt: now,
     updatedAt: now,
   });
@@ -162,6 +172,9 @@ export async function createInventoryMasterItem(input: InventoryItemInput): Prom
       movementType: 'restock',
       quantityDelta: input.currentStock,
       reason: 'Initial stock at item creation',
+      reasonCode: 'initial_stock',
+      receivingReference: `opening:${item.id}`,
+      unitCost: input.unitCost,
     });
   }
 
@@ -173,6 +186,10 @@ export async function appendStockMovement(input: StockMovementInput, actorUserId
   if (!item) throw new Error('Inventory item not found.');
 
   validateNonZero(input.quantityDelta, 'quantityDelta');
+  if (input.unitCost !== undefined) validateNonNegative(input.unitCost, 'unitCost');
+  if (input.movementType === 'restock' && !input.receivingReference && !input.referenceId) {
+    throw new Error('receivingReference or referenceId is required for restock movements.');
+  }
   const beforeBalance = await getCurrentBalance(input.itemId);
   const afterCandidate = Math.round((beforeBalance + input.quantityDelta) * 1000) / 1000;
   if (afterCandidate < 0 && negativeStockPolicy !== 'allow') {
@@ -186,8 +203,15 @@ export async function appendStockMovement(input: StockMovementInput, actorUserId
     movementType: input.movementType,
     quantityDelta: input.quantityDelta,
     reason: input.reason?.trim() || undefined,
+    reasonCode: input.reasonCode,
+    reasonNote: input.reasonNote?.trim() || input.reason?.trim() || undefined,
     referenceId: input.referenceId,
+    supplierId: input.supplierId?.trim() || undefined,
+    receivingReference: input.receivingReference?.trim() || input.referenceId?.trim() || undefined,
+    unitCost: input.unitCost ?? item.unitCost,
+    totalCost: input.unitCost === undefined ? undefined : Math.round(Math.abs(input.quantityDelta) * input.unitCost * 100) / 100,
     actorUserId,
+    approverUserId: input.approverUserId,
     createdAt: new Date().toISOString(),
   };
 
@@ -202,7 +226,7 @@ export async function appendStockMovement(input: StockMovementInput, actorUserId
     before: { item, currentBalance: beforeBalance },
     after: { item, currentBalance: afterBalance, movement },
     reason: movement.reason,
-    metadata: { movementType: movement.movementType, quantityDelta: movement.quantityDelta, referenceId: movement.referenceId },
+    metadata: { movementType: movement.movementType, quantityDelta: movement.quantityDelta, reasonCode: movement.reasonCode, referenceId: movement.referenceId, supplierId: movement.supplierId, receivingReference: movement.receivingReference, unitCost: movement.unitCost, approverUserId: movement.approverUserId },
   });
 
   return movement;

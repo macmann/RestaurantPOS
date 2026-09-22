@@ -2114,6 +2114,21 @@ async function renderReports(): Promise<HTMLElement> {
   stationPanel.prepend(stationCsv);
   section.append(stationPanel);
 
+  const [inventoryControl, operationsReport] = await Promise.all([apiClient.getInventoryControlReport(filters), apiClient.getOperationsReport(filters)]);
+  const inventoryPanel = el('article', 'card report-card exception-report');
+  inventoryPanel.innerHTML = `<h2>Inventory control</h2><p class="muted">Stock valuation and actual usage are reconciled with sold recipe quantities. Missing mappings are exceptions, not zero-cost values.</p>
+    ${(inventoryControl.summary.exceptionCount ?? 0) > 0 ? `<p class="report-exception"><strong>Mapping exceptions:</strong> ${inventoryControl.summary.missingRecipeItemIds.length} missing recipes · ${inventoryControl.summary.missingCostItemIds.length} missing costs</p>` : '<p class="report-ok">Recipe and cost mappings complete.</p>'}
+    <div class="table-scroll"><table><thead><tr><th>Item</th><th>Closing stock</th><th>Unit cost</th><th>Value</th><th>Theoretical</th><th>Actual</th><th>Variance</th><th>Status</th></tr></thead><tbody>${inventoryControl.rows.map((row: any) => `<tr class="${row.costMappingStatus !== 'complete' ? 'exception-row' : ''}"><td>${escapeHtml(row.itemName)}</td><td>${row.closingStock} ${escapeHtml(row.unit)}</td><td>${row.unitCost === null ? 'Missing' : money(row.unitCost)}</td><td>${row.stockValue === null ? 'Unavailable' : money(row.stockValue)}</td><td>${row.theoreticalUsage}</td><td>${row.actualUsage}</td><td>${row.usageVariance}</td><td>${escapeHtml(row.costMappingStatus.replace(/_/g, ' '))}</td></tr>`).join('') || '<tr><td colspan="8">No inventory items match.</td></tr>'}</tbody></table></div>
+    <h3>Wastage by reason</h3><div class="table-scroll"><table><thead><tr><th>Reason</th><th>Quantity</th><th>Cost</th></tr></thead><tbody>${inventoryControl.wastageByReason.map((row: any) => `<tr class="${row.missingCost ? 'exception-row' : ''}"><td>${escapeHtml(row.reason)}</td><td>${row.quantity}</td><td>${row.cost === null ? 'Unavailable' : money(row.cost)}</td></tr>`).join('') || '<tr><td colspan="3">No wastage recorded.</td></tr>'}</tbody></table></div>`;
+  section.append(inventoryPanel);
+
+  const operationsPanel = el('article', 'card report-card exception-report');
+  const os: any = operationsReport.summary;
+  operationsPanel.innerHTML = `<h2>Operations</h2><div class="exception-totals"><div><strong>Guests served</strong><span>${os.guestsServed}</span></div><div><strong>Average check</strong><span>${money(os.averageCheck)}</span></div><div><strong>Table turnover</strong><span>${os.averageTableTurnoverSeconds ?? 'Unavailable'}s</span></div><div><strong>Order → kitchen</strong><span>${os.averageOrderToKitchenSendSeconds ?? 'Unavailable'}s</span></div><div><strong>Preparation</strong><span>${os.averagePreparationSeconds ?? 'Unavailable'}s</span></div><div><strong>Ready → delivery</strong><span>${os.averageReadyToDeliverySeconds ?? 'Unavailable'}s</span></div></div>
+    ${os.incompleteTimestamps.length || os.openTableSessions ? `<p class="report-exception"><strong>Operational exceptions:</strong> ${os.openTableSessions} open tables · ${os.incompleteTimestamps.length} incomplete timestamp chains</p>` : ''}
+    <div class="table-scroll"><table><thead><tr><th>Waiter</th><th>Orders</th><th>Guests</th><th>Sales</th><th>Average check</th><th>Voids / cancellations</th><th>Rate</th></tr></thead><tbody>${operationsReport.rows.map((row: any) => `<tr class="${row.voidCancellationRate >= 10 ? 'exception-row' : ''}"><td>${escapeHtml(row.waiterUserId)}</td><td>${row.orderCount}</td><td>${row.guestsServed}</td><td>${money(row.sales)}</td><td>${money(row.averageCheck)}</td><td>${row.voidCancellationCount}</td><td>${row.voidCancellationRate}%</td></tr>`).join('') || '<tr><td colspan="7">No waiter activity matches.</td></tr>'}</tbody></table></div>`;
+  section.append(operationsPanel);
+
   const exceptions = await apiClient.getExceptionReport(filters);
   const exceptionPanel = el('article', 'card report-card exception-report');
   exceptionPanel.innerHTML = `<h2>Exceptions</h2><p class="muted">Manager review of voids, refunds, cancellations, removals, comps, and overrides.</p>

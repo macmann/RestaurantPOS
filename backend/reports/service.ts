@@ -11,6 +11,8 @@ import { getBusinessDate, getBusinessDayRange } from '../../shared/business-day'
 import { getPosOperationalSettings } from '../config/posSettings';
 import { listCategories, listItems } from '../menu/repository';
 import { getKdsPerformanceMetrics, type KdsPerformanceMetrics } from '../kds/service';
+import { listKdsProgressHistory } from '../kds/repository';
+import { listTableSessions } from '../tables/repository';
 import type { OrderStatus } from '../orders/repository';
 
 export type SalesPeriod = 'day' | 'week' | 'month';
@@ -225,6 +227,26 @@ export interface InventoryUsageReportRow {
   manualAdjustments: number;
   closingStock: number;
   trend: Array<{ at: string; movementType: string; quantityDelta: number; balanceAfter: number; referenceId?: string }>;
+}
+
+export interface InventoryControlRow extends InventoryUsageReportRow {
+  unitCost: number | null;
+  stockValue: number | null;
+  theoreticalUsage: number;
+  actualUsage: number;
+  usageVariance: number;
+  usageVarianceCost: number | null;
+  costMappingStatus: 'complete' | 'missing_cost';
+}
+
+export interface OperationsReportRow {
+  waiterUserId: string;
+  orderCount: number;
+  guestsServed: number;
+  sales: number;
+  averageCheck: number;
+  voidCancellationCount: number;
+  voidCancellationRate: number;
 }
 
 export interface FinancialSummaryRow {
@@ -892,10 +914,105 @@ export async function getInventoryUsageReport(user: AuthenticatedUser, filters: 
   );
 }
 
+/** Inventory valuation and usage reconciliation. Unknown mappings remain null and are
+ * surfaced as exceptions so managers never mistake incomplete data for a zero cost. */
+export async function getInventoryControlReport(user: AuthenticatedUser, filters: ReportFilters = {}) {
+  assertCanViewReports(user);
+  const normalized = normalizeFilters(filters);
+  const [base, items, movements, recipes, orders] = await Promise.all([
+    getInventoryUsageReport(user, filters), listInventoryItems(), listStockMovements(), listMenuInventoryRecipes(), listOrders(),
+  ]);
+  const matchedOrders = orders.filter((order) => orderMatchesFilters(order, normalized, []));
+  const soldItems = matchedOrders.filter((order) => order.status !== 'cancelled').flatMap((order) => order.items.filter((line) => {
+    if (normalized.stationId && line.station !== normalized.stationId) return false;
+    if (normalized.categoryId && line.categoryId !== normalized.categoryId) return false;
+    if (normalized.category && line.categoryName !== normalized.category) return false;
+    return true;
+  }));
+  const missingRecipeItemIds = [...new Set(soldItems.filter((line) => !recipes.some((recipe) => recipe.menuItemId === line.menuItemId)).map((line) => line.menuItemId))];
+  const theoretical = new Map<string, number>();
+  for (const line of soldItems) for (const recipe of recipes.filter((row) => row.menuItemId === line.menuItemId)) {
+    theoretical.set(recipe.inventoryItemId, roundQuantity((theoretical.get(recipe.inventoryItemId) ?? 0) + line.quantity * recipe.quantityPerUnit));
+  }
+  const rows: InventoryControlRow[] = base.rows.map((row) => {
+    const item = items.find((candidate) => candidate.id === row.itemId)!;
+    const unitCost = typeof item.unitCost === 'number' ? item.unitCost : null;
+    const theoreticalUsage = theoretical.get(row.itemId) ?? 0;
+    const actualUsage = row.used;
+    const usageVariance = roundQuantity(actualUsage - theoreticalUsage);
+    return { ...row, unitCost, stockValue: unitCost === null ? null : roundMoney(row.closingStock * unitCost), theoreticalUsage, actualUsage, usageVariance,
+      usageVarianceCost: unitCost === null ? null : roundMoney(usageVariance * unitCost), costMappingStatus: unitCost === null ? 'missing_cost' : 'complete' };
+  });
+  const relevantMovements = movements.filter((row) => isWithinRange(row.createdAt, normalized) && matchesBranch(row, normalized) && reportReasonMatches(row.reasonCode ?? row.reason, normalized.reason));
+  const restockHistory = relevantMovements.filter((row) => row.movementType === 'restock');
+  const wastageByReason = [...new Set(relevantMovements.filter((row) => row.movementType === 'wastage').map((row) => row.reasonCode ?? row.reason ?? 'unspecified'))].map((reason) => {
+    const matching = relevantMovements.filter((row) => row.movementType === 'wastage' && (row.reasonCode ?? row.reason ?? 'unspecified') === reason);
+    const missingCost = matching.some((movement) => typeof movement.unitCost !== 'number' && typeof items.find((item) => item.id === movement.itemId)?.unitCost !== 'number');
+    return { reason, quantity: roundQuantity(matching.reduce((sum, row) => sum + Math.abs(row.quantityDelta), 0)), cost: missingCost ? null : roundMoney(matching.reduce((sum, row) => sum + Math.abs(row.quantityDelta) * (row.unitCost ?? items.find((item) => item.id === row.itemId)!.unitCost!), 0)), missingCost };
+  });
+  const missingCostItemIds = rows.filter((row) => row.costMappingStatus === 'missing_cost').map((row) => row.itemId);
+  const report = makeReport('inventory_control', 'inventory_usage_stock_trend', normalized, [
+    { key: 'sku', label: 'SKU', type: 'string' }, { key: 'itemName', label: 'Item', type: 'string' },
+    { key: 'closingStock', label: 'Stock', type: 'number' }, { key: 'unitCost', label: 'Unit cost', type: 'currency' },
+    { key: 'stockValue', label: 'Stock value', type: 'currency' }, { key: 'theoreticalUsage', label: 'Theoretical usage', type: 'number' },
+    { key: 'actualUsage', label: 'Actual usage', type: 'number' }, { key: 'usageVariance', label: 'Variance', type: 'number' },
+  ], rows, { totalStockValue: missingCostItemIds.length ? null : roundMoney(rows.reduce((sum, row) => sum + (row.stockValue ?? 0), 0)), missingRecipeItemIds, missingCostItemIds,
+    exceptionCount: missingRecipeItemIds.length + missingCostItemIds.length });
+  return { ...report, valuation: rows, restockHistory, wastageByReason, usageVariance: rows, exceptions: { missingRecipeItemIds, missingCostItemIds } };
+}
+
+export async function getStockValuationReport(user: AuthenticatedUser, filters: ReportFilters = {}) { const report = await getInventoryControlReport(user, filters); return { ...report, rows: report.valuation }; }
+export async function getRestockHistoryReport(user: AuthenticatedUser, filters: ReportFilters = {}) { const report = await getInventoryControlReport(user, filters); return { ...report, rows: report.restockHistory }; }
+export async function getWastageReport(user: AuthenticatedUser, filters: ReportFilters = {}) { const report = await getInventoryControlReport(user, filters); return { ...report, rows: report.wastageByReason }; }
+export async function getUsageVarianceReport(user: AuthenticatedUser, filters: ReportFilters = {}) { const report = await getInventoryControlReport(user, filters); return { ...report, rows: report.usageVariance }; }
+
+export async function getOperationsReport(user: AuthenticatedUser, filters: ReportFilters = {}) {
+  assertCanViewReports(user);
+  const normalized = normalizeFilters(filters);
+  const [orders, sessions, history] = await Promise.all([listOrders(), listTableSessions(), listKdsProgressHistory()]);
+  const matchedOrders = orders.filter((order) => orderMatchesFilters(order, normalized, [])).filter((order) => order.items.some((line) =>
+    (!normalized.stationId || line.station === normalized.stationId) && (!normalized.categoryId || line.categoryId === normalized.categoryId) && (!normalized.category || line.categoryName === normalized.category)));
+  const sessionOrders = (sessionId: string) => matchedOrders.filter((order) => order.tableSessionId === sessionId || order.tableId === sessionId);
+  const matchedSessions = sessions.filter((session) => matchesBranch(session, normalized) && session.openedAt <= normalized.dateTo && (session.closedAt ?? normalized.dateTo) >= normalized.dateFrom && (!normalized.waiterUserId || session.openedByUserId === normalized.waiterUserId));
+  const incompleteTimestamps: Array<{ type: string; id: string; detail: string }> = [];
+  const durations = { turnover: [] as number[], orderToKitchen: [] as number[], preparation: [] as number[], readyToDelivery: [] as number[] };
+  for (const session of matchedSessions) {
+    if (session.closedAt) durations.turnover.push(Math.max(0, (Date.parse(session.closedAt) - Date.parse(session.openedAt)) / 1000));
+    else incompleteTimestamps.push({ type: 'open_table_session', id: session.id, detail: 'Table session has not been closed.' });
+  }
+  for (const order of matchedOrders) for (const item of order.items) {
+    if (normalized.stationId && item.station !== normalized.stationId) continue;
+    const events = history.filter((event) => event.orderId === order.id && event.orderItemId === item.id && matchesBranch(event, normalized));
+    const queued = events.find((event) => event.progress === 'queued');
+    const preparing = events.find((event) => event.progress === 'preparing') ?? queued;
+    const ready = events.find((event) => event.progress === 'ready');
+    const served = events.find((event) => event.progress === 'served');
+    if (queued) durations.orderToKitchen.push(Math.max(0, (Date.parse(queued.at) - Date.parse(order.createdAt)) / 1000)); else incompleteTimestamps.push({ type: 'missing_kitchen_send', id: `${order.id}:${item.id}`, detail: 'No queued timestamp.' });
+    if (preparing && ready) durations.preparation.push(Math.max(0, (Date.parse(ready.at) - Date.parse(preparing.at)) / 1000)); else incompleteTimestamps.push({ type: 'missing_preparation_timestamp', id: `${order.id}:${item.id}`, detail: 'Preparing or ready timestamp is missing.' });
+    if (ready && served) durations.readyToDelivery.push(Math.max(0, (Date.parse(served.at) - Date.parse(ready.at)) / 1000)); else if (ready) incompleteTimestamps.push({ type: 'missing_delivery_timestamp', id: `${order.id}:${item.id}`, detail: 'Ready item has no served timestamp.' });
+  }
+  const average = (values: number[]) => values.length ? Math.round(values.reduce((a, b) => a + b, 0) / values.length) : null;
+  const waiterIds = [...new Set(matchedOrders.map((order) => order.createdBy))];
+  const rows: OperationsReportRow[] = waiterIds.map((waiterUserId) => {
+    const waiterOrders = matchedOrders.filter((order) => order.createdBy === waiterUserId); const cancelled = waiterOrders.filter((order) => order.status === 'cancelled').length;
+    const sales = roundMoney(waiterOrders.filter((order) => order.status !== 'cancelled').reduce((sum, order) => sum + order.subtotal, 0));
+    const guestsServed = matchedSessions.filter((session) => session.openedByUserId === waiterUserId && sessionOrders(session.id).some((order) => order.createdBy === waiterUserId)).reduce((sum, session) => sum + session.guestCount, 0);
+    const completedCount = waiterOrders.filter((order) => order.status !== 'cancelled').length;
+    return { waiterUserId, orderCount: waiterOrders.length, guestsServed, sales, averageCheck: completedCount ? roundMoney(sales / completedCount) : 0, voidCancellationCount: cancelled, voidCancellationRate: waiterOrders.length ? roundMoney(cancelled / waiterOrders.length * 100) : 0 };
+  });
+  const guestsServed = matchedSessions.reduce((sum, session) => sum + session.guestCount, 0); const sales = roundMoney(matchedOrders.filter((order) => order.status !== 'cancelled').reduce((sum, order) => sum + order.subtotal, 0));
+  return makeReport('operations', 'operations', normalized, [
+    { key: 'waiterUserId', label: 'Waiter', type: 'string' }, { key: 'orderCount', label: 'Orders', type: 'number' }, { key: 'guestsServed', label: 'Guests', type: 'number' },
+    { key: 'sales', label: 'Sales', type: 'currency' }, { key: 'averageCheck', label: 'Average check', type: 'currency' }, { key: 'voidCancellationRate', label: 'Void/cancellation %', type: 'number' },
+  ], rows, { tableSessions: matchedSessions.length, openTableSessions: matchedSessions.filter((session) => session.status === 'open' || !session.closedAt).length, guestsServed, sales,
+    averageCheck: matchedOrders.filter((order) => order.status !== 'cancelled').length ? roundMoney(sales / matchedOrders.filter((order) => order.status !== 'cancelled').length) : 0,
+    averageTableTurnoverSeconds: average(durations.turnover), averageOrderToKitchenSendSeconds: average(durations.orderToKitchen), averagePreparationSeconds: average(durations.preparation), averageReadyToDeliverySeconds: average(durations.readyToDelivery), incompleteTimestamps });
+}
+
 export async function getFinancialSummaryReport(user: AuthenticatedUser, filters: ReportFilters = {}) {
   assertCanViewReports(user);
   const normalized = normalizeFilters(filters);
-  const [bills, movements, orders, sales] = await Promise.all([listBills(), listStockMovements(), listOrders(), getSalesReport(user, 'day', filters)]);
+  const [bills, movements, orders, sales, inventoryControl] = await Promise.all([listBills(), listStockMovements(), listOrders(), getSalesReport(user, 'day', filters), getInventoryControlReport(user, filters)]);
   const matchedBills = bills.filter((bill) => billMatchesFilters(bill, normalized, orders));
   // Cash revenue is a ledger measure; totalDue is recognized revenue and can remain unpaid.
   const revenue = sales.summary.collectedPayments;
@@ -946,6 +1063,11 @@ export async function getFinancialSummaryReport(user: AuthenticatedUser, filters
       grossProfit,
       grossMarginPercent,
       billCount: matchedBills.length,
+      costDataStatus: inventoryControl.summary.exceptionCount ? 'incomplete' : 'complete',
+      missingRecipeItemIds: inventoryControl.summary.missingRecipeItemIds,
+      missingCostItemIds: inventoryControl.summary.missingCostItemIds,
+      /** COGS is a partial estimate when mappings are incomplete; never interpret it as complete zero cost. */
+      cogsIsEstimate: inventoryControl.summary.exceptionCount > 0,
     },
   );
 }
