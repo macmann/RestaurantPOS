@@ -9,7 +9,7 @@ import { adminCreateCategory, adminCreateItem } from '../backend/menu/service';
 import { createTable, openTableSession } from '../backend/tables/service';
 import { appRoutes, canAccessRoute, superadminSettingsRoutes, visibleRoutes } from '../frontend/auth/navigation';
 import { loadCashierTableFloor } from '../frontend/cashier/table-floor';
-import { startDineInOrder, advanceOrderStatus, loadOrderForScreen, orderItemPreparationStatus } from '../frontend/orders/order-screen';
+import { startDineInOrder, advanceOrderStatus, buildMenuItemAddition, loadOrderForScreen, orderItemPreparationStatus } from '../frontend/orders/order-screen';
 import { loadKitchenQueue, setKitchenItemProgress } from '../frontend/kds/kitchen-screen';
 import { loadBarQueue } from '../frontend/kds/bar-screen';
 import { closePaidTableFromBillingScreen, startBillForBillingScreen, openBillingScreen } from '../frontend/billing/billing-screen';
@@ -48,6 +48,11 @@ async function runBrowserScreenE2e(): Promise<void> {
     { menuItemId: kitchenItem.id, quantity: 1 },
     { menuItemId: barItem.id, quantity: 1 },
   ]);
+  const repeatedItemEdit = buildMenuItemAddition(order, kitchenItem.id);
+  assert(repeatedItemEdit.modifyItems?.[0]?.id === order.items[0].id && repeatedItemEdit.modifyItems[0].quantity === 2, 'Tapping the same menu item should increase its existing cart-line quantity.');
+  assert(!repeatedItemEdit.addItems?.length, 'Tapping the same menu item should not append a duplicate cart line.');
+  const newItemEdit = buildMenuItemAddition(order, 'another-menu-item');
+  assert(newItemEdit.addItems?.[0]?.menuItemId === 'another-menu-item', 'Tapping a new menu item should append a cart line.');
   order = await advanceOrderStatus(waiter, order.id, order.version, 'in_preparation');
 
   const cashierRoutes = visibleRoutes(permissionsFor('cashier') as any);
