@@ -6,6 +6,7 @@ import {
   getSalesReport,
   getExceptionReport,
   getStationReport,
+  getProductMixReport,
   type ReportFilters,
   type SalesPeriod,
 } from './service';
@@ -20,4 +21,5 @@ export const ReportsApi = {
   dailySummary: (user: AuthenticatedUser, filters?: ReportFilters) => getDailySummaryReport(user, filters),
   exceptions: (user: AuthenticatedUser, filters?: ReportFilters) => getExceptionReport(user, filters),
   stations: (user: AuthenticatedUser, filters?: ReportFilters) => getStationReport(user, filters),
+  productMix: (user: AuthenticatedUser, filters?: ReportFilters) => getProductMixReport(user, filters),
 };

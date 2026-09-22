@@ -135,15 +135,18 @@ async function buildOrderItemFromMenu(user: AuthenticatedUser, orderBranchId: st
   if (menuItem.isActive === false) assertAuthorizedUnavailableOverride(user, input, `Menu item ${menuItem.id} is inactive.`);
   if (!category.isActive) assertAuthorizedUnavailableOverride(user, input, `Menu category ${category.id} is inactive.`);
 
-  return itemFromMenuRecord(menuItem, input);
+  return itemFromMenuRecord(menuItem, input, category.name);
 }
 
-function itemFromMenuRecord(menuItem: MenuItemRecord, input: OrderMenuItemInput): OrderItem {
+function itemFromMenuRecord(menuItem: MenuItemRecord, input: OrderMenuItemInput, categoryName?: string): OrderItem {
   return {
     id: createId('ord_item'),
     menuItemId: menuItem.id,
     name: menuItem.name,
     station: menuItem.prepStation,
+    categoryId: menuItem.categoryId,
+    categoryName,
+    isPromotional: menuItem.isPromotional,
     quantity: input.quantity,
     unitPrice: menuItem.price,
     note: input.note,

@@ -2008,6 +2008,8 @@ async function renderReports(): Promise<HTMLElement> {
     <label>Service mode<select name="serviceMode"><option value="">All modes</option><option value="dine_in" ${params.get('serviceMode') === 'dine_in' ? 'selected' : ''}>Dine in</option><option value="takeout" ${params.get('serviceMode') === 'takeout' ? 'selected' : ''}>Takeout</option></select></label>
     <label>Station<select name="stationId"><option value="">All stations</option>${operationalSettings.prepStations.filter((station) => station.enabled).map((station) => `<option value="${escapeHtml(station.id)}" ${params.get('stationId') === station.id ? 'selected' : ''}>${escapeHtml(station.displayName)}</option>`).join('')}</select></label>
     <label>Category<input name="category" value="${escapeHtml(params.get('category') ?? '')}" placeholder="All categories"></label>
+    <label>Promotion<input name="promotionId" value="${escapeHtml(params.get('promotionId') ?? '')}" placeholder="Promotion ID"></label>
+    <label>Hour interval<select name="intervalMinutes">${[15, 30, 60, 120].map((minutes) => `<option value="${minutes}" ${Number(params.get('intervalMinutes') ?? 60) === minutes ? 'selected' : ''}>${minutes} minutes</option>`).join('')}</select></label>
     <label>Order status<select name="orderStatus"><option value="">All statuses</option>${['pending', 'in_preparation', 'completed', 'delivered', 'cancelled'].map((status) => `<option value="${status}" ${params.get('orderStatus') === status ? 'selected' : ''}>${status.replace(/_/g, ' ')}</option>`).join('')}</select></label>
     <label>Payment method<select name="paymentMethod"><option value="">All methods</option>${['cash', 'card', 'wallet', 'bank_transfer', 'wave_money', 'kbzpay'].map((method) => `<option value="${method}" ${params.get('paymentMethod') === method ? 'selected' : ''}>${method.replace(/_/g, ' ')}</option>`).join('')}</select></label>
     <label>Exception type<select name="eventType"><option value="">All exceptions</option>${['payment_voids', 'refunds', 'order_cancellations', 'item_removals', 'comps_price_overrides'].map((type) => `<option value="${type}" ${params.get('eventType') === type ? 'selected' : ''}>${type.replace(/_/g, ' ')}</option>`).join('')}</select></label>
@@ -2062,6 +2064,39 @@ async function renderReports(): Promise<HTMLElement> {
   operations.innerHTML = `<h2>Day activity</h2><p><strong>${summary.orderCount}</strong> orders · <strong>${summary.invoiceCount}</strong> invoices${summary.guestCount === undefined ? '' : ` · <strong>${summary.guestCount}</strong> guests`}</p><p>Average check: <strong>${money(summary.averageCheck)}</strong></p><p>Debts: ${money(summary.debts)} · Outstanding: ${money(summary.outstandingBalances)}</p><p>First transaction: ${summary.firstTransactionAt ? new Date(summary.firstTransactionAt).toLocaleString() : '—'}<br>Last transaction: ${summary.lastTransactionAt ? new Date(summary.lastTransactionAt).toLocaleString() : '—'}</p>`;
   reportBody.append(grossToNet, tender, operations);
   section.append(reportBody);
+
+  const productMix = await apiClient.getProductMixReport(filters);
+  const mixPanel = el('article', 'card report-card product-mix-report');
+  mixPanel.innerHTML = `<h2>Product mix</h2><p class="muted">Actual selling prices and historical order snapshots are used. Contribution margin is estimated from recipe-linked inventory costs; incomplete rows are clearly flagged.</p>
+    <div class="page-actions"><label>Group by <select data-mix-dimension>${[['menu_item','Menu item'],['category','Category'],['station','Prep station'],['service_mode','Service mode'],['weekday','Weekday'],['hour','Hour interval']].map(([value,label]) => `<option value="${value}">${label}</option>`).join('')}</select></label><label>View <select data-mix-view><option value="all">All</option><option value="top">Top 10</option><option value="bottom">Bottom 10</option></select></label><button type="button" class="secondary-button" data-mix-csv>Download CSV</button><button type="button" class="secondary-button" data-mix-print>Print</button></div>
+    <p data-mix-warning class="pos-status"></p><div class="table-scroll" data-mix-table></div>`;
+  const dimensionSelect = mixPanel.querySelector<HTMLSelectElement>('[data-mix-dimension]')!;
+  const viewSelect = mixPanel.querySelector<HTMLSelectElement>('[data-mix-view]')!;
+  const tableHost = mixPanel.querySelector<HTMLElement>('[data-mix-table]')!;
+  const warning = mixPanel.querySelector<HTMLElement>('[data-mix-warning]')!;
+  let sortKey = 'netSales'; let sortDirection = -1;
+  const mixColumns: Array<[string, string, 'text' | 'money' | 'number']> = [['label','Group','text'],['quantity','Quantity','number'],['grossSales','Gross sales','money'],['discounts','Discounts','money'],['netSales','Net sales','money'],['percentageOfTotalSales','% sales','number'],['averageSellingPrice','Avg price','money'],['orderPenetration','Order penetration %','number'],['estimatedContributionMargin','Est. contribution','money'],['costDataStatus','Cost data','text']];
+  const visibleMixRows = () => {
+    const rows = [...((productMix.groups as any)[dimensionSelect.value] ?? [])].sort((a: any, b: any) => {
+      const left = a[sortKey]; const right = b[sortKey];
+      return (typeof left === 'number' && typeof right === 'number' ? left - right : String(left ?? '').localeCompare(String(right ?? ''))) * sortDirection;
+    });
+    return viewSelect.value === 'all' ? rows : (viewSelect.value === 'top' ? rows.sort((a: any,b: any) => b.netSales-a.netSales) : rows.sort((a: any,b: any) => a.netSales-b.netSales)).slice(0, 10);
+  };
+  const renderMixTable = () => {
+    const rows = visibleMixRows();
+    warning.textContent = productMix.summary.missingRecipeItemIds.length || productMix.summary.missingCostItemIds.length ? `Cost gaps — missing recipe: ${productMix.summary.missingRecipeItemIds.join(', ') || 'none'}; missing cost: ${productMix.summary.missingCostItemIds.join(', ') || 'none'}.` : 'Recipe cost coverage is complete.';
+    tableHost.innerHTML = `<table><thead><tr>${mixColumns.map(([key,label]) => `<th><button type="button" class="table-sort" data-sort="${key}">${label}${sortKey === key ? (sortDirection > 0 ? ' ↑' : ' ↓') : ''}</button></th>`).join('')}</tr></thead><tbody>${rows.map((row: any) => `<tr>${mixColumns.map(([key,,format]) => `<td>${row[key] === null ? 'Unavailable' : format === 'money' ? money(row[key]) : escapeHtml(String(row[key]))}</td>`).join('')}</tr>`).join('') || `<tr><td colspan="${mixColumns.length}">No product-mix sales match these filters.</td></tr>`}</tbody></table>`;
+    tableHost.querySelectorAll<HTMLButtonElement>('[data-sort]').forEach((button) => button.addEventListener('click', () => { const next = button.dataset.sort!; sortDirection = sortKey === next ? -sortDirection : (next === 'label' || next === 'costDataStatus' ? 1 : -1); sortKey = next; renderMixTable(); }));
+  };
+  dimensionSelect.addEventListener('change', renderMixTable); viewSelect.addEventListener('change', renderMixTable);
+  mixPanel.querySelector<HTMLButtonElement>('[data-mix-print]')!.addEventListener('click', () => window.print());
+  mixPanel.querySelector<HTMLButtonElement>('[data-mix-csv]')!.addEventListener('click', () => {
+    const quote = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`; const rows = visibleMixRows();
+    const csv = [mixColumns.map(([,label]) => quote(label)).join(','), ...rows.map((row: any) => mixColumns.map(([key]) => quote(row[key])).join(','))].join('\r\n');
+    const link = document.createElement('a'); link.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' })); link.download = `product-mix-${dimensionSelect.value}.csv`; link.click(); URL.revokeObjectURL(link.href);
+  });
+  renderMixTable(); section.append(mixPanel);
 
   const stationReport = await apiClient.getStationReport(filters);
   const stationPanel = el('article', 'card report-card station-report');

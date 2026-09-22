@@ -28,6 +28,7 @@ type DailySummaryReport = Awaited<ReturnType<typeof import('../../backend/report
 type SalesReport = Awaited<ReturnType<typeof import('../../backend/reports/controller').ReportsApi.sales>>;
 type ExceptionReport = Awaited<ReturnType<typeof import('../../backend/reports/controller').ReportsApi.exceptions>>;
 type StationReport = Awaited<ReturnType<typeof import('../../backend/reports/controller').ReportsApi.stations>>;
+type ProductMixReport = Awaited<ReturnType<typeof import('../../backend/reports/controller').ReportsApi.productMix>>;
 type ReportFilters = import('../../backend/reports/service').ReportFilters;
 
 declare global {
@@ -307,6 +308,7 @@ async function requestInProcess<T>(path: string, method: string, body: unknown, 
     const { ReportsApi } = await backendModule<any>('../../backend/reports/controller.js');
     if (parts[2] === 'daily-summary') return ReportsApi.dailySummary(await userFor(userId), Object.fromEntries(url.searchParams.entries())) as Promise<T>;
     if (parts[2] === 'stations') return ReportsApi.stations(await userFor(userId), Object.fromEntries(url.searchParams.entries())) as Promise<T>;
+    if (parts[2] === 'product-mix') return ReportsApi.productMix(await userFor(userId), Object.fromEntries(url.searchParams.entries())) as Promise<T>;
     if (parts[2] === 'sales') return ReportsApi.sales(await userFor(userId), parts[3], Object.fromEntries(url.searchParams.entries())) as Promise<T>;
     if (parts[2] === 'inventory-usage') return ReportsApi.inventoryUsage(await userFor(userId), Object.fromEntries(url.searchParams.entries())) as Promise<T>;
     if (parts[2] === 'financial-summary') return ReportsApi.financialSummary(await userFor(userId), Object.fromEntries(url.searchParams.entries())) as Promise<T>;
@@ -666,6 +668,10 @@ export class RestaurantApiClient {
 
   getStationReport(filters: ReportFilters = {}): Promise<StationReport> {
     return this.request<StationReport>(`/api/reports/stations${queryString(filters as Record<string, unknown>)}`);
+  }
+
+  getProductMixReport(filters: ReportFilters = {}): Promise<ProductMixReport> {
+    return this.request<ProductMixReport>(`/api/reports/product-mix${queryString(filters as Record<string, unknown>)}`);
   }
 }
 
