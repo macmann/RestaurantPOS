@@ -78,7 +78,7 @@ interface RuntimeSettingsResponse {
   localization?: Partial<SuperadminOperationalSettings['localization']>;
 }
 
-async function loadCurrentBusinessDayRange(): Promise<{ dateFrom: string; dateTo: string }> {
+async function loadCurrentBusinessDayRange(): Promise<{ dateFrom: string; dateTo: string; businessDate: string }> {
   const settings = await apiClient.getSettings() as RuntimeSettingsResponse;
   return getBusinessDayRange(new Date(), {
     timezone: settings.branch?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone ?? 'UTC',
@@ -1991,21 +1991,68 @@ async function renderSalesHistory(): Promise<HTMLElement> {
 }
 
 async function renderReports(): Promise<HTMLElement> {
-  const section = page('Reports', 'Review sales, inventory usage, and financial summary without reading raw API payloads.');
-  const businessDay = await loadCurrentBusinessDayRange();
-  const [sales, inventory, financial] = await Promise.all([apiClient.getSalesReport('day', businessDay) as Promise<any>, apiClient.getInventoryUsageReport(), apiClient.getFinancialSummaryReport()]);
-  const cards = el('div', 'report-grid');
-  const salesCard = el('article', 'card report-card');
-  salesCard.innerHTML = `<h3>Daily sales</h3><p><strong>${money(sales.summary?.revenue ?? 0)}</strong> revenue · ${sales.summary?.orderCount ?? 0} orders</p>`;
-  const salesRows = el('div', 'report-rows');
-  for (const row of sales.rows ?? []) salesRows.append(el('p', '', `${row.periodLabel}: ${money(row.revenue)} across ${row.orderCount} orders`));
-  salesCard.append(salesRows);
-  const invCard = el('article', 'card report-card');
-  invCard.innerHTML = `<h3>Inventory usage</h3><p>${inventory.summary.itemCount} items · ${inventory.summary.totalUsed} used · ${inventory.summary.totalWastage} wastage</p>`;
-  const finCard = el('article', 'card report-card');
-  finCard.innerHTML = `<h3>Financial summary</h3><p>${money(financial.summary.revenue)} revenue · ${money(financial.summary.grossProfit)} gross profit · ${financial.summary.grossMarginPercent}% margin</p>`;
-  cards.append(salesCard, invCard, finCard);
-  section.append(cards);
+  const section = page('Daily summary', 'Close the business day with a gross-to-net view and tender reconciliation.');
+  const todayRange = await loadCurrentBusinessDayRange();
+  const defaultDate = todayRange.businessDate;
+  const params = new URLSearchParams(route.split('?')[1] ?? '');
+  const form = el('form', 'staff-form report-filter-form');
+  form.innerHTML = `
+    <label>Business date<input type="date" name="businessDate" value="${escapeHtml(params.get('businessDate') ?? defaultDate)}" required></label>
+    <label>Shift<input name="shiftId" value="${escapeHtml(params.get('shiftId') ?? '')}" placeholder="All shifts"></label>
+    <label>Cashier<input name="cashierUserId" value="${escapeHtml(params.get('cashierUserId') ?? '')}" placeholder="All cashiers"></label>
+    <label>Waiter<input name="waiterUserId" value="${escapeHtml(params.get('waiterUserId') ?? '')}" placeholder="All waiters"></label>
+    <label>Service mode<select name="serviceMode"><option value="">All modes</option><option value="dine_in" ${params.get('serviceMode') === 'dine_in' ? 'selected' : ''}>Dine in</option><option value="takeout" ${params.get('serviceMode') === 'takeout' ? 'selected' : ''}>Takeout</option></select></label>
+    <label>Payment method<select name="paymentMethod"><option value="">All methods</option>${['cash', 'card', 'wallet', 'bank_transfer', 'wave_money', 'kbzpay'].map((method) => `<option value="${method}" ${params.get('paymentMethod') === method ? 'selected' : ''}>${method.replace(/_/g, ' ')}</option>`).join('')}</select></label>
+    <button type="submit">Run report</button>`;
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const query = new URLSearchParams();
+    new FormData(form).forEach((value, key) => { if (String(value).trim()) query.set(key, String(value)); });
+    navigate(`#/reports?${query}`);
+  });
+  section.append(form);
+
+  const filters = Object.fromEntries(params.entries());
+  if (!filters.businessDate) filters.businessDate = defaultDate;
+  if (session?.user.branchId) filters.branchId = session.user.branchId;
+  const report = await apiClient.getDailySummaryReport(filters);
+  const summary = report.summary;
+  const actions = el('div', 'page-actions daily-summary-actions');
+  const printButton = el('button', 'secondary-button', 'Print report');
+  printButton.type = 'button';
+  printButton.addEventListener('click', () => window.print());
+  const csvButton = el('button', 'secondary-button', 'Download CSV');
+  csvButton.type = 'button';
+  csvButton.addEventListener('click', () => {
+    const quote = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`;
+    const columns = report.export.columns;
+    const csv = [columns.map((column) => quote(column.label)).join(','), ...report.export.rows.map((row: any) => columns.map((column) => quote(row[column.key])).join(','))].join('\r\n');
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    link.download = `daily-summary-${summary.businessDate}.csv`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+  });
+  actions.append(printButton, csvButton);
+  section.append(actions);
+
+  const reportBody = el('div', 'daily-summary-report');
+  const grossToNet = el('article', 'card report-card');
+  grossToNet.innerHTML = `<h2>Gross to net</h2><dl class="summary-ledger">
+    <div><dt>Gross sales</dt><dd>${money(summary.grossSales)}</dd></div>
+    <div><dt>Discounts</dt><dd>−${money(summary.discounts.total)}</dd></div>
+    ${Object.entries(summary.discounts).filter(([key, value]) => key !== 'total' && Number(value)).map(([key, value]) => `<div class="muted"><dt>${key.replace(/([A-Z])/g, ' $1')}</dt><dd>−${money(Number(value))}</dd></div>`).join('')}
+    <div><dt>Service charges</dt><dd>${money(summary.serviceCharges)}</dd></div>
+    <div class="ledger-total"><dt>Net sales</dt><dd>${money(summary.netSales)}</dd></div><div><dt>Tax</dt><dd>${money(summary.tax)}</dd></div></dl>`;
+  const tender = el('article', 'card report-card');
+  tender.innerHTML = `<h2>Tender reconciliation</h2><dl class="summary-ledger">
+    ${Object.entries(summary.paymentTotals).map(([method, amount]) => `<div><dt>${method.replace(/_/g, ' ')}</dt><dd>${money(Number(amount))}</dd></div>`).join('') || '<div><dt>No tenders recorded</dt><dd>—</dd></div>'}
+    <div><dt>Refunds</dt><dd>−${money(summary.refunds)}</dd></div><div><dt>Voids</dt><dd>−${money(summary.voids)}</dd></div>
+    <div class="ledger-total"><dt>Net tender</dt><dd>${money(summary.tenderedTotal)}</dd></div><div><dt>Variance</dt><dd>${money(summary.tenderVariance)}</dd></div></dl>`;
+  const operations = el('article', 'card report-card');
+  operations.innerHTML = `<h2>Day activity</h2><p><strong>${summary.orderCount}</strong> orders · <strong>${summary.invoiceCount}</strong> invoices${summary.guestCount === undefined ? '' : ` · <strong>${summary.guestCount}</strong> guests`}</p><p>Average check: <strong>${money(summary.averageCheck)}</strong></p><p>Debts: ${money(summary.debts)} · Outstanding: ${money(summary.outstandingBalances)}</p><p>First transaction: ${summary.firstTransactionAt ? new Date(summary.firstTransactionAt).toLocaleString() : '—'}<br>Last transaction: ${summary.lastTransactionAt ? new Date(summary.lastTransactionAt).toLocaleString() : '—'}</p>`;
+  reportBody.append(grossToNet, tender, operations);
+  section.append(reportBody);
   return section;
 }
 

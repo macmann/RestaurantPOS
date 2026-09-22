@@ -24,6 +24,7 @@ type InventoryDeductionPolicy = Awaited<ReturnType<typeof InventoryAdminApi.getD
 type AuditSearchResult = Awaited<ReturnType<typeof AdminAuditApi.search>>;
 type InventoryUsageReport = Awaited<ReturnType<typeof import('../../backend/reports/controller').ReportsApi.inventoryUsage>>;
 type FinancialSummaryReport = Awaited<ReturnType<typeof import('../../backend/reports/controller').ReportsApi.financialSummary>>;
+type DailySummaryReport = Awaited<ReturnType<typeof import('../../backend/reports/controller').ReportsApi.dailySummary>>;
 type SalesReport = Awaited<ReturnType<typeof import('../../backend/reports/controller').ReportsApi.sales>>;
 type ReportFilters = import('../../backend/reports/service').ReportFilters;
 
@@ -302,6 +303,7 @@ async function requestInProcess<T>(path: string, method: string, body: unknown, 
 
   if (parts[1] === 'reports') {
     const { ReportsApi } = await backendModule<any>('../../backend/reports/controller.js');
+    if (parts[2] === 'daily-summary') return ReportsApi.dailySummary(await userFor(userId), Object.fromEntries(url.searchParams.entries())) as Promise<T>;
     if (parts[2] === 'sales') return ReportsApi.sales(await userFor(userId), parts[3], Object.fromEntries(url.searchParams.entries())) as Promise<T>;
     if (parts[2] === 'inventory-usage') return ReportsApi.inventoryUsage(await userFor(userId), Object.fromEntries(url.searchParams.entries())) as Promise<T>;
     if (parts[2] === 'financial-summary') return ReportsApi.financialSummary(await userFor(userId), Object.fromEntries(url.searchParams.entries())) as Promise<T>;
@@ -636,6 +638,10 @@ export class RestaurantApiClient {
 
   updateSettings(input: unknown) {
     return this.request('/api/settings', { method: 'PUT', body: input, operationKind: 'idempotent_write' });
+  }
+
+  getDailySummaryReport(filters: ReportFilters = {}): Promise<DailySummaryReport> {
+    return this.request<DailySummaryReport>(`/api/reports/daily-summary${queryString(filters as Record<string, unknown>)}`);
   }
 
   getSalesReport(period: 'day' | 'week' | 'month', filters: ReportFilters = {}): Promise<SalesReport> {

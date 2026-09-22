@@ -6,7 +6,7 @@ import { t, normalizeLocale, getTypographyForLocale } from '../i18n/service';
 import { listBills, type BillLineItem, type BillRecord, type BillSplit } from '../billing/repository';
 import { listInventoryItems, listStockMovements, type InventoryItemRecord, type StockMovementRecord } from '../inventory/repository';
 import { listOrders, type OrderItem, type OrderRecord } from '../orders/repository';
-import { getBusinessDate } from '../../shared/business-day';
+import { getBusinessDate, getBusinessDayRange } from '../../shared/business-day';
 
 export type SalesPeriod = 'day' | 'week' | 'month';
 export type ReportExportFormat = 'csv' | 'print';
@@ -17,7 +17,34 @@ export interface ReportFilters {
   branchId?: string;
   cashierUserId?: string;
   waiterUserId?: string;
+  businessDate?: string;
+  shiftId?: string;
+  serviceMode?: 'dine_in' | 'takeout';
+  paymentMethod?: string;
   locale?: string;
+}
+
+export interface DailySummary {
+  businessDate: string;
+  branchId?: string;
+  grossSales: number;
+  discounts: { itemLevel: number; combo: number; happyHour: number; billLevel: number; total: number };
+  tax: number;
+  serviceCharges: number;
+  netSales: number;
+  paymentTotals: Record<string, number>;
+  refunds: number;
+  voids: number;
+  debts: number;
+  outstandingBalances: number;
+  orderCount: number;
+  invoiceCount: number;
+  guestCount?: number;
+  averageCheck: number;
+  firstTransactionAt?: string;
+  lastTransactionAt?: string;
+  tenderedTotal: number;
+  tenderVariance: number;
 }
 
 export interface ExportColumn {
@@ -124,8 +151,19 @@ function roundQuantity(value: number): number {
 }
 
 function normalizeFilters(filters: ReportFilters = {}): NormalizedFilters {
-  const dateFrom = filters.dateFrom ? new Date(filters.dateFrom).toISOString() : DEFAULT_REPORT_START;
-  const dateTo = filters.dateTo ? new Date(filters.dateTo).toISOString() : DEFAULT_REPORT_END;
+  const branch = getRuntimeSettings().branch;
+  let businessRange: ReturnType<typeof getBusinessDayRange> | undefined;
+  if (filters.businessDate) {
+    let anchor = new Date(`${filters.businessDate}T12:00:00.000Z`);
+    businessRange = getBusinessDayRange(anchor, branch);
+    // Noon UTC can cross a calendar boundary in extreme timezones; converge on the requested local date.
+    for (let attempt = 0; attempt < 2 && businessRange.businessDate !== filters.businessDate; attempt += 1) {
+      anchor = new Date(anchor.getTime() + (businessRange.businessDate < filters.businessDate ? 1 : -1) * 86400000);
+      businessRange = getBusinessDayRange(anchor, branch);
+    }
+  }
+  const dateFrom = filters.dateFrom ? new Date(filters.dateFrom).toISOString() : businessRange?.dateFrom ?? DEFAULT_REPORT_START;
+  const dateTo = filters.dateTo ? new Date(filters.dateTo).toISOString() : businessRange?.dateTo ?? DEFAULT_REPORT_END;
   if (dateFrom > dateTo) throw new Error('dateFrom must be before or equal to dateTo.');
 
   return {
@@ -135,6 +173,14 @@ function normalizeFilters(filters: ReportFilters = {}): NormalizedFilters {
     dateFrom,
     dateTo,
   };
+}
+
+function matchesOptionalField(row: unknown, field: string, expected?: string): boolean {
+  return !expected || optionalRecordField(row, field) === expected;
+}
+
+function billOrders(bill: BillRecord, orders: OrderRecord[]): OrderRecord[] {
+  return orders.filter((order) => order.tableSessionId === bill.tableSessionId || order.tableId === bill.tableSessionId);
 }
 
 function assertCanViewReports(user: AuthenticatedUser): void {
@@ -395,6 +441,108 @@ export async function getSalesReport(user: AuthenticatedUser, period: SalesPerio
       };
     })(),
   );
+}
+
+/** A close-of-day view calculated from invoice splits and their payment ledgers. */
+export async function getDailySummaryReport(user: AuthenticatedUser, filters: ReportFilters = {}): Promise<ExportReadyReport<DailySummary, Array<{ section: string; metric: string; amount: number }>[number]>> {
+  assertCanViewReports(user);
+  const normalized = normalizeFilters(filters);
+  const [allOrders, allBills] = await Promise.all([listOrders(), listBills()]);
+  const orders = allOrders.filter((order) => {
+    if (!orderMatchesFilters(order, normalized, allBills)) return false;
+    if (normalized.serviceMode && order.serviceMode !== normalized.serviceMode) return false;
+    return matchesOptionalField(order, 'shiftId', normalized.shiftId);
+  });
+  const orderIds = new Set(orders.map((order) => order.id));
+  const bills = allBills.filter((bill) => {
+    if (!billMatchesFilters(bill, normalized, allOrders)) return false;
+    const related = billOrders(bill, allOrders);
+    if ((normalized.serviceMode || normalized.waiterUserId || normalized.shiftId) && !related.some((order) => orderIds.has(order.id))) return false;
+    if (normalized.shiftId && !matchesOptionalField(bill, 'shiftId', normalized.shiftId) && !related.some((order) => matchesOptionalField(order, 'shiftId', normalized.shiftId))) return false;
+    if (normalized.paymentMethod) {
+      return flattenBillSplits(bill).some((split) => split.payments.some((payment) => payment.method === normalized.paymentMethod && isWithinRange(payment.paidAt, normalized)));
+    }
+    return true;
+  });
+
+  const summary: DailySummary = {
+    businessDate: filters.businessDate ?? (normalized.dateFrom === DEFAULT_REPORT_START ? getBusinessDate(new Date().toISOString(), getRuntimeSettings().branch) : getBusinessDate(normalized.dateFrom, getRuntimeSettings().branch)),
+    branchId: normalized.branchId,
+    grossSales: 0,
+    discounts: { itemLevel: 0, combo: 0, happyHour: 0, billLevel: 0, total: 0 },
+    tax: 0,
+    serviceCharges: 0,
+    netSales: 0,
+    paymentTotals: {},
+    refunds: 0,
+    voids: 0,
+    debts: 0,
+    outstandingBalances: 0,
+    orderCount: orders.filter((order) => order.status !== 'cancelled').length,
+    invoiceCount: bills.filter((bill) => bill.state !== 'void').length,
+    averageCheck: 0,
+    tenderedTotal: 0,
+    tenderVariance: 0,
+  };
+  let guestCount = 0;
+  let hasGuestCount = false;
+  for (const order of orders.filter((row) => row.status !== 'cancelled')) {
+    const guests = Number((order as unknown as Record<string, unknown>).guestCount);
+    if (Number.isFinite(guests)) { guestCount += guests; hasGuestCount = true; }
+  }
+  if (hasGuestCount) summary.guestCount = guestCount;
+
+  const transactionTimes: string[] = [];
+  let paymentVoids = 0;
+  for (const bill of bills) {
+    const splits = flattenBillSplits(bill);
+    if (bill.state === 'void') summary.voids += billTotalDue(bill);
+    for (const split of splits.filter((row) => row.state !== 'void' && bill.state !== 'void')) {
+      const breakdown = split.calculationBreakdown;
+      summary.grossSales += split.subtotal;
+      summary.discounts.itemLevel += breakdown?.discounts?.itemLevel ?? 0;
+      summary.discounts.combo += breakdown?.discounts?.combo ?? 0;
+      summary.discounts.happyHour += breakdown?.discounts?.happyHour ?? 0;
+      summary.discounts.billLevel += breakdown?.discounts?.billLevel ?? 0;
+      summary.discounts.total += split.discountTotal;
+      summary.tax += split.taxTotal;
+      const serviceCharge = Number((split as unknown as Record<string, unknown>).serviceChargeTotal ?? (breakdown as unknown as Record<string, unknown> | undefined)?.serviceChargeTotal ?? 0);
+      summary.serviceCharges += Number.isFinite(serviceCharge) ? serviceCharge : 0;
+      summary.outstandingBalances += split.unpaidBalance;
+      if (bill.state === 'debt' || split.state === 'debt') summary.debts += split.unpaidBalance;
+    }
+    for (const payment of splits.flatMap((split) => split.payments)) {
+      if (!isWithinRange(payment.paidAt, normalized) || (normalized.cashierUserId && payment.receivedByUserId !== normalized.cashierUserId) || (normalized.paymentMethod && payment.method !== normalized.paymentMethod) || payment.status === 'failed' || payment.status === 'authorized') continue;
+      transactionTimes.push(payment.paidAt);
+      const type = payment.type ?? 'payment';
+      if (type === 'refund') summary.refunds += payment.amount;
+      else if (type === 'void') { summary.voids += payment.amount; paymentVoids += payment.amount; }
+      else if (payment.status !== 'voided') summary.paymentTotals[payment.method] = (summary.paymentTotals[payment.method] ?? 0) + payment.amount;
+    }
+  }
+  summary.netSales = summary.grossSales - summary.discounts.total;
+  summary.tenderedTotal = Object.values(summary.paymentTotals).reduce((sum, amount) => sum + amount, 0) - summary.refunds - paymentVoids;
+  summary.tenderVariance = summary.tenderedTotal - (summary.netSales + summary.tax + summary.serviceCharges - summary.outstandingBalances);
+  summary.averageCheck = summary.invoiceCount ? summary.netSales / summary.invoiceCount : 0;
+  for (const key of ['grossSales', 'tax', 'serviceCharges', 'netSales', 'refunds', 'voids', 'debts', 'outstandingBalances', 'averageCheck', 'tenderedTotal', 'tenderVariance'] as const) summary[key] = roundMoney(summary[key]);
+  for (const key of Object.keys(summary.discounts) as Array<keyof typeof summary.discounts>) summary.discounts[key] = roundMoney(summary.discounts[key]);
+  for (const method of Object.keys(summary.paymentTotals)) summary.paymentTotals[method] = roundMoney(summary.paymentTotals[method]);
+  transactionTimes.sort();
+  summary.firstTransactionAt = transactionTimes[0];
+  summary.lastTransactionAt = transactionTimes[transactionTimes.length - 1];
+
+  const rows = [
+    { section: 'sales', metric: 'Gross sales', amount: summary.grossSales },
+    ...Object.entries(summary.discounts).filter(([key]) => key !== 'total').map(([metric, amount]) => ({ section: 'discounts', metric, amount })),
+    { section: 'sales', metric: 'Tax', amount: summary.tax }, { section: 'sales', metric: 'Service charges', amount: summary.serviceCharges },
+    { section: 'sales', metric: 'Net sales', amount: summary.netSales },
+    ...Object.entries(summary.paymentTotals).map(([metric, amount]) => ({ section: 'payments', metric, amount })),
+    { section: 'payments', metric: 'Refunds', amount: summary.refunds }, { section: 'payments', metric: 'Voids', amount: summary.voids },
+    { section: 'balances', metric: 'Debts', amount: summary.debts }, { section: 'balances', metric: 'Outstanding balances', amount: summary.outstandingBalances },
+  ];
+  return makeReport('daily_summary', 'sales_by_day', normalized, [
+    { key: 'section', label: 'Section', type: 'string' }, { key: 'metric', label: 'Metric', type: 'string' }, { key: 'amount', label: 'Amount', type: 'currency' },
+  ], rows, summary);
 }
 
 function stockBalanceBefore(movements: StockMovementRecord[], dateFrom: string): number {
