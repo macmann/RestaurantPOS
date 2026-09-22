@@ -8,6 +8,10 @@ import { listInventoryItems, listStockMovements, type InventoryItemRecord, type 
 import { listOrders, type OrderItem, type OrderRecord } from '../orders/repository';
 import { listAuditEvents, type AuditEventRecord } from '../audit/repository';
 import { getBusinessDate, getBusinessDayRange } from '../../shared/business-day';
+import { getPosOperationalSettings } from '../config/posSettings';
+import { listCategories, listItems } from '../menu/repository';
+import { getKdsPerformanceMetrics, type KdsPerformanceMetrics } from '../kds/service';
+import type { OrderStatus } from '../orders/repository';
 
 export type SalesPeriod = 'day' | 'week' | 'month';
 export type ReportExportFormat = 'csv' | 'print';
@@ -21,6 +25,10 @@ export interface ReportFilters {
   businessDate?: string;
   shiftId?: string;
   serviceMode?: 'dine_in' | 'takeout';
+  stationId?: string;
+  categoryId?: string;
+  category?: string;
+  orderStatus?: OrderStatus;
   paymentMethod?: string;
   locale?: string;
   eventType?: ExceptionCategory;
@@ -130,10 +138,34 @@ export interface SalesReportRow {
   items: Array<{
     menuItemId: string;
     itemName: string;
+    stationId: string;
+    categoryId?: string;
+    categoryName?: string;
+    category?: string;
+    serviceMode: OrderRecord['serviceMode'];
+    orderStatus: OrderRecord['status'];
     quantitySold: number;
     grossSales: number;
     orderIds: string[];
   }>;
+}
+
+export interface StationSalesRow {
+  stationId: string;
+  categoryId?: string;
+  categoryName: string;
+  menuItemId: string;
+  itemName: string;
+  quantitySold: number;
+  grossSales: number;
+  orderCount: number;
+}
+
+export interface StationReportSummary extends KdsPerformanceMetrics {
+  stationId?: string;
+  quantitySold: number;
+  grossSales: number;
+  orderCount: number;
 }
 
 export interface ReportSalesMetrics {
@@ -280,6 +312,9 @@ function orderMatchesFilters(order: OrderRecord, filters: NormalizedFilters, bil
   if (!isWithinRange(order.createdAt, filters)) return false;
   if (filters.waiterUserId && order.createdBy !== filters.waiterUserId) return false;
   if (!matchesBranch(order, filters)) return false;
+  if (filters.serviceMode && order.serviceMode !== filters.serviceMode) return false;
+  if (filters.orderStatus && order.status !== filters.orderStatus) return false;
+  if (filters.shiftId && !matchesOptionalField(order, 'shiftId', filters.shiftId)) return false;
   if (!filters.cashierUserId) return true;
 
   return bills.some((bill) => bill.tableSessionId === order.tableId && billMatchesCashier(bill, filters));
@@ -376,10 +411,20 @@ function makeReport<TSummary, TRow>(reportId: string, titleKey: string, filters:
 export async function getSalesReport(user: AuthenticatedUser, period: SalesPeriod, filters: ReportFilters = {}) {
   assertCanViewSalesHistory(user);
   const normalized = normalizeFilters(filters);
-  const [orders, bills] = await Promise.all([listOrders(), listBills()]);
+  const [orders, bills, menuItems, categories] = await Promise.all([listOrders(), listBills(), listItems(), listCategories()]);
+  const menuById = new Map(menuItems.map((item) => [item.id, item]));
+  const categoryById = new Map(categories.map((category) => [category.id, category]));
   const buckets = new Map<string, SalesReportRow>();
 
   for (const order of orders.filter((row) => orderMatchesFilters(row, normalized, bills))) {
+    const matchingItems = order.items.filter((item) => {
+      const menuItem = menuById.get(item.menuItemId);
+      const category = menuItem ? categoryById.get(menuItem.categoryId) : undefined;
+      return (!normalized.stationId || item.station === normalized.stationId)
+        && (!normalized.categoryId || menuItem?.categoryId === normalized.categoryId)
+        && (!normalized.category || category?.name.toLowerCase() === normalized.category.toLowerCase());
+    });
+    if ((normalized.stationId || normalized.categoryId || normalized.category) && !matchingItems.length) continue;
     const key = periodKey(order.createdAt, period);
     const bucket = buckets.get(key) ?? {
       periodStart: key,
@@ -395,19 +440,27 @@ export async function getSalesReport(user: AuthenticatedUser, period: SalesPerio
     };
     if (order.status === 'cancelled') {
       bucket.metrics.cancelledOrderCount += 1;
-      bucket.metrics.cancelledOrderValue = roundMoney(bucket.metrics.cancelledOrderValue + order.items.reduce((sum, item) => sum + lineRevenue(item), 0));
+      bucket.metrics.cancelledOrderValue = roundMoney(bucket.metrics.cancelledOrderValue + matchingItems.reduce((sum, item) => sum + lineRevenue(item), 0));
       buckets.set(key, bucket);
       continue;
     }
     bucket.orderCount += 1;
 
-    for (const item of order.items) {
+    for (const item of matchingItems) {
+      const menuItem = menuById.get(item.menuItemId);
+      const category = menuItem ? categoryById.get(menuItem.categoryId) : undefined;
       bucket.quantitySold = roundQuantity(bucket.quantitySold + item.quantity);
       bucket.revenue = roundMoney(bucket.revenue + lineRevenue(item));
       bucket.metrics.grossOrderedSales = roundMoney(bucket.metrics.grossOrderedSales + lineRevenue(item));
-      const drilldown = bucket.items.find((row) => row.menuItemId === item.menuItemId) ?? {
+      const drilldown = bucket.items.find((row) => row.menuItemId === item.menuItemId && row.stationId === item.station && row.serviceMode === order.serviceMode && row.orderStatus === order.status) ?? {
         menuItemId: item.menuItemId,
         itemName: item.name,
+        stationId: item.station ?? '',
+        categoryId: menuItem?.categoryId,
+        categoryName: category?.name,
+        category: category?.name,
+        serviceMode: order.serviceMode,
+        orderStatus: order.status,
         quantitySold: 0,
         grossSales: 0,
         orderIds: [],
@@ -486,6 +539,43 @@ export async function getSalesReport(user: AuthenticatedUser, period: SalesPerio
       };
     })(),
   );
+}
+
+/** One dynamic endpoint for every configured prep station, with sales and KDS drill-down. */
+export async function getStationReport(user: AuthenticatedUser, filters: ReportFilters = {}) {
+  assertCanViewReports(user);
+  const normalized = normalizeFilters(filters);
+  const stations = getPosOperationalSettings().prepStations.filter((station) => station.enabled);
+  if (normalized.stationId && !stations.some((station) => station.id === normalized.stationId)) throw new Error('Station is not configured.');
+  const sales = await getSalesReport(user, 'day', normalized);
+  const rowsByItem = new Map<string, StationSalesRow>();
+  for (const period of sales.rows) for (const item of period.items) {
+    const key = `${item.stationId}:${item.categoryId ?? ''}:${item.menuItemId}`;
+    const row = rowsByItem.get(key) ?? { stationId: item.stationId, categoryId: item.categoryId, categoryName: item.categoryName ?? 'Uncategorized', menuItemId: item.menuItemId, itemName: item.itemName, quantitySold: 0, grossSales: 0, orderCount: 0 };
+    row.quantitySold = roundQuantity(row.quantitySold + item.quantitySold);
+    row.grossSales = roundMoney(row.grossSales + item.grossSales);
+    row.orderCount += item.orderIds.length;
+    rowsByItem.set(key, row);
+  }
+  const rows = [...rowsByItem.values()].sort((a, b) => a.categoryName.localeCompare(b.categoryName) || a.itemName.localeCompare(b.itemName));
+  const metricStations = normalized.stationId ? [normalized.stationId] : stations.map((station) => station.id);
+  const metrics = await Promise.all(metricStations.map((station) => getKdsPerformanceMetrics(station, normalized.dateFrom, normalized.dateTo, normalized.branchId)));
+  const combined = metrics.reduce<KdsPerformanceMetrics>((total, metric) => ({
+    ticketCount: total.ticketCount + metric.ticketCount,
+    averagePreparationSeconds: total.averagePreparationSeconds + metric.averagePreparationSeconds,
+    p50PreparationSeconds: Math.max(total.p50PreparationSeconds, metric.p50PreparationSeconds),
+    p90PreparationSeconds: Math.max(total.p90PreparationSeconds, metric.p90PreparationSeconds),
+    p95PreparationSeconds: Math.max(total.p95PreparationSeconds, metric.p95PreparationSeconds),
+    longestWaitSeconds: Math.max(total.longestWaitSeconds, metric.longestWaitSeconds), activeBacklog: total.activeBacklog + metric.activeBacklog,
+    completedItems: total.completedItems + metric.completedItems, cancellationsAfterPreparation: total.cancellationsAfterPreparation + metric.cancellationsAfterPreparation,
+    averageReadyToDeliveredSeconds: total.averageReadyToDeliveredSeconds + metric.averageReadyToDeliveredSeconds,
+  }), { ticketCount: 0, averagePreparationSeconds: 0, p50PreparationSeconds: 0, p90PreparationSeconds: 0, p95PreparationSeconds: 0, longestWaitSeconds: 0, activeBacklog: 0, completedItems: 0, cancellationsAfterPreparation: 0, averageReadyToDeliveredSeconds: 0 });
+  if (metrics.length) { combined.averagePreparationSeconds = Math.round(combined.averagePreparationSeconds / metrics.length); combined.averageReadyToDeliveredSeconds = Math.round(combined.averageReadyToDeliveredSeconds / metrics.length); }
+  const summary: StationReportSummary = { stationId: normalized.stationId, quantitySold: roundQuantity(rows.reduce((sum, row) => sum + row.quantitySold, 0)), grossSales: roundMoney(rows.reduce((sum, row) => sum + row.grossSales, 0)), orderCount: new Set(sales.rows.flatMap((row) => row.items.flatMap((item) => item.orderIds))).size, ...combined };
+  return { ...makeReport('station_report', 'station_report', normalized, [
+    { key: 'stationId', label: 'Station', type: 'string' }, { key: 'categoryName', label: 'Category', type: 'string' }, { key: 'itemName', label: 'Item', type: 'string' },
+    { key: 'quantitySold', label: 'Quantity', type: 'number' }, { key: 'grossSales', label: 'Sales', type: 'currency' }, { key: 'orderCount', label: 'Orders', type: 'number' },
+  ], rows, summary), stations };
 }
 
 /** A close-of-day view calculated from invoice splits and their payment ledgers. */
