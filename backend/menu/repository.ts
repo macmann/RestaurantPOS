@@ -9,6 +9,10 @@ export interface MenuCategoryRecord {
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
+  updatedSource?: 'LOCAL_POS' | 'CLOUD_MANAGER';
+  updatedBy?: string;
+  originatingEventId?: string;
+  deletedAt?: string;
 }
 
 export type MenuPrepStation = string;
@@ -30,6 +34,10 @@ export interface MenuItemRecord {
   isPromotional: boolean;
   createdAt: string;
   updatedAt: string;
+  updatedSource?: 'LOCAL_POS' | 'CLOUD_MANAGER';
+  updatedBy?: string;
+  originatingEventId?: string;
+  deletedAt?: string;
 }
 
 const categories = new Map<string, MenuCategoryRecord>();
@@ -37,19 +45,19 @@ const items = new Map<string, MenuItemRecord>();
 
 export async function listCategories(): Promise<MenuCategoryRecord[]> {
   const rows = isSqlRepositoryEnabled() ? await listRecords<MenuCategoryRecord>('menu:categories') : [...categories.values()];
-  return rows.sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
+  return rows.filter((row) => !row.deletedAt).sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
 }
 
 export async function getCategoryById(id: string): Promise<MenuCategoryRecord | null> {
-  if (isSqlRepositoryEnabled()) return getRecord<MenuCategoryRecord>('menu:categories', id);
-  return categories.get(id) ?? null;
+  const record = isSqlRepositoryEnabled() ? await getRecord<MenuCategoryRecord>('menu:categories', id) : categories.get(id) ?? null;
+  return record?.deletedAt ? null : record;
 }
 
-export async function getCategoryByName(name: string): Promise<MenuCategoryRecord | null> {
+export async function getCategoryByName(name: string, branchId?: string): Promise<MenuCategoryRecord | null> {
   const normalized = name.trim().toLowerCase();
   const rows = isSqlRepositoryEnabled() ? await listRecords<MenuCategoryRecord>('menu:categories') : [...categories.values()];
   for (const category of rows) {
-    if (category.name.trim().toLowerCase() === normalized) return category;
+    if (!category.deletedAt && (!branchId || category.branchId === branchId) && category.name.trim().toLowerCase() === normalized) return category;
   }
   return null;
 }
@@ -84,19 +92,20 @@ export async function deleteCategory(id: string): Promise<boolean> {
 
 export async function listItems(categoryId?: string): Promise<MenuItemRecord[]> {
   const all = isSqlRepositoryEnabled() ? await listRecords<MenuItemRecord>('menu:items') : [...items.values()];
-  return categoryId ? all.filter((item) => item.categoryId === categoryId) : all;
+  const active = all.filter((item) => !item.deletedAt);
+  return categoryId ? active.filter((item) => item.categoryId === categoryId) : active;
 }
 
 export async function getItemById(id: string): Promise<MenuItemRecord | null> {
-  if (isSqlRepositoryEnabled()) return getRecord<MenuItemRecord>('menu:items', id);
-  return items.get(id) ?? null;
+  const record = isSqlRepositoryEnabled() ? await getRecord<MenuItemRecord>('menu:items', id) : items.get(id) ?? null;
+  return record?.deletedAt ? null : record;
 }
 
 export async function getItemByNameInCategory(categoryId: string, name: string): Promise<MenuItemRecord | null> {
   const normalized = name.trim().toLowerCase();
   const itemRows = isSqlRepositoryEnabled() ? await listRecords<MenuItemRecord>('menu:items') : [...items.values()];
   for (const item of itemRows) {
-    if (item.categoryId === categoryId && item.name.trim().toLowerCase() === normalized) return item;
+    if (!item.deletedAt && item.categoryId === categoryId && item.name.trim().toLowerCase() === normalized) return item;
   }
   return null;
 }

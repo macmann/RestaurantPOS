@@ -43,7 +43,7 @@ walk(assetsDir);
 copyFileSync(join(root, 'frontend', 'app', 'styles.css'), join(outDir, 'styles.css'));
 const html = readFileSync(join(root, 'index.html'), 'utf8')
   .replace('/frontend/app/styles.css', './styles.css')
-  .replace('/frontend/app/main.ts', './assets/frontend/app/main.js');
+  .replace('/frontend/app/bootstrap.ts', './assets/frontend/app/bootstrap.js');
 writeFileSync(join(outDir, 'index.html'), html);
 
 console.log(`Frontend build written to ${relative(root, outDir)}`);

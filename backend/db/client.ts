@@ -96,6 +96,9 @@ export function getDatabasePool(): PoolLike {
       password: config.password,
     }),
     ssl: config.ssl ? { rejectUnauthorized: false } : false,
+    // Used by database triggers to distinguish local operational writes from
+    // cloud mirror writes.  It does not change which database the POS uses.
+    options: `-c restaurant_pos.app_mode=${(process.env.APP_MODE ?? 'POS').toUpperCase()}`,
   });
   return pool;
 }

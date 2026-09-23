@@ -44,6 +44,9 @@ import { TablesApi } from './tables/controller';
 import type { AuthenticatedUser } from './auth/policies';
 import { loginWithPassword, logoutSession } from './auth/service';
 import { getIdempotencyRecord, idempotencyFingerprint, idempotencyMatches, saveIdempotencyRecord } from './network-idempotency';
+import { appMode } from './sync/service';
+import { buildCloudRouter, buildCustomerRouter, buildManagerRouter } from './sync/router';
+import { SyncWorker } from './sync/worker';
 
 const DEFAULT_PORT = 8080;
 const DEFAULT_HOST = '0.0.0.0';
@@ -52,6 +55,10 @@ type AsyncHandler = (req: Request, res: Response, next: NextFunction) => Promise
 type ServiceResultHandler<T> = (req: Request) => Promise<T> | T;
 
 const idempotencyLocks = new Map<string, Promise<void>>();
+
+export function cloudOperationalMethodAllowed(method: string): boolean {
+  return ['GET', 'HEAD'].includes(method.toUpperCase());
+}
 
 async function withIdempotencyLock<T>(key: string | undefined, callback: () => Promise<T>): Promise<T> {
   if (!key) return callback();
@@ -389,6 +396,8 @@ function buildSettingsRouter(): Router {
 function mapErrorToHttp(error: unknown): { statusCode: number; message: string; details?: unknown } {
   if (error instanceof HttpError) return { statusCode: error.statusCode, message: error.message, details: error.details };
   const message = error instanceof Error ? error.message : 'Unexpected server error.';
+  const explicitStatus = Number((error as any)?.statusCode);
+  if (Number.isInteger(explicitStatus) && explicitStatus >= 400 && explicitStatus < 600) return { statusCode: explicitStatus, message };
   if (/authentication required|invalid credentials/i.test(message)) return { statusCode: 401, message };
   if (/forbidden|cannot .* permission|missing permission/i.test(message)) return { statusCode: 403, message };
   if (/not found|not exist/i.test(message)) return { statusCode: 404, message };
@@ -480,8 +489,22 @@ export function createApp() {
   app.get('/api/health', (_req: Request, res: Response) => res.json({ data: { ok: true, status: 'healthy', at: new Date().toISOString() } }));
   app.use('/auth', buildAuthRouter());
 
+  if (appMode() === 'CLOUD') {
+    app.use('/cloud', buildCloudRouter());
+    app.use('/manager-api', requireAuth, asyncRoute(requireActiveUser as AsyncHandler), buildManagerRouter());
+    app.use('/customer-api', buildCustomerRouter());
+  }
+
   const api = express.Router();
   api.use(requireAuth, asyncRoute(requireActiveUser as AsyncHandler));
+  if (appMode() === 'CLOUD') {
+    // Defense in depth: cloud operational endpoints are manager-readable only.
+    // Customer writes use the narrowly scoped /customer-api router above.
+    api.use((req: Request, res: Response, next: NextFunction) => {
+      if (!cloudOperationalMethodAllowed((req as any).method)) { res.status(405).json({ error: 'Cloud operational access is read-only.' }); return; }
+      next();
+    });
+  }
   api.use('/menu', buildMenuRouter());
   api.use('/tables', buildTablesRouter());
   api.use('/orders', buildOrdersRouter());
@@ -508,6 +531,11 @@ export function startServer(): unknown {
     const browserHost = host === '0.0.0.0' || host === '::' ? 'localhost' : host;
     console.log(`SYM POS application listening on http://${browserHost}:${port} (bound to ${host}:${port})`);
   });
+  if (appMode() === 'POS') {
+    const worker = new SyncWorker();
+    worker.start();
+    (server as any).on?.('close', () => worker.stop());
+  }
   return server;
 }
 
