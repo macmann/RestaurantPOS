@@ -1992,7 +1992,8 @@ async function renderSalesHistory(): Promise<HTMLElement> {
 }
 
 async function renderReports(): Promise<HTMLElement> {
-  const section = page('Daily summary', 'Close the business day with a gross-to-net view and tender reconciliation.');
+  const section = page('Reporting center', 'A focused view of sales, service performance, inventory, and exceptions.');
+  section.classList.add('reports-page');
   const todayRange = await loadCurrentBusinessDayRange();
   const defaultDate = todayRange.businessDate;
   const params = new URLSearchParams(route.split('?')[1] ?? '');
@@ -2002,10 +2003,13 @@ async function renderReports(): Promise<HTMLElement> {
   const form = el('form', 'staff-form report-filter-form report-toolbar');
   form.setAttribute('aria-label', 'Report filters');
   form.innerHTML = `
+    <div class="report-filter-heading"><div><p class="eyebrow">Report controls</p><h2>Choose a reporting period</h2><p>Use the business date for daily close, or set a custom date and time range.</p></div><button type="submit">Run report</button></div>
+    <div class="report-primary-filters">
     <label>Business date<input type="date" name="businessDate" value="${escapeHtml(params.get('businessDate') ?? defaultDate)}" required></label>
     <label>From<input type="datetime-local" name="dateFrom" value="${escapeHtml(params.get('dateFrom') ?? '')}"></label>
     <label>To<input type="datetime-local" name="dateTo" value="${escapeHtml(params.get('dateTo') ?? '')}"></label>
-    <label>Branch<input name="branchId" value="${escapeHtml(params.get('branchId') ?? session?.user.branchId ?? '')}" placeholder="All branches"></label>
+    <label>Branch<input name="branchId" value="${escapeHtml(params.get('branchId') ?? session?.user.branchId ?? '')}" placeholder="All branches"></label></div>
+    <details class="report-advanced-filters"><summary>More filters <span>Shift, staff, service, station, and transaction details</span></summary><div class="report-filter-grid">
     <label>Shift<input name="shiftId" value="${escapeHtml(params.get('shiftId') ?? '')}" placeholder="All shifts"></label>
     <label>Cashier<input name="cashierUserId" value="${escapeHtml(params.get('cashierUserId') ?? '')}" placeholder="All cashiers"></label>
     <label>Waiter<input name="waiterUserId" value="${escapeHtml(params.get('waiterUserId') ?? '')}" placeholder="All waiters"></label>
@@ -2018,14 +2022,37 @@ async function renderReports(): Promise<HTMLElement> {
     <label>Payment method<select name="paymentMethod"><option value="">All methods</option>${['cash', 'card', 'wallet', 'bank_transfer', 'wave_money', 'kbzpay'].map((method) => `<option value="${method}" ${params.get('paymentMethod') === method ? 'selected' : ''}>${method.replace(/_/g, ' ')}</option>`).join('')}</select></label>
     <label>Exception type<select name="eventType"><option value="">All exceptions</option>${['payment_voids', 'refunds', 'order_cancellations', 'item_removals', 'comps_price_overrides'].map((type) => `<option value="${type}" ${params.get('eventType') === type ? 'selected' : ''}>${type.replace(/_/g, ' ')}</option>`).join('')}</select></label>
     <label>Reason<input name="reason" value="${escapeHtml(params.get('reason') ?? '')}" placeholder="Reason contains…"></label>
-    <button type="submit">Run report</button>`;
+    </div></details>`;
   form.addEventListener('submit', (event) => {
     event.preventDefault();
     const query = new URLSearchParams();
     new FormData(form).forEach((value, key) => { if (String(value).trim()) query.set(key, String(value)); });
+    query.set('tab', params.get('tab') ?? 'summary');
     navigate(`#/reports?${query}`);
   });
   section.append(form);
+
+  const reportNavigation = el('nav', 'report-tabs');
+  reportNavigation.setAttribute('aria-label', 'Report sections');
+  reportNavigation.setAttribute('role', 'tablist');
+  const reportWorkspace = el('div', 'report-workspace');
+  const reportSections = [
+    ['summary', 'Overview', 'Daily close'],
+    ['sales', 'Sales', 'Product mix'],
+    ['operations', 'Operations', 'Stations & service'],
+    ['inventory', 'Inventory', 'Stock & wastage'],
+    ['exceptions', 'Exceptions', 'Manager review'],
+  ] as const;
+  const reportPanels = Object.fromEntries(reportSections.map(([id]) => {
+    const panel = el('section', 'report-tab-panel');
+    panel.id = `report-panel-${id}`;
+    panel.setAttribute('role', 'tabpanel');
+    panel.setAttribute('aria-labelledby', `report-tab-${id}`);
+    return [id, panel];
+  })) as Record<(typeof reportSections)[number][0], HTMLElement>;
+  reportNavigation.innerHTML = reportSections.map(([id, label, description]) => `<button type="button" id="report-tab-${id}" role="tab" aria-controls="report-panel-${id}" data-report-tab="${id}"><span>${label}</span><small>${description}</small></button>`).join('');
+  reportWorkspace.append(...reportSections.map(([id]) => reportPanels[id]));
+  section.append(reportNavigation, reportWorkspace);
 
   const filters = Object.fromEntries(params.entries());
   if (!filters.businessDate) filters.businessDate = defaultDate;
@@ -2046,7 +2073,7 @@ async function renderReports(): Promise<HTMLElement> {
     downloadReportCsv(report.export as any, `daily-summary-${summary.businessDate}.csv`);
   });
   actions.append(printButton, csvButton);
-  section.append(actions);
+  reportPanels.summary.append(actions);
 
   const reportBody = el('div', 'daily-summary-report');
   const grossToNet = el('article', 'card report-card');
@@ -2064,7 +2091,7 @@ async function renderReports(): Promise<HTMLElement> {
   const operations = el('article', 'card report-card');
   operations.innerHTML = `<h2>Day activity</h2><p><strong>${summary.orderCount}</strong> orders · <strong>${summary.invoiceCount}</strong> invoices${summary.guestCount === undefined ? '' : ` · <strong>${summary.guestCount}</strong> guests`}</p><p>Average check: <strong>${money(summary.averageCheck)}</strong></p><p>Debts: ${money(summary.debts)} · Outstanding: ${money(summary.outstandingBalances)}</p><p>First transaction: ${summary.firstTransactionAt ? new Date(summary.firstTransactionAt).toLocaleString() : '—'}<br>Last transaction: ${summary.lastTransactionAt ? new Date(summary.lastTransactionAt).toLocaleString() : '—'}</p>`;
   reportBody.append(grossToNet, tender, operations);
-  section.append(reportBody);
+  reportPanels.summary.append(reportBody);
 
   const productMix = await apiClient.getProductMixReport(filters);
   const mixPanel = el('article', 'card report-card product-mix-report');
@@ -2099,7 +2126,7 @@ async function renderReports(): Promise<HTMLElement> {
     await apiClient.auditReportExport(productMix.reportId, 'csv', filters);
     downloadReportCsv(productMix.export as any, `product-mix-${dimensionSelect.value}.csv`);
   });
-  renderMixTable(); section.append(mixPanel);
+  renderMixTable(); reportPanels.sales.append(mixPanel);
 
   const stationReport = await apiClient.getStationReport(filters);
   const stationPanel = el('article', 'card report-card station-report');
@@ -2113,7 +2140,7 @@ async function renderReports(): Promise<HTMLElement> {
     downloadReportCsv(stationReport.export as any, `station-report-${params.get('stationId') ?? 'all'}.csv`);
   });
   stationPanel.prepend(stationCsv);
-  section.append(stationPanel);
+  reportPanels.operations.append(stationPanel);
 
   const [inventoryControl, operationsReport] = await Promise.all([apiClient.getInventoryControlReport(filters), apiClient.getOperationsReport(filters)]);
   const inventoryPanel = el('article', 'card report-card exception-report');
@@ -2121,14 +2148,14 @@ async function renderReports(): Promise<HTMLElement> {
     ${(inventoryControl.summary.exceptionCount ?? 0) > 0 ? `<p class="report-exception"><strong>Mapping exceptions:</strong> ${inventoryControl.summary.missingRecipeItemIds.length} missing recipes · ${inventoryControl.summary.missingCostItemIds.length} missing costs</p>` : '<p class="report-ok">Recipe and cost mappings complete.</p>'}
     <div class="table-scroll"><table><thead><tr><th>Item</th><th>Closing stock</th><th>Unit cost</th><th>Value</th><th>Theoretical</th><th>Actual</th><th>Variance</th><th>Status</th></tr></thead><tbody>${inventoryControl.rows.map((row: any) => `<tr class="${row.costMappingStatus !== 'complete' ? 'exception-row' : ''}"><td>${escapeHtml(row.itemName)}</td><td>${row.closingStock} ${escapeHtml(row.unit)}</td><td>${row.unitCost === null ? 'Missing' : money(row.unitCost)}</td><td>${row.stockValue === null ? 'Unavailable' : money(row.stockValue)}</td><td>${row.theoreticalUsage}</td><td>${row.actualUsage}</td><td>${row.usageVariance}</td><td>${escapeHtml(row.costMappingStatus.replace(/_/g, ' '))}</td></tr>`).join('') || '<tr><td colspan="8">No inventory items match.</td></tr>'}</tbody></table></div>
     <h3>Wastage by reason</h3><div class="table-scroll"><table><thead><tr><th>Reason</th><th>Quantity</th><th>Cost</th></tr></thead><tbody>${inventoryControl.wastageByReason.map((row: any) => `<tr class="${row.missingCost ? 'exception-row' : ''}"><td>${escapeHtml(row.reason)}</td><td>${row.quantity}</td><td>${row.cost === null ? 'Unavailable' : money(row.cost)}</td></tr>`).join('') || '<tr><td colspan="3">No wastage recorded.</td></tr>'}</tbody></table></div>`;
-  section.append(inventoryPanel);
+  reportPanels.inventory.append(inventoryPanel);
 
   const operationsPanel = el('article', 'card report-card exception-report');
   const os: any = operationsReport.summary;
   operationsPanel.innerHTML = `<h2>Operations</h2><div class="exception-totals"><div><strong>Guests served</strong><span>${os.guestsServed}</span></div><div><strong>Average check</strong><span>${money(os.averageCheck)}</span></div><div><strong>Table turnover</strong><span>${os.averageTableTurnoverSeconds ?? 'Unavailable'}s</span></div><div><strong>Order → kitchen</strong><span>${os.averageOrderToKitchenSendSeconds ?? 'Unavailable'}s</span></div><div><strong>Preparation</strong><span>${os.averagePreparationSeconds ?? 'Unavailable'}s</span></div><div><strong>Ready → delivery</strong><span>${os.averageReadyToDeliverySeconds ?? 'Unavailable'}s</span></div></div>
     ${os.incompleteTimestamps.length || os.openTableSessions ? `<p class="report-exception"><strong>Operational exceptions:</strong> ${os.openTableSessions} open tables · ${os.incompleteTimestamps.length} incomplete timestamp chains</p>` : ''}
     <div class="table-scroll"><table><thead><tr><th>Waiter</th><th>Orders</th><th>Guests</th><th>Sales</th><th>Average check</th><th>Voids / cancellations</th><th>Rate</th></tr></thead><tbody>${operationsReport.rows.map((row: any) => `<tr class="${row.voidCancellationRate >= 10 ? 'exception-row' : ''}"><td>${escapeHtml(row.waiterUserId)}</td><td>${row.orderCount}</td><td>${row.guestsServed}</td><td>${money(row.sales)}</td><td>${money(row.averageCheck)}</td><td>${row.voidCancellationCount}</td><td>${row.voidCancellationRate}%</td></tr>`).join('') || '<tr><td colspan="7">No waiter activity matches.</td></tr>'}</tbody></table></div>`;
-  section.append(operationsPanel);
+  reportPanels.operations.append(operationsPanel);
 
   const exceptions = await apiClient.getExceptionReport(filters);
   const exceptionPanel = el('article', 'card report-card exception-report');
@@ -2137,7 +2164,33 @@ async function renderReports(): Promise<HTMLElement> {
     <div class="table-scroll"><table><thead><tr><th>When</th><th>Type</th><th>Order / invoice</th><th>Table</th><th>Item / payment</th><th>Qty</th><th>Amount</th><th>Reason</th><th>Actor</th><th>Approver</th><th>Original ref.</th></tr></thead><tbody>
     ${exceptions.rows.map((row: any) => `<tr><td>${new Date(row.occurredAt).toLocaleString()}</td><td>${escapeHtml(row.category.replace(/_/g, ' '))}</td><td>${escapeHtml(row.orderId ?? '—')}<br><small>${escapeHtml(row.invoiceId ?? '')}</small></td><td>${escapeHtml(row.table ?? '—')}</td><td>${escapeHtml(row.itemOrPaymentMethod ?? '—')}</td><td>${row.quantity ?? '—'}</td><td>${money(row.amount)}</td><td>${escapeHtml(row.reason ?? '—')}</td><td>${escapeHtml(row.initiatingUserId ?? '—')}</td><td>${escapeHtml(row.approvingManagerId ?? '—')}</td><td>${escapeHtml(row.originalTransactionReference ?? '—')}</td></tr>`).join('') || '<tr><td colspan="11">No exceptions match these filters.</td></tr>'}
     </tbody></table></div>`;
-  section.append(exceptionPanel);
+  reportPanels.exceptions.append(exceptionPanel);
+  const requestedTab = params.get('tab');
+  const initialTab = reportSections.some(([id]) => id === requestedTab) ? requestedTab! : 'summary';
+  const activateTab = (activeId: string, focus = false) => {
+    reportNavigation.querySelectorAll<HTMLButtonElement>('[data-report-tab]').forEach((button) => {
+      const active = button.dataset.reportTab === activeId;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-selected', String(active));
+      button.tabIndex = active ? 0 : -1;
+      if (active && focus) button.focus();
+    });
+    reportSections.forEach(([id]) => { reportPanels[id].hidden = id !== activeId; });
+    params.set('tab', activeId);
+    const nextParams = new URLSearchParams(route.split('?')[1] ?? '');
+    nextParams.set('tab', activeId);
+    window.history.replaceState(null, '', `#/reports?${nextParams}`);
+  };
+  reportNavigation.querySelectorAll<HTMLButtonElement>('[data-report-tab]').forEach((button, index, buttons) => {
+    button.addEventListener('click', () => activateTab(button.dataset.reportTab!));
+    button.addEventListener('keydown', (event) => {
+      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+      event.preventDefault();
+      const nextIndex = (index + (event.key === 'ArrowRight' ? 1 : -1) + buttons.length) % buttons.length;
+      activateTab(buttons[nextIndex].dataset.reportTab!, true);
+    });
+  });
+  activateTab(initialTab);
   return section;
 }
 
