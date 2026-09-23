@@ -3,7 +3,7 @@ declare const require: (name: string) => unknown;
 
 import { runInitialRestaurantPosMigration, INITIAL_MIGRATION_ID } from '../backend/db/migrations';
 import { clearRepositoryStore } from '../backend/db/repositoryStore';
-import { closeDatabasePool, query } from '../backend/db/client';
+import { closeDatabasePool, query, withTransaction } from '../backend/db/client';
 import { hashPassword } from '../backend/auth/service';
 import { saveUser } from '../backend/users/repository';
 import { createInventoryMasterItem, listInventoryWithBalances } from '../backend/inventory/service';
@@ -48,7 +48,65 @@ async function runDatabasePersistenceE2e(): Promise<void> {
   await runInitialRestaurantPosMigration();
   const migration = await query<{ exists: boolean }>('SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE id = $1) AS exists', [INITIAL_MIGRATION_ID]);
   assert(migration.rows[0]?.exists === true, 'Initial SYM POS SQL migration should be recorded as applied.');
+  const menuMigration = await query<{ exists: boolean }>(
+    'SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE id = $1) AS exists',
+    ['20260923100000_bidirectional_menu'],
+  );
+  assert(menuMigration.rows[0]?.exists === true, 'Bidirectional menu migration should succeed and be recorded as applied.');
   await clearRepositoryStore();
+
+  await withTransaction(async (client) => {
+    await client.query("SELECT set_config('restaurant_pos.app_mode', 'POS', true), set_config('restaurant_pos.store_id', 'configured-store', true)");
+    await client.query('TRUNCATE sync_outbox');
+
+    await client.query(
+      `INSERT INTO repository_records(namespace, record_key, payload)
+       VALUES ('menu:categories', 'category-1', '{"branchId":"payload-store","name":"Lunch"}'::jsonb)`,
+    );
+    let outbox = await client.query<{ entity_type: string; store_id: string }>('SELECT entity_type, store_id FROM sync_outbox');
+    assertEqual(outbox.rowCount, 1, 'A menu category insert should queue exactly one sync event.');
+    assertEqual(outbox.rows[0]?.entity_type, 'menu_categories', 'A menu category should use the category entity type.');
+    assertEqual(outbox.rows[0]?.store_id, 'payload-store', 'Payload branchId should take precedence during store resolution.');
+
+    await client.query('TRUNCATE sync_outbox');
+    await client.query(
+      `INSERT INTO repository_records(namespace, record_key, payload)
+       VALUES ('menu:items', 'item-1', '{"name":"Soup"}'::jsonb)`,
+    );
+    outbox = await client.query('SELECT entity_type, store_id FROM sync_outbox');
+    assertEqual(outbox.rowCount, 1, 'A menu item insert should queue exactly one sync event.');
+
+    await client.query('TRUNCATE sync_outbox');
+    await client.query(`UPDATE repository_records SET payload = payload || '{"name":"Tomato Soup"}'::jsonb WHERE namespace = 'menu:items' AND record_key = 'item-1'`);
+    outbox = await client.query('SELECT event_id FROM sync_outbox');
+    assertEqual(outbox.rowCount, 1, 'A menu update should queue exactly one sync event.');
+
+    await client.query('TRUNCATE sync_outbox');
+    await client.query(`DELETE FROM repository_records WHERE namespace = 'menu:items' AND record_key = 'item-1'`);
+    const deleteOutbox = await client.query<{ entity_id: string; operation: string; payload: { name: string } }>(
+      'SELECT entity_id, operation, payload FROM sync_outbox',
+    );
+    assertEqual(deleteOutbox.rowCount, 1, 'A menu delete should complete and queue exactly one sync event.');
+    assertEqual(deleteOutbox.rows[0]?.entity_id, 'item-1', 'A menu delete should queue the OLD record key.');
+    assertEqual(deleteOutbox.rows[0]?.operation, 'DELETE', 'A menu delete should queue a delete operation.');
+    assertEqual(deleteOutbox.rows[0]?.payload.name, 'Tomato Soup', 'A menu delete should queue the OLD payload.');
+
+    await client.query('TRUNCATE sync_outbox');
+    await client.query(`INSERT INTO repository_records(namespace, record_key, payload) VALUES ('settings:pos', 'main', '{}'::jsonb)`);
+    outbox = await client.query('SELECT event_id FROM sync_outbox');
+    assertEqual(outbox.rowCount, 0, 'An unrelated repository namespace should not queue a menu sync event.');
+
+    await client.query("SELECT set_config('restaurant_pos.sync_origin', 'CLOUD_MANAGER', true)");
+    await client.query(`INSERT INTO repository_records(namespace, record_key, payload) VALUES ('menu:items', 'cloud-item', '{}'::jsonb)`);
+    outbox = await client.query('SELECT event_id FROM sync_outbox');
+    assertEqual(outbox.rowCount, 0, 'A cloud-manager-origin menu change should not queue an outbound echo event.');
+
+    const duplicateTriggers = await client.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM pg_trigger
+       WHERE NOT tgisinternal AND tgname IN ('menu_categories_sync_outbox', 'menu_items_sync_outbox')`,
+    );
+    assertEqual(duplicateTriggers.rows[0]?.count, '0', 'Duplicate base menu table sync triggers should remain removed.');
+  });
 
   await savePosOperationalSettings({
     prepStations: [
