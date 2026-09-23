@@ -28,18 +28,23 @@ function money(value: number): string {
   return value.toFixed(2);
 }
 
-const RECEIPT_WIDTH = 42;
+// Standard 80 mm printers support 48 columns in their normal text mode. Use
+// the full printable width so totals finish close to the right paper edge.
+const RECEIPT_WIDTH = 48;
 
 function receiptRow(label: string, value: string): string {
   const available = Math.max(1, RECEIPT_WIDTH - value.length - 1);
   return `${label.slice(0, available).padEnd(available)} ${value}`;
 }
 
+function receiptItemRow(item: ReceiptPayload['splits'][number]['lines'][number]): string {
+  return receiptRow(`${item.quantity}x ${item.name} @${money(item.unitPrice)}`, money(item.lineTotal));
+}
+
 function renderSplit(payload: ReceiptPayload, split: ReceiptPayload['splits'][number], showSplitLabel: boolean): string[] {
   const lines = showSplitLabel ? [`${payload.labels.split} ${split.label as SplitLabel}`, '-'.repeat(RECEIPT_WIDTH)] : [];
   for (const item of split.lines) {
-    lines.push(`${item.quantity} x ${item.name}`);
-    lines.push(receiptRow(`  @ ${money(item.unitPrice)}`, money(item.lineTotal)));
+    lines.push(receiptItemRow(item));
   }
   lines.push('-'.repeat(RECEIPT_WIDTH));
   lines.push(receiptRow(payload.labels.subtotal, money(split.calculationBreakdown.subtotal)));
