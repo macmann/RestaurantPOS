@@ -18,6 +18,7 @@ import { maxAttemptsForOperation, reconnectDelayMs, shouldRetryLanFailure, type 
 type BillBreakdown = Awaited<ReturnType<typeof getBillCalculationBreakdown>>;
 type ReceiptPayload = Awaited<ReturnType<typeof getPrintedReceiptPayload>>;
 type MenuCategories = Awaited<ReturnType<typeof AdminMenuApi.list>>;
+export type DeploymentMode = 'POS' | 'CLOUD';
 type InventoryAlerts = Awaited<ReturnType<typeof InventoryAdminApi.listAlerts>>;
 type InventoryItems = Awaited<ReturnType<typeof InventoryAdminApi.listItems>>;
 type InventoryDeductionPolicy = Awaited<ReturnType<typeof InventoryAdminApi.getDeductionPolicy>>;
@@ -257,6 +258,8 @@ async function requestInProcess<T>(path: string, method: string, body: unknown, 
     const { AdminMenuApi } = await backendModule<any>('../../backend/menu/controller.js');
     if (parts.length === 2 && method === 'GET') return AdminMenuApi.list() as Promise<T>;
     if (parts[2] === 'categories' && method === 'POST') return AdminMenuApi.createCategory(body) as Promise<T>;
+    if (parts[2] === 'categories' && parts.length === 4 && method === 'PATCH') return AdminMenuApi.updateCategory(parts[3], body) as Promise<T>;
+    if (parts[2] === 'categories' && parts.length === 4 && method === 'DELETE') return AdminMenuApi.deleteCategory(parts[3]) as Promise<T>;
     if (parts[2] === 'items' && method === 'POST') return AdminMenuApi.createItem(body) as Promise<T>;
     if (parts[2] === 'items' && parts.length === 4 && method === 'PATCH') return AdminMenuApi.updateItem(parts[3], body) as Promise<T>;
     if (parts[2] === 'items' && parts.length === 5 && parts[4] === 'availability' && method === 'PATCH') return AdminMenuApi.setAvailability(parts[3], Boolean((body as any).isAvailable)) as Promise<T>;
@@ -303,6 +306,10 @@ async function requestInProcess<T>(path: string, method: string, body: unknown, 
       const cloudConnection = await backendModule<any>('../../backend/config/cloudConnection.js');
       return cloudConnection.getCloudConnectionInformation() as Promise<T>;
     }
+    if (parts[2] === 'runtime' && method === 'GET') {
+      const environment = await backendModule<any>('../../backend/config/environment.js');
+      return { deploymentMode: environment.isCloudDeployment() ? 'CLOUD' : 'POS' } as T;
+    }
     if (parts[2] === 'printers' && parts[3] === 'status' && method === 'GET') {
       const printerStatus = await backendModule<any>('../../backend/hardware/printerStatus.js');
       return printerStatus.getPrinterStatuses() as Promise<T>;
@@ -337,8 +344,13 @@ export class RestaurantApiClient {
   private readonly listeners = new Set<ApiNetworkListener>();
   private networkStatus: ApiNetworkStatus = 'online';
   private readonly inFlightWrites = new Map<string, Promise<unknown>>();
+  private menuAdministration?: MenuAdminClient;
 
   constructor(private baseUrl = apiBase()) {}
+
+  private menuAdmin(): MenuAdminClient {
+    return this.menuAdministration ??= new MenuAdminClient(this);
+  }
 
   setSessionUser(userId: string | undefined): void {
     this.currentUserId = userId;
@@ -567,32 +579,29 @@ export class RestaurantApiClient {
     return this.request(`/api/billing/bills/${encodeURIComponent(input.tableSessionId)}/payments`, { method: 'POST', userId, body: input, operationKind: 'unsafe_write', idempotencyKey });
   }
 
-  listMenu(): Promise<MenuCategories> {
-    return this.request<MenuCategories>('/api/menu');
-  }
-
-  createMenuCategory(input: { name: string; sortOrder: number }) {
-    return this.request('/api/menu/categories', { method: 'POST', body: input });
-  }
+  listMenu(): Promise<MenuCategories> { return this.menuAdmin().list(); }
+  createMenuCategory(input: { name: string; sortOrder: number }) { return this.menuAdmin().createCategory(input); }
+  updateMenuCategory(categoryId: string, input: { name?: string; sortOrder?: number }) { return this.menuAdmin().updateCategory(categoryId, input); }
+  deleteMenuCategory(categoryId: string) { return this.menuAdmin().deleteCategory(categoryId); }
 
   createMenuItem(input: { categoryId: string; name: string; description?: string; price: number; prepStation?: string; isAvailable?: boolean; isPromotional?: boolean }) {
-    return this.request('/api/menu/items', { method: 'POST', body: input });
+    return this.menuAdmin().createItem(input);
   }
 
   updateMenuItem(itemId: string, input: { categoryId?: string; name?: string; description?: string; price?: number; prepStation?: string; isAvailable?: boolean; isPromotional?: boolean }) {
-    return this.request(`/api/menu/items/${encodeURIComponent(itemId)}`, { method: 'PATCH', body: input });
+    return this.menuAdmin().updateItem(itemId, input);
   }
 
   deleteMenuItem(itemId: string) {
-    return this.request(`/api/menu/items/${encodeURIComponent(itemId)}`, { method: 'DELETE' });
+    return this.menuAdmin().deleteItem(itemId);
   }
 
   setMenuItemAvailability(itemId: string, isAvailable: boolean) {
-    return this.request(`/api/menu/items/${encodeURIComponent(itemId)}/availability`, { method: 'PATCH', body: { isAvailable } });
+    return this.menuAdmin().setAvailability(itemId, isAvailable);
   }
 
   setMenuItemPromotional(itemId: string, isPromotional: boolean) {
-    return this.request(`/api/menu/items/${encodeURIComponent(itemId)}/promotional`, { method: 'PATCH', body: { isPromotional } });
+    return this.menuAdmin().setPromotional(itemId, isPromotional);
   }
 
   listInventoryItems(): Promise<InventoryItems> {
@@ -709,3 +718,33 @@ export class RestaurantApiClient {
 }
 
 export const apiClient = new RestaurantApiClient();
+
+/** One menu-administration contract shared by the main admin and remote deployments. */
+export class MenuAdminClient {
+  private modePromise?: Promise<DeploymentMode>;
+
+  constructor(
+    private readonly client: Pick<RestaurantApiClient, 'request'>,
+    private readonly loadMode: () => Promise<DeploymentMode> = async () => {
+      const runtime = await this.client.request<{ deploymentMode: DeploymentMode }>('/api/settings/runtime');
+      return runtime.deploymentMode;
+    },
+  ) {}
+
+  private async root(): Promise<'/api/menu' | '/manager-api/menu'> {
+    this.modePromise ??= this.loadMode();
+    return (await this.modePromise) === 'CLOUD' ? '/manager-api/menu' : '/api/menu';
+  }
+
+  async list(): Promise<MenuCategories> { return this.client.request<MenuCategories>(await this.root()); }
+  async createCategory(input: { name: string; sortOrder: number }) { return this.client.request(`${await this.root()}/categories`, { method: 'POST', body: input }); }
+  async updateCategory(id: string, input: { name?: string; sortOrder?: number }) { return this.client.request(`${await this.root()}/categories/${encodeURIComponent(id)}`, { method: 'PATCH', body: input }); }
+  async deleteCategory(id: string) { return this.client.request(`${await this.root()}/categories/${encodeURIComponent(id)}`, { method: 'DELETE' }); }
+  async createItem(input: { categoryId: string; name: string; description?: string; price: number; prepStation?: string; isAvailable?: boolean; isPromotional?: boolean }) { return this.client.request(`${await this.root()}/items`, { method: 'POST', body: input }); }
+  async updateItem(id: string, input: { categoryId?: string; name?: string; description?: string; price?: number; prepStation?: string; isAvailable?: boolean; isPromotional?: boolean }) { return this.client.request(`${await this.root()}/items/${encodeURIComponent(id)}`, { method: 'PATCH', body: input }); }
+  async deleteItem(id: string) { return this.client.request(`${await this.root()}/items/${encodeURIComponent(id)}`, { method: 'DELETE' }); }
+  async setAvailability(id: string, isAvailable: boolean) { return this.client.request(`${await this.root()}/items/${encodeURIComponent(id)}/availability`, { method: 'PATCH', body: { isAvailable } }); }
+  async setPromotional(id: string, isPromotional: boolean) { return this.client.request(`${await this.root()}/items/${encodeURIComponent(id)}/promotional`, { method: 'PATCH', body: { isPromotional } }); }
+}
+
+export const menuAdminClient = new MenuAdminClient(apiClient);
