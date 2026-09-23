@@ -46,8 +46,8 @@ import { loginWithPassword, logoutSession } from './auth/service';
 import { getIdempotencyRecord, idempotencyFingerprint, idempotencyMatches, saveIdempotencyRecord } from './network-idempotency';
 import { appMode } from './sync/service';
 import { buildCloudRouter, buildCustomerRouter, buildManagerRouter } from './sync/router';
-import { SyncWorker, getLocalSyncRuntimeStatus } from './sync/worker';
-import { loadSyncConfig, publicSyncConfig, saveSyncConfig, syncEndpoint, validateSyncSettings } from './sync/config';
+import { SyncWorker, clearLocalSyncDiagnosticError, getLocalSyncRuntimeStatus, getSyncDiagnostics, runSyncCycle } from './sync/worker';
+import { LOCAL_SYNC_PROTOCOL_VERSION, loadSyncConfig, publicSyncConfig, resolvedSyncEndpoints, saveSyncConfig, SYNC_ENDPOINTS, syncEndpoint, validateSyncSettings } from './sync/config';
 import { query } from './db/client';
 import { recordAuditEvent } from './audit/service';
 import { getCloudConnectionInformation } from './config/cloudConnection';
@@ -408,9 +408,18 @@ function buildSettingsRouter(): Router {
       pendingOutboxEvents = counts.rows[0]?.outbox ?? 0; pendingIncomingEvents = counts.rows[0]?.incoming ?? 0;
     } catch { /* Status remains useful in explicitly configured memory/test mode. */ }
     const runtime = getLocalSyncRuntimeStatus();
-    const status = !config.enabled ? 'DISABLED' : !config.configured ? 'NOT_CONFIGURED' : runtime.lastError ? 'ERROR' : runtime.lastHeartbeat ? 'CONNECTED' : 'DISCONNECTED';
+    const status = !config.enabled ? 'DISABLED' : !config.configured ? 'NOT_CONFIGURED' : runtime.state;
     return { ...publicSyncConfig(config), status, ...runtime, pendingOutboxEvents, pendingIncomingEvents };
   }));
+  router.post('/cloud-sync/run', authorize(Actions.ManageSystem), send(async () => {
+    if (appMode() !== 'POS') throw Object.assign(new Error('Cloud synchronization is available only on a POS deployment.'), { statusCode: 404 });
+    return runSyncCycle({ rejectIfRunning: true });
+  }));
+  router.get('/cloud-sync/diagnostics', authorize(Actions.ManageSystem), send(async () => {
+    if (appMode() !== 'POS') throw Object.assign(new Error('Cloud synchronization diagnostics are available only on a POS deployment.'), { statusCode: 404 });
+    return getSyncDiagnostics();
+  }));
+  router.delete('/cloud-sync/error', authorize(Actions.ManageSystem), send(async () => { clearLocalSyncDiagnosticError(); return { cleared: true }; }));
   router.put('/cloud-sync', authorize(Actions.ManageSystem), send(async (req) => {
     if (appMode() !== 'POS') throw Object.assign(new Error('Cloud synchronization settings are available only on a POS deployment.'), { statusCode: 404 });
     const body = bodyObject(req); const before = publicSyncConfig(await loadSyncConfig()); const saved = await saveSyncConfig(body);
@@ -423,13 +432,14 @@ function buildSettingsRouter(): Router {
     const token = typeof body.token === 'string' && body.token.trim() ? body.token.trim() : existing.token;
     if (!candidate.cloudSyncBaseUrl) throw new HttpError(400, 'Cloud Sync URL is required.');
     if (!token) throw new HttpError(400, 'Sync API Token is required.');
+    const started = Date.now(); const resolvedTestUrl = syncEndpoint(candidate, SYNC_ENDPOINTS.test.path);
     try {
-      const response = await fetch(syncEndpoint(candidate, '/cloud/sync/test'), { method: 'POST', headers: { 'content-type': 'application/json', 'x-sync-token': token }, body: JSON.stringify({ storeId: candidate.storeId, deviceId: candidate.deviceId, protocolVersion: '1' }), signal: AbortSignal.timeout(candidate.requestTimeoutMs) });
+      const response = await fetch(resolvedTestUrl, { method: SYNC_ENDPOINTS.test.method, headers: { 'content-type': 'application/json', 'x-sync-token': token }, body: JSON.stringify({ storeId: candidate.storeId, deviceId: candidate.deviceId, protocolVersion: LOCAL_SYNC_PROTOCOL_VERSION }), signal: AbortSignal.timeout(candidate.requestTimeoutMs) });
       if (response.status === 401 || response.status === 403) throw new HttpError(response.status, 'Authentication failed.');
       if (!response.ok) throw new HttpError(502, `Cloud sync API rejected the connection (HTTP ${response.status}).`);
       const responseBody = await response.json() as any; const result = responseBody.data ?? responseBody;
       if (result.compatible === false) throw new HttpError(409, 'Cloud API version is incompatible.');
-      return { success: true, message: 'Connection successful', cloud: candidate.cloudSyncBaseUrl, store: result.storeName ?? result.storeId ?? candidate.storeId, device: result.deviceId ?? candidate.deviceId, api: 'Compatible' };
+      return { success: true, message: 'Connection successful', cloud: candidate.cloudSyncBaseUrl, resolvedTestUrl, httpStatus: response.status, authentication: 'Valid', store: result.storeName ?? result.storeId ?? candidate.storeId, device: result.deviceId ?? candidate.deviceId, protocolVersion: result.protocolVersion, localProtocolVersion: LOCAL_SYNC_PROTOCOL_VERSION, compatible: result.compatible !== false, api: 'Compatible', latencyMs: Date.now() - started, endpoints: resolvedSyncEndpoints(candidate) };
     } catch (error) {
       if (error instanceof HttpError) throw error;
       throw new HttpError(502, 'Cloud URL cannot be reached.');
