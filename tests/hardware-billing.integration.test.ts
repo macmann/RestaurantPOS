@@ -105,6 +105,10 @@ async function runHardwareBillingIntegration(): Promise<void> {
   assert(!printed.renderedText.includes('Font:'), 'Customer receipts must not expose font metadata.');
   assert(!printed.renderedText.includes('receipt_'), 'Customer receipts must not expose the internal receipt ID.');
   assert(!printed.renderedText.includes('Split A'), 'An unsplit customer receipt must not display a split label.');
+  const printedItemLines = printed.renderedText.split('\n').filter((line) => line.includes('Mohinga'));
+  assertEqual(printedItemLines.length, 1, 'Each receipt item should use exactly one line.');
+  assert(printedItemLines[0].includes('1x Mohinga @100.00') && printedItemLines[0].endsWith('100.00'), 'A receipt item line should compactly include quantity, name, unit price, and line total.');
+  assert(printed.renderedText.split('\n').filter((line) => /^[-=]+$/.test(line)).every((line) => line.length === 48), 'Receipt rules should use the full 48-column width of standard 80 mm paper.');
   assertEqual(printer.jobs.length, 1, 'Simulator printer should capture the receipt job.');
 
   const splitFixture = await createBillFixture('split', 12);
