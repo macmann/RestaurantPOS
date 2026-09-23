@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { isCloudDeployment, readAppMode } from '../backend/config/environment';
 import { getCloudConnectionInformation, normalizePublicBaseUrl, resolvePublicBaseUrl } from '../backend/config/cloudConnection';
 import { localSyncWorkerAllowed } from '../backend/sync/worker';
+import { loadSyncConfig, validateSyncSettings } from '../backend/sync/config';
 
 async function run(): Promise<void> {
   assert.equal(readAppMode({ APP_MODE: 'POS' }), 'POS');
@@ -18,6 +19,14 @@ async function run(): Promise<void> {
   const previousBackend = process.env.POS_REPOSITORY_BACKEND;
   process.env.POS_REPOSITORY_BACKEND = 'memory';
   try {
+    const previousBranch = process.env.POS_BRANCH_ID;
+    const previousStore = process.env.POS_STORE_ID;
+    process.env.POS_BRANCH_ID = 'branch-east';
+    delete process.env.POS_STORE_ID;
+    assert.equal((await loadSyncConfig()).storeId, 'branch-east', 'Incoming polling must default to the branch used by menu records.');
+    assert.throws(() => validateSyncSettings({ enabled: true, cloudSyncBaseUrl: 'https://cloud.example.com', storeId: 'different-store', deviceId: 'pos-1', pushIntervalMs: 5000, pollIntervalMs: 5000, requestTimeoutMs: 1000, batchSize: 10, successRetentionDays: 30 }), /must match this POS branch ID/);
+    if (previousBranch === undefined) delete process.env.POS_BRANCH_ID; else process.env.POS_BRANCH_ID = previousBranch;
+    if (previousStore === undefined) delete process.env.POS_STORE_ID; else process.env.POS_STORE_ID = previousStore;
     const token = 'raw-secret-that-must-never-leak';
     const info = await getCloudConnectionInformation({ APP_MODE: 'CLOUD', NODE_ENV: 'production', PUBLIC_BASE_URL: 'https://sym-pos.onrender.com/', SYNC_API_TOKEN: token });
     assert.equal(info.publicBaseUrl, 'https://sym-pos.onrender.com');

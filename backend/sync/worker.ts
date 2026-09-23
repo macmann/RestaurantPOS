@@ -57,7 +57,7 @@ const headers = (config: ResolvedSyncConfig) => ({ 'content-type': 'application/
 async function push(config: ResolvedSyncConfig): Promise<PhaseResult> {
   const started = Date.now(); let ids: string[] = [];
   try {
-    const events = await pendingOutbox(config.batchSize); ids = events.map((event) => event.eventId);
+    const events = await pendingOutbox(config.storeId, config.batchSize); ids = events.map((event) => event.eventId);
     if (!events.length) { runtimeStatus.lastSuccessfulPush = new Date().toISOString(); runtimeStatus.phases.push = { state: 'HEALTHY', lastSuccess: runtimeStatus.lastSuccessfulPush }; record('PUSH', started, true, 0); return { success: true, attempted: 0, accepted: 0 }; }
     const response = await fetch(syncEndpoint(config, SYNC_ENDPOINTS.push.path), { method: SYNC_ENDPOINTS.push.method, headers: headers(config), body: JSON.stringify({ events }), signal: AbortSignal.timeout(config.requestTimeoutMs) });
     if (!response.ok) { const error = await diagnostic('PUSH', config, SYNC_ENDPOINTS.push, response); throw Object.assign(new Error(error.message), { diagnostic: error }); }
