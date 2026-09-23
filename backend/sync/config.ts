@@ -1,6 +1,7 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import { isSqlRepositoryEnabled, withTransaction } from '../db/client';
 import { getRecord, putRecord } from '../db/repositoryStore';
+import { getCurrentBranchId } from '../config/branch';
 
 export interface StoredSyncSettings {
   enabled: boolean;
@@ -81,19 +82,25 @@ export function validateSyncSettings(input: any): StoredSyncSettings {
   const storeId = String(input.storeId ?? '').trim(); const deviceId = String(input.deviceId ?? '').trim();
   if (!storeId) throw new Error('Store ID is required.');
   if (!deviceId) throw new Error('Device ID is required.');
+  const branchId = getCurrentBranchId();
+  if (storeId !== branchId) throw new Error(`Store ID must match this POS branch ID (${branchId}) so cloud changes can be delivered back to this restaurant.`);
   return { enabled: input.enabled, cloudSyncBaseUrl: normalizeUrl(input.cloudSyncBaseUrl), storeId, deviceId,
     pushIntervalMs: boundedInt(input.pushIntervalMs, 'Push interval', 5_000, 86_400_000), pollIntervalMs: boundedInt(input.pollIntervalMs, 'Incoming poll interval', 5_000, 86_400_000),
     requestTimeoutMs: boundedInt(input.requestTimeoutMs, 'Request timeout', 1_000, 120_000), batchSize: boundedInt(input.batchSize, 'Sync batch size', 1, 1_000), successRetentionDays: boundedInt(input.successRetentionDays, 'Success retention', 1, 3_650) };
 }
 export async function loadSyncConfig(): Promise<ResolvedSyncConfig> {
   const db = await stored();
+  const branchId = getCurrentBranchId();
   const environment: StoredSyncSettings = {
     enabled: Boolean(envText('CLOUD_API_URL') && envText('SYNC_API_TOKEN')),
     cloudSyncBaseUrl: normalizeUrl(envText('CLOUD_API_URL')),
-    storeId: envText('POS_STORE_ID') ?? DEFAULTS.storeId, deviceId: envText('POS_DEVICE_ID') ?? envText('POS_STORE_ID') ?? DEFAULTS.deviceId,
+    storeId: envText('POS_STORE_ID') ?? branchId, deviceId: envText('POS_DEVICE_ID') ?? envText('POS_STORE_ID') ?? DEFAULTS.deviceId,
     pushIntervalMs: envNumber('SYNC_PUSH_INTERVAL_MS', DEFAULTS.pushIntervalMs), pollIntervalMs: envNumber('SYNC_POLL_INTERVAL_MS', DEFAULTS.pollIntervalMs), requestTimeoutMs: envNumber('SYNC_REQUEST_TIMEOUT_MS', DEFAULTS.requestTimeoutMs), batchSize: envNumber('SYNC_BATCH_SIZE', DEFAULTS.batchSize), successRetentionDays: envNumber('SYNC_SUCCESS_RETENTION_DAYS', DEFAULTS.successRetentionDays),
   };
-  const result = db.settings ?? environment;
+  const storedSettings = db.settings;
+  const result = storedSettings
+    ? { ...storedSettings, storeId: storedSettings.storeId === DEFAULTS.storeId ? branchId : storedSettings.storeId }
+    : environment;
   let token = envText('SYNC_API_TOKEN') ?? null;
   if (db.secret) token = decrypt(db.secret);
   const environmentNames: Record<keyof StoredSyncSettings, string | string[]> = { enabled: ['CLOUD_API_URL', 'SYNC_API_TOKEN'], cloudSyncBaseUrl: 'CLOUD_API_URL', storeId: 'POS_STORE_ID', deviceId: 'POS_DEVICE_ID', pushIntervalMs: 'SYNC_PUSH_INTERVAL_MS', pollIntervalMs: 'SYNC_POLL_INTERVAL_MS', requestTimeoutMs: 'SYNC_REQUEST_TIMEOUT_MS', batchSize: 'SYNC_BATCH_SIZE', successRetentionDays: 'SYNC_SUCCESS_RETENTION_DAYS' };

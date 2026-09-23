@@ -6,6 +6,8 @@ The Sync API Token is never included in the settings response or audit payload. 
 
 The worker resolves configuration again before every push and pull cycle, so saving does not require an application restart. Disabling synchronization skips push, polling, and heartbeat work without changing either durable queue. Cloud deployments (`APP_MODE=CLOUD`) do not expose these POS destination settings.
 
+The Store ID must be the same stable identifier as the POS Branch ID (`POS_BRANCH_ID`). Menu events are partitioned by this value in the cloud incoming queue; using a different value can allow outbound uploads while preventing cloud menu edits from being pulled back. When `POS_STORE_ID` is omitted, the POS now uses its Branch ID automatically. Existing saved settings that still contain the old placeholder value `default` are resolved to the current Branch ID.
+
 ## Cloud connection information
 
 On a cloud deployment, Super Admin instead sees **Platform Settings → Cloud Connection Information**. It displays the public base URL, readiness checks, token-presence status, real sync routes, recommended local defaults, and a copyable (secret-free) local setup package. The existing `SYNC_API_TOKEN` is never returned to the browser.

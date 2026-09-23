@@ -94,8 +94,8 @@ export async function receiveOutgoingBatch(events: SyncEvent[]): Promise<{ accep
   return { accepted, outcomes };
 }
 
-export async function pendingOutbox(limit: number): Promise<SyncEvent[]> {
-  const result = await query<any>(`SELECT event_id, store_id, entity_type, entity_id, operation, payload, occurred_at FROM sync_outbox WHERE status IN ('PENDING','FAILED') AND next_attempt_at <= NOW() ORDER BY occurred_at LIMIT $1`, [limit]);
+export async function pendingOutbox(storeId: string, limit: number): Promise<SyncEvent[]> {
+  const result = await query<any>(`SELECT event_id, store_id, entity_type, entity_id, operation, payload, occurred_at FROM sync_outbox WHERE store_id=$1 AND status IN ('PENDING','FAILED') AND next_attempt_at <= NOW() ORDER BY occurred_at LIMIT $2`, [storeId, limit]);
   return result.rows.map((row) => ({ eventId: row.event_id, storeId: row.store_id, entityType: row.entity_type, entityId: row.entity_id, operation: row.operation, payload: row.payload, occurredAt: row.occurred_at }));
 }
 
