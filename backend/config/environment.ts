@@ -3,6 +3,20 @@ import { resolve } from 'node:path';
 
 type ProcessEnvironment = Record<string, string | undefined>;
 
+export type AppMode = 'POS' | 'CLOUD';
+
+/** The single authoritative deployment-mode check (MANAGER is a CLOUD alias). */
+export function readAppMode(environment: ProcessEnvironment = process.env): AppMode {
+  const value = (environment.APP_MODE ?? 'POS').trim().toUpperCase();
+  if (value === 'MANAGER') return 'CLOUD';
+  if (value !== 'POS' && value !== 'CLOUD') throw new Error(`Unsupported APP_MODE '${environment.APP_MODE}'. Expected POS or CLOUD (MANAGER is accepted as a cloud alias).`);
+  return value;
+}
+
+export function isCloudDeployment(environment: ProcessEnvironment = process.env): boolean {
+  return readAppMode(environment) === 'CLOUD';
+}
+
 /** Parse the subset of dotenv syntax used by the application's deployment template. */
 export function parseEnvironmentFile(contents: string): Record<string, string> {
   const values: Record<string, string> = {};

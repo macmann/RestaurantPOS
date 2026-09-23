@@ -10,6 +10,13 @@ services:
         value: 20
       - key: APP_ENV
         value: production
+      - key: APP_MODE
+        value: CLOUD
+      # Set to the public Render service origin (never the internal bind URL).
+      - key: PUBLIC_BASE_URL
+        sync: false
+      - key: SYNC_API_TOKEN
+        generateValue: true
       - key: POS_REPOSITORY_BACKEND
         value: postgres
       - key: DB_SSL

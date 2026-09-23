@@ -50,6 +50,8 @@ import { SyncWorker, getLocalSyncRuntimeStatus } from './sync/worker';
 import { loadSyncConfig, publicSyncConfig, saveSyncConfig, syncEndpoint, validateSyncSettings } from './sync/config';
 import { query } from './db/client';
 import { recordAuditEvent } from './audit/service';
+import { getCloudConnectionInformation } from './config/cloudConnection';
+import { isCloudDeployment } from './config/environment';
 
 const DEFAULT_PORT = 8080;
 const DEFAULT_HOST = '0.0.0.0';
@@ -389,6 +391,10 @@ function buildSettingsRouter(): Router {
   router.get('/', send(() => ({ branch: getRuntimeSettings().branch, inventoryDeductionPolicy: InventoryAdminApi.getDeductionPolicy(), pos: getPosOperationalSettings() })));
   router.get('/printers/status', authorize(Actions.ManageSystem), send(() => getPrinterStatuses()));
   router.get('/system/status', authorize(Actions.ManageSystem), send(() => getSystemStatus()));
+  router.get('/cloud-connection', authorize(Actions.ManageSystem), send(async () => {
+    if (!isCloudDeployment()) throw Object.assign(new Error('Cloud connection information is available only on a cloud deployment.'), { statusCode: 404 });
+    return getCloudConnectionInformation();
+  }));
   router.put('/', authorize(Actions.ManageSystem), send(async (req) => ({ branch: getRuntimeSettings().branch, inventoryDeductionPolicy: InventoryAdminApi.getDeductionPolicy(), pos: await savePosOperationalSettings((bodyObject(req).pos as any) ?? (bodyObject(req) as any)) })));
   router.get('/branch', send(() => getRuntimeSettings().branch));
   router.get('/inventory/deduction-policy', authorize(Actions.AdjustStock), send(() => InventoryAdminApi.getDeductionPolicy()));
@@ -528,7 +534,7 @@ export function createApp() {
   app.get('/api/health', (_req: Request, res: Response) => res.json({ data: { ok: true, status: 'healthy', at: new Date().toISOString() } }));
   app.use('/auth', buildAuthRouter());
 
-  if (appMode() === 'CLOUD') {
+  if (isCloudDeployment()) {
     app.use('/cloud', buildCloudRouter());
     app.use('/manager-api', requireAuth, asyncRoute(requireActiveUser as AsyncHandler), buildManagerRouter());
     app.use('/customer-api', buildCustomerRouter());
@@ -536,7 +542,7 @@ export function createApp() {
 
   const api = express.Router();
   api.use(requireAuth, asyncRoute(requireActiveUser as AsyncHandler));
-  if (appMode() === 'CLOUD') {
+  if (isCloudDeployment()) {
     // Defense in depth: cloud operational endpoints are manager-readable only.
     // Customer writes use the narrowly scoped /customer-api router above.
     api.use((req: Request, res: Response, next: NextFunction) => {
@@ -570,7 +576,7 @@ export function startServer(): unknown {
     const browserHost = host === '0.0.0.0' || host === '::' ? 'localhost' : host;
     console.log(`SYM POS application listening on http://${browserHost}:${port} (bound to ${host}:${port})`);
   });
-  if (appMode() === 'POS') {
+  if (!isCloudDeployment()) {
     const worker = new SyncWorker();
     worker.start();
     (server as any).on?.('close', () => worker.stop());

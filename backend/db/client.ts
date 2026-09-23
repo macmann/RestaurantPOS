@@ -1,5 +1,6 @@
 declare const require: (name: string) => unknown;
 declare const process: { env: Record<string, string | undefined>; cwd(): string };
+import { readAppMode } from '../config/environment';
 
 interface QueryResult<Row = Record<string, unknown>> {
   rows: Row[];
@@ -71,14 +72,6 @@ export function readDatabaseConfig(env: ProcessEnv = process.env): DatabaseConfi
     password: env.DB_PASSWORD ?? '',
     ssl: readBoolean(env.DB_SSL),
   };
-}
-
-export function readAppMode(env: ProcessEnv = process.env): 'POS' | 'CLOUD' {
-  const appMode = (env.APP_MODE ?? 'POS').toUpperCase();
-  if (appMode !== 'POS' && appMode !== 'CLOUD') {
-    throw new Error(`Unsupported APP_MODE '${env.APP_MODE}'. Expected POS or CLOUD.`);
-  }
-  return appMode;
 }
 
 export function createPoolConfig(env: ProcessEnv = process.env): Record<string, unknown> {

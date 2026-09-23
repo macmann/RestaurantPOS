@@ -1584,7 +1584,7 @@ async function renderLocalizationSettings(): Promise<HTMLElement> {
   return section;
 }
 
-async function renderCloudSyncSettings(): Promise<HTMLElement> {
+async function renderLocalCloudSyncSettings(): Promise<HTMLElement> {
   const settings = await apiClient.getCloudSyncSettings();
   const section = page('Cloud Synchronization', 'Configure the outbound-only connection between this local POS and the cloud service.', ['Secure token storage', 'Environment fallback', 'Live worker reload']);
   const panel = el('section', 'admin-panel cloud-sync-panel');
@@ -1623,6 +1623,62 @@ async function renderCloudSyncSettings(): Promise<HTMLElement> {
   form.querySelector<HTMLButtonElement>('.test-sync')?.addEventListener('click', async () => { result.hidden = false; result.textContent = 'Testing connection…'; try { const response = await apiClient.testCloudSyncConnection(payload()); result.textContent = `${response.message} · Cloud: ${response.cloud} · Store: ${response.store} · Device: ${response.device} · API: ${response.api}`; } catch (error) { result.textContent = error instanceof Error ? error.message : 'Connection test failed.'; } });
   form.addEventListener('submit', async (event) => { event.preventDefault(); result.hidden = false; result.textContent = 'Saving…'; try { await apiClient.updateCloudSyncSettings(payload()); result.textContent = 'Cloud synchronization settings saved. The worker will use them on its next cycle.'; } catch (error) { result.textContent = error instanceof Error ? error.message : 'Unable to save settings.'; } });
   section.append(panel); return section;
+}
+
+async function copyText(value: string, button: HTMLButtonElement): Promise<void> {
+  await navigator.clipboard.writeText(value);
+  const original = button.textContent;
+  button.textContent = 'Copied';
+  window.setTimeout(() => { button.textContent = original; }, 1500);
+}
+
+function renderCloudConnectionInformation(info: any): HTMLElement {
+  const url = String(info.publicBaseUrl ?? 'Not configured');
+  const defaults = info.recommendedLocalSettings;
+  const configuration = `Local POS Cloud Sync Configuration\n\nCloud Sync URL:\n${url}\n\nStore ID:\n[restaurant/location assignment]\n\nDevice ID:\nregister-server-1\n\nPush Interval:\n${defaults.pushIntervalSeconds}\n\nPoll Interval:\n${defaults.pollIntervalSeconds}\n\nRequest Timeout:\n${defaults.requestTimeoutSeconds}\n\nBatch Size:\n${defaults.batchSize}`;
+  const endpointRows = Object.entries(info.endpoints as Record<string, { method: string; path: string }>).map(([name, endpoint]) => `<tr><td>${escapeHtml(name.replace(/([A-Z])/g, ' $1'))}</td><td><code>${escapeHtml(endpoint.method)} ${escapeHtml(endpoint.path)}</code></td></tr>`).join('');
+  const section = page('Cloud Connection Information', 'Use these cloud deployment details to configure a restaurant POS. Secrets are never displayed.', ['Super Admin only', 'Public base URL', 'Read-only guidance']);
+  const panel = el('section', 'admin-panel cloud-connection-panel');
+  panel.innerHTML = `
+    <article class="card admin-card sync-health-card">
+      <p class="eyebrow">Cloud Sync Service</p><h3>${escapeHtml(info.status)}</h3>
+      <div class="settings-overview-card">
+        <div class="settings-overview-card__item"><span>Deployment Mode</span><strong>${escapeHtml(info.deploymentMode)}</strong></div>
+        <div class="settings-overview-card__item"><span>Sync API</span><strong>${info.syncApiAvailable ? 'Available' : 'Unavailable'}</strong></div>
+        <div class="settings-overview-card__item"><span>Sync Token</span><strong>${info.tokenConfigured ? 'Configured' : 'Not configured'}</strong></div>
+        <div class="settings-overview-card__item"><span>Database</span><strong>${info.databaseAvailable ? 'Available' : 'Unavailable'}</strong></div>
+      </div>
+    </article>
+    <article class="card admin-card settings-card settings-card--wide">
+      <p class="eyebrow">Cloud Sync URL</p><h3><code class="cloud-base-url">${escapeHtml(url)}</code></h3>
+      <p class="muted">Copy only this base URL. The local POS constructs the endpoint paths itself.</p>
+      <button type="button" class="copy-cloud-url" ${info.publicBaseUrl ? '' : 'disabled'}>Copy URL</button>
+      <h3>Recommended Local Configuration</h3>
+      <div class="settings-overview-card">
+        <div class="settings-overview-card__item"><span>Store ID</span><strong>Restaurant-specific</strong><small>${escapeHtml(info.storeId.guidance)}</small></div>
+        <div class="settings-overview-card__item"><span>Device ID</span><strong>${escapeHtml(info.deviceId.example)}</strong><small>${escapeHtml(info.deviceId.guidance)}</small></div>
+        <div class="settings-overview-card__item"><span>Push Interval</span><strong>${defaults.pushIntervalSeconds} seconds</strong></div>
+        <div class="settings-overview-card__item"><span>Incoming Poll</span><strong>${defaults.pollIntervalSeconds} seconds</strong></div>
+        <div class="settings-overview-card__item"><span>Request Timeout</span><strong>${defaults.requestTimeoutSeconds} seconds</strong></div>
+        <div class="settings-overview-card__item"><span>Batch Size</span><strong>${defaults.batchSize}</strong></div>
+      </div>
+      <h3>Local POS Cloud Sync Configuration</h3><pre class="connection-package">${escapeHtml(configuration)}</pre>
+      <button type="button" class="copy-configuration">Copy Configuration</button>
+      <h3>API endpoints</h3><table class="staff-table"><thead><tr><th>Purpose</th><th>Existing route</th></tr></thead><tbody>${endpointRows}</tbody></table>
+      <h3>Restaurant POS setup</h3><p><strong>Super Admin → Platform Settings → Cloud Synchronization</strong></p>
+      <ol><li>Paste the Cloud Sync URL above.</li><li>Enter the restaurant's assigned Store ID.</li><li>Choose a unique Device ID, such as <code>register-server-1</code>.</li><li>Enter the matching Sync API Token supplied securely by the cloud administrator.</li><li>Test the connection, then enable synchronization.</li></ol>
+    </article>`;
+  panel.querySelector<HTMLButtonElement>('.copy-cloud-url')?.addEventListener('click', (event) => { void copyText(String(info.publicBaseUrl), event.currentTarget as HTMLButtonElement); });
+  panel.querySelector<HTMLButtonElement>('.copy-configuration')?.addEventListener('click', (event) => { void copyText(configuration, event.currentTarget as HTMLButtonElement); });
+  section.append(panel); return section;
+}
+
+async function renderCloudSyncSettings(): Promise<HTMLElement> {
+  try { return renderCloudConnectionInformation(await apiClient.getCloudConnectionInformation()); }
+  catch (error) {
+    if (error instanceof ApiClientError && error.status === 404) return renderLocalCloudSyncSettings();
+    throw error;
+  }
 }
 
 async function renderBillSettings(): Promise<HTMLElement> {
