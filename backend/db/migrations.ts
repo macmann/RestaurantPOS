@@ -9,6 +9,11 @@ import { ensureRepositoryStore } from './repositoryStore';
 
 export const INITIAL_MIGRATION_ID = '20260505140000_initial_restaurantpos_schema';
 const INITIAL_MIGRATION_FILE = path.resolve(process.cwd(), 'schema/migrations/20260505140000_initial_restaurantpos_schema.sql');
+const MIGRATIONS = [
+  { id: INITIAL_MIGRATION_ID, file: INITIAL_MIGRATION_FILE },
+  { id: '20260922090000_hybrid_sync', file: path.resolve(process.cwd(), 'schema/migrations/20260922090000_hybrid_sync.sql') },
+  { id: '20260923100000_bidirectional_menu', file: path.resolve(process.cwd(), 'schema/migrations/20260923100000_bidirectional_menu.sql') },
+];
 
 async function ensureMigrationsTable(): Promise<void> {
   await query(`
@@ -26,15 +31,14 @@ async function hasMigration(id: string): Promise<boolean> {
 
 export async function runInitialRestaurantPosMigration(): Promise<void> {
   await ensureMigrationsTable();
-  if (await hasMigration(INITIAL_MIGRATION_ID)) {
-    await ensureRepositoryStore();
-    return;
+  for (const migration of MIGRATIONS) {
+    if (await hasMigration(migration.id)) continue;
+    const sql = (await readFile(migration.file, 'utf8')).replace(/^\s*BEGIN;\s*/i, '').replace(/\s*COMMIT;\s*$/i, '');
+    await withTransaction(async (client) => {
+      await client.query(sql);
+      await client.query('INSERT INTO schema_migrations (id) VALUES ($1)', [migration.id]);
+    });
+    if (migration.id === INITIAL_MIGRATION_ID) await ensureRepositoryStore();
   }
-
-  const sql = (await readFile(INITIAL_MIGRATION_FILE, 'utf8')).replace(/^\s*BEGIN;\s*/i, '').replace(/\s*COMMIT;\s*$/i, '');
-  await withTransaction(async (client) => {
-    await client.query(sql);
-    await client.query('INSERT INTO schema_migrations (id) VALUES ($1)', [INITIAL_MIGRATION_ID]);
-  });
   await ensureRepositoryStore();
 }

@@ -4,8 +4,6 @@ import { isConfiguredPrepStation, isMenuInventoryLinkEnabled, normalizePrepStati
 import {
   createCategory,
   createItem,
-  deleteCategory,
-  deleteItem,
   getCategoryById,
   getCategoryByName,
   getItemById,
@@ -42,6 +40,14 @@ export interface ItemInput {
   isActive?: boolean;
   isPromotional?: boolean;
 }
+
+export interface MenuMutationContext {
+  source: 'LOCAL_POS' | 'CLOUD_MANAGER';
+  actorId?: string;
+  originatingEventId?: string;
+}
+
+const LOCAL_MUTATION: MenuMutationContext = { source: 'LOCAL_POS' };
 
 const PRICE_MAX = 999999.99;
 
@@ -100,31 +106,35 @@ export async function adminListMenu() {
   }));
 }
 
-export async function adminCreateCategory(input: CategoryInput): Promise<MenuCategoryRecord> {
+export async function adminCreateCategory(input: CategoryInput, context: MenuMutationContext = LOCAL_MUTATION): Promise<MenuCategoryRecord> {
   const name = assertName(input.name, 'Category');
-  const duplicate = await getCategoryByName(name);
+  const branchId = input.branchId ?? getCurrentBranchId();
+  const duplicate = await getCategoryByName(name, branchId);
   if (duplicate) throw new Error(`Category '${name}' already exists.`);
 
   const record: MenuCategoryRecord = {
     id: createId('cat'),
-    branchId: input.branchId ?? getCurrentBranchId(),
+    branchId,
     name,
     sortOrder: input.sortOrder ?? 0,
     isActive: input.isActive ?? true,
     createdAt: nowIso(),
     updatedAt: nowIso(),
+    updatedSource: context.source,
+    updatedBy: context.actorId,
+    originatingEventId: context.originatingEventId,
   };
 
   return createCategory(record);
 }
 
-export async function adminUpdateCategory(id: string, input: Partial<CategoryInput>) {
+export async function adminUpdateCategory(id: string, input: Partial<CategoryInput>, context: MenuMutationContext = LOCAL_MUTATION) {
   const category = await getCategoryById(id);
   if (!category) throw new Error('Category not found.');
 
   if (input.name) {
     const name = assertName(input.name, 'Category');
-    const duplicate = await getCategoryByName(name);
+    const duplicate = await getCategoryByName(name, category.branchId);
     if (duplicate && duplicate.id !== id) throw new Error(`Category '${name}' already exists.`);
     input.name = name;
   }
@@ -132,14 +142,25 @@ export async function adminUpdateCategory(id: string, input: Partial<CategoryInp
   return updateCategory(id, {
     ...input,
     updatedAt: nowIso(),
+    updatedSource: context.source,
+    updatedBy: context.actorId,
+    originatingEventId: context.originatingEventId,
   });
 }
 
-export async function adminDeleteCategory(id: string): Promise<boolean> {
-  return deleteCategory(id);
+export async function adminDeleteCategory(id: string, context: MenuMutationContext = LOCAL_MUTATION): Promise<boolean> {
+  const category = await getCategoryById(id);
+  if (!category) return false;
+  const timestamp = nowIso();
+  const children = await listItems(id);
+  for (const item of children) await updateItem(item.id, { deletedAt: timestamp, isActive: false, isAvailable: false, updatedAt: timestamp, updatedSource: context.source, updatedBy: context.actorId, originatingEventId: context.originatingEventId });
+  return !!await updateCategory(id, { deletedAt: timestamp, isActive: false, updatedAt: timestamp, updatedSource: context.source, updatedBy: context.actorId, originatingEventId: context.originatingEventId });
 }
 
-export async function adminCreateItem(input: ItemInput): Promise<MenuItemRecord> {
+export async function adminCreateItem(input: ItemInput, context: MenuMutationContext = LOCAL_MUTATION): Promise<MenuItemRecord> {
+  if (context.source === 'CLOUD_MANAGER' && (input.inventoryItemId || input.inventoryUnit || input.inventoryMinimumThreshold !== undefined || input.inventoryCurrentStock !== undefined)) {
+    throw new Error('Cloud managers cannot modify inventory through menu administration.');
+  }
   const category = await getCategoryById(input.categoryId);
   if (!category) throw new Error('Category not found.');
 
@@ -168,17 +189,25 @@ export async function adminCreateItem(input: ItemInput): Promise<MenuItemRecord>
     isPromotional: input.isPromotional ?? false,
     createdAt: now,
     updatedAt: now,
+    updatedSource: context.source,
+    updatedBy: context.actorId,
+    originatingEventId: context.originatingEventId,
   });
 
-  if (menuItem.inventoryItemId || !isMenuInventoryLinkEnabled()) return menuItem;
+  // Cloud menu administration never creates or mutates inventory master data;
+  // inventory remains restaurant-owned and one-way.
+  if (context.source === 'CLOUD_MANAGER' || menuItem.inventoryItemId || !isMenuInventoryLinkEnabled()) return menuItem;
 
   const inventoryItemId = await createLinkedInventoryItemForMenuItem(menuItem, input);
-  const linkedMenuItem = await updateItem(menuItem.id, { inventoryItemId, updatedAt: nowIso() });
+  const linkedMenuItem = await updateItem(menuItem.id, { inventoryItemId, updatedAt: nowIso(), updatedSource: context.source, updatedBy: context.actorId });
   if (!linkedMenuItem) throw new Error('Menu item not found after linked inventory creation.');
   return linkedMenuItem;
 }
 
-export async function adminUpdateItem(id: string, input: Partial<ItemInput>) {
+export async function adminUpdateItem(id: string, input: Partial<ItemInput>, context: MenuMutationContext = LOCAL_MUTATION) {
+  if (context.source === 'CLOUD_MANAGER' && (input.inventoryItemId !== undefined || input.inventoryUnit !== undefined || input.inventoryMinimumThreshold !== undefined || input.inventoryCurrentStock !== undefined)) {
+    throw new Error('Cloud managers cannot modify inventory through menu administration.');
+  }
   const item = await getItemById(id);
   if (!item) throw new Error('Menu item not found.');
 
@@ -206,27 +235,34 @@ export async function adminUpdateItem(id: string, input: Partial<ItemInput>) {
   void inventoryMinimumThreshold;
   void inventoryCurrentStock;
 
+  const normalizedPatch: Partial<MenuItemRecord> = { ...menuPatch };
+  if (input.description !== undefined) normalizedPatch.description = input.description.trim() || undefined;
+  if (typeof input.price === 'number') normalizedPatch.price = Math.round(input.price * 100) / 100;
+  if (typeof input.taxRate === 'number') normalizedPatch.taxRate = Math.round(input.taxRate * 100) / 100;
   return updateItem(id, {
-    ...menuPatch,
-    description: input.description?.trim(),
-    price: typeof input.price === 'number' ? Math.round(input.price * 100) / 100 : undefined,
-    taxRate: typeof input.taxRate === 'number' ? Math.round(input.taxRate * 100) / 100 : undefined,
+    ...normalizedPatch,
     updatedAt: nowIso(),
+    updatedSource: context.source,
+    updatedBy: context.actorId,
+    originatingEventId: context.originatingEventId,
   });
 }
 
-export async function adminDeleteItem(id: string): Promise<boolean> {
-  return deleteItem(id);
+export async function adminDeleteItem(id: string, context: MenuMutationContext = LOCAL_MUTATION): Promise<boolean> {
+  const item = await getItemById(id);
+  if (!item) return false;
+  const timestamp = nowIso();
+  return !!await updateItem(id, { deletedAt: timestamp, isActive: false, isAvailable: false, updatedAt: timestamp, updatedSource: context.source, updatedBy: context.actorId, originatingEventId: context.originatingEventId });
 }
 
-export async function adminSetItemAvailability(id: string, isAvailable: boolean) {
+export async function adminSetItemAvailability(id: string, isAvailable: boolean, context: MenuMutationContext = LOCAL_MUTATION) {
   const item = await getItemById(id);
   if (!item) throw new Error('Menu item not found.');
-  return updateItem(id, { isAvailable, updatedAt: nowIso() });
+  return updateItem(id, { isAvailable, updatedAt: nowIso(), updatedSource: context.source, updatedBy: context.actorId, originatingEventId: context.originatingEventId });
 }
 
-export async function adminSetItemPromotionalFlag(id: string, isPromotional: boolean) {
+export async function adminSetItemPromotionalFlag(id: string, isPromotional: boolean, context: MenuMutationContext = LOCAL_MUTATION) {
   const item = await getItemById(id);
   if (!item) throw new Error('Menu item not found.');
-  return updateItem(id, { isPromotional, updatedAt: nowIso() });
+  return updateItem(id, { isPromotional, updatedAt: nowIso(), updatedSource: context.source, updatedBy: context.actorId, originatingEventId: context.originatingEventId });
 }
