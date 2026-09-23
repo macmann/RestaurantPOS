@@ -144,7 +144,9 @@ export function sendToWindowsPrinter(printerName: string, text: string, copies: 
     '$doc = New-Object Drawing.Printing.PrintDocument',
     '$doc.PrinterSettings.PrinterName = $env:POS_PRINTER_NAME',
     '$doc.PrinterSettings.Copies = [int16]$env:POS_PRINT_COPIES',
-    '$doc.DefaultPageSettings.Margins = New-Object Drawing.Printing.Margins(4, 4, 4, 4)',
+    // Let the receipt-printer driver enforce only its physical non-printable
+    // area instead of adding application margins on every side.
+    '$doc.DefaultPageSettings.Margins = New-Object Drawing.Printing.Margins(0, 0, 0, 0)',
     '$doc.add_PrintPage({ param($sender, $e); $format = New-Object Drawing.StringFormat; $format.FormatFlags = [Drawing.StringFormatFlags]::LineLimit; $e.Graphics.DrawString($text, $font, [Drawing.Brushes]::Black, $e.MarginBounds, $format); $e.HasMorePages = $false })',
     '$doc.Print()',
     '$doc.Dispose(); $font.Dispose(); $installed.Dispose()',
