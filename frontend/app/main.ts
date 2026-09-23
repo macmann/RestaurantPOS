@@ -1409,13 +1409,24 @@ async function renderWaiterProgress(): Promise<HTMLElement> {
 }
 
 async function renderMenuAdmin(): Promise<HTMLElement> {
-  const canEditMenuItems = Boolean(session?.permissions.includes(Actions.ManageSystem));
+  const canEditMenuItems = Boolean(session?.permissions.includes(Actions.ManageMenu));
   const section = page('Menu admin', canEditMenuItems ? 'Create, edit, delete, route, and promote menu items.' : 'Create items, route them to configured prep stations, toggle availability, and flag promotions.');
   const state = await loadAdminMenuDashboard();
   const settings = normalizeOperationalSettings(await apiClient.getSettings());
   const stationOptions = (selected?: string) => settings.prepStations.map((station) => `<option value="${escapeHtml(station.id)}" ${station.id === selected ? 'selected' : ''}>${escapeHtml(station.displayName)}</option>`).join('');
   const panel = el('section', 'admin-panel menu-admin-panel');
   const categories = state.categories;
+  const runMenuAction = async (description: string, action: () => Promise<unknown>, errorElement?: HTMLElement): Promise<void> => {
+    try {
+      if (errorElement) { errorElement.hidden = true; errorElement.textContent = ''; }
+      await action();
+      render();
+    } catch (caught) {
+      const message = `${description}: ${caught instanceof Error ? caught.message : 'Request failed.'}`;
+      if (errorElement) { errorElement.textContent = message; errorElement.hidden = false; }
+      else window.alert(message);
+    }
+  };
   panel.innerHTML = `
     <article class="card admin-card">
       <h3>Create category</h3>
@@ -1439,11 +1450,28 @@ async function renderMenuAdmin(): Promise<HTMLElement> {
       </form>
     </article>
   `;
+  if (state.error) panel.prepend(el('p', 'form-error', state.error));
   const list = el('div', 'menu-admin-list');
   if (!categories.length) list.append(emptyState('No categories yet. Create one to start building the menu.'));
   for (const category of categories) {
     const card = el('article', 'card menu-category-admin');
-    card.append(el('h3', '', `${category.name} (${category.items.length})`));
+    const heading = el('h3', '', `${category.name} (${category.items.length})`);
+    const categoryActions = el('div', 'menu-admin-actions');
+    const renameCategory = el('button', 'secondary', 'Rename');
+    renameCategory.type = 'button';
+    renameCategory.addEventListener('click', async () => {
+      const name = window.prompt('Category name', category.name)?.trim();
+      if (!name || name === category.name) return;
+      await runMenuAction('Menu category could not be renamed', () => apiClient.updateMenuCategory(category.id, { name }));
+    });
+    const deleteCategory = el('button', 'secondary danger', 'Delete category');
+    deleteCategory.type = 'button';
+    deleteCategory.addEventListener('click', async () => {
+      if (!window.confirm(`Delete ${category.name} and its menu items?`)) return;
+      await runMenuAction('Menu category could not be deleted', () => apiClient.deleteMenuCategory(category.id));
+    });
+    categoryActions.append(renameCategory, deleteCategory);
+    card.append(heading, categoryActions);
     if (!category.items.length) card.append(emptyState('No menu items in this category.'));
     for (const item of category.items) {
       const row = el('div', 'menu-admin-row');
@@ -1454,10 +1482,10 @@ async function renderMenuAdmin(): Promise<HTMLElement> {
       const actions = el('div', 'menu-admin-actions');
       const availability = el('button', 'secondary', item.isAvailable ? 'Hide' : 'Show');
       availability.type = 'button';
-      availability.addEventListener('click', async () => { await apiClient.setMenuItemAvailability(item.id, !item.isAvailable); render(); });
+      availability.addEventListener('click', async () => { await runMenuAction('Menu item availability could not be changed', () => apiClient.setMenuItemAvailability(item.id, !item.isAvailable)); });
       const promo = el('button', 'secondary', item.isPromotional ? 'Remove promo' : 'Make promo');
       promo.type = 'button';
-      promo.addEventListener('click', async () => { await apiClient.setMenuItemPromotional(item.id, !item.isPromotional); render(); });
+      promo.addEventListener('click', async () => { await runMenuAction('Menu item promotional state could not be changed', () => apiClient.setMenuItemPromotional(item.id, !item.isPromotional)); });
       actions.append(availability, promo);
       if (canEditMenuItems) {
         const edit = el('button', 'secondary', 'Edit');
@@ -1466,8 +1494,7 @@ async function renderMenuAdmin(): Promise<HTMLElement> {
         remove.type = 'button';
         remove.addEventListener('click', async () => {
           if (!window.confirm(`Delete ${item.name}? This cannot be undone.`)) return;
-          await apiClient.deleteMenuItem(item.id);
-          render();
+          await runMenuAction('Menu item could not be deleted', () => apiClient.deleteMenuItem(item.id));
         });
         actions.append(edit, remove);
         editForm = el('form', 'staff-form menu-item-edit-form');
@@ -1496,32 +1523,31 @@ async function renderMenuAdmin(): Promise<HTMLElement> {
   panel.querySelector<HTMLFormElement>('.category-form')?.addEventListener('submit', async (event) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget as HTMLFormElement);
-    await apiClient.createMenuCategory({ name: String(data.get('name') ?? ''), sortOrder: Number(data.get('sortOrder') ?? 0) });
-    render();
+    const error = (event.currentTarget as HTMLFormElement).querySelector<HTMLElement>('.form-error') ?? undefined;
+    await runMenuAction('Menu category could not be created', () => apiClient.createMenuCategory({ name: String(data.get('name') ?? ''), sortOrder: Number(data.get('sortOrder') ?? 0) }), error);
   });
   panel.querySelector<HTMLFormElement>('.item-form')?.addEventListener('submit', async (event) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget as HTMLFormElement);
-    await apiClient.createMenuItem({
+    const error = (event.currentTarget as HTMLFormElement).querySelector<HTMLElement>('.form-error') ?? undefined;
+    await runMenuAction('Menu item could not be created', () => apiClient.createMenuItem({
       categoryId: String(data.get('categoryId') ?? ''),
       name: String(data.get('name') ?? ''),
       description: String(data.get('description') ?? '') || undefined,
       price: Number(data.get('price') ?? 0),
       prepStation: String(data.get('prepStation') ?? 'kitchen'),
-    });
-    render();
+    }), error);
   });
   panel.querySelectorAll<HTMLFormElement>('.menu-item-edit-form').forEach((form) => form.addEventListener('submit', async (event) => {
     event.preventDefault();
     const data = new FormData(form);
-    await apiClient.updateMenuItem(form.dataset.itemId!, {
+    await runMenuAction('Menu item could not be updated', () => apiClient.updateMenuItem(form.dataset.itemId!, {
       categoryId: String(data.get('categoryId') ?? ''),
       name: String(data.get('name') ?? ''),
       description: String(data.get('description') ?? '') || undefined,
       price: Number(data.get('price') ?? 0),
       prepStation: String(data.get('prepStation') ?? 'kitchen'),
-    });
-    render();
+    }));
   }));
   section.append(panel);
   return section;

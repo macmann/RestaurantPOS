@@ -388,6 +388,10 @@ function buildUsersRouter(): Router {
 
 function buildSettingsRouter(): Router {
   const router = express.Router();
+  // This deliberately exposes only the non-sensitive deployment discriminator.
+  // The client uses it to select the narrowly scoped cloud manager API; authorization
+  // remains entirely server-side on both route families.
+  router.get('/runtime', send(() => ({ deploymentMode: isCloudDeployment() ? 'CLOUD' : 'POS' })));
   router.get('/', send(() => ({ branch: getRuntimeSettings().branch, inventoryDeductionPolicy: InventoryAdminApi.getDeductionPolicy(), pos: getPosOperationalSettings() })));
   router.get('/printers/status', authorize(Actions.ManageSystem), send(() => getPrinterStatuses()));
   router.get('/system/status', authorize(Actions.ManageSystem), send(() => getSystemStatus()));
