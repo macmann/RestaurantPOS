@@ -1,10 +1,12 @@
 import { applyIncomingLocally, markOutgoingResult, pendingOutbox } from './service';
 import { query } from '../db/client';
 import { loadSyncConfig, syncEndpoint, type ResolvedSyncConfig } from './config';
+import { isCloudDeployment } from '../config/environment';
 
 export interface LocalSyncRuntimeStatus { lastSuccessfulPush?: string; lastSuccessfulPull?: string; lastHeartbeat?: string; lastError?: string; }
 const runtimeStatus: LocalSyncRuntimeStatus = {};
 export const getLocalSyncRuntimeStatus = (): LocalSyncRuntimeStatus => ({ ...runtimeStatus });
+export const localSyncWorkerAllowed = (environment = process.env): boolean => !isCloudDeployment(environment);
 
 const delay = (ms: number, assign: (timer: ReturnType<typeof setTimeout>) => void) => new Promise<void>((resolve) => { const timer = setTimeout(resolve, ms); assign(timer); });
 
@@ -13,7 +15,10 @@ export class SyncWorker {
   private pushTimer?: ReturnType<typeof setTimeout>;
   private pollTimer?: ReturnType<typeof setTimeout>;
   constructor(private readonly configLoader: () => Promise<ResolvedSyncConfig> = loadSyncConfig) {}
-  start(): void { this.stopped = false; void this.pushLoop(); void this.pollLoop(); }
+  start(): void {
+    if (!localSyncWorkerAllowed()) { this.stopped = true; return; }
+    this.stopped = false; void this.pushLoop(); void this.pollLoop();
+  }
   stop(): void { this.stopped = true; if (this.pushTimer) clearTimeout(this.pushTimer); if (this.pollTimer) clearTimeout(this.pollTimer); }
   private headers(config: ResolvedSyncConfig) { return { 'content-type': 'application/json', 'x-sync-token': config.token! }; }
   private async pushLoop(): Promise<void> {

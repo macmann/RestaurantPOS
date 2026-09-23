@@ -299,6 +299,10 @@ async function requestInProcess<T>(path: string, method: string, body: unknown, 
       if (method === 'GET') return syncConfig.publicSyncConfig(await syncConfig.loadSyncConfig()) as T;
       if (method === 'PUT') return syncConfig.publicSyncConfig(await syncConfig.saveSyncConfig(body)) as T;
     }
+    if (parts[2] === 'cloud-connection' && method === 'GET') {
+      const cloudConnection = await backendModule<any>('../../backend/config/cloudConnection.js');
+      return cloudConnection.getCloudConnectionInformation() as Promise<T>;
+    }
     if (parts[2] === 'printers' && parts[3] === 'status' && method === 'GET') {
       const printerStatus = await backendModule<any>('../../backend/hardware/printerStatus.js');
       return printerStatus.getPrinterStatuses() as Promise<T>;
@@ -656,6 +660,7 @@ export class RestaurantApiClient {
   }
 
   getCloudSyncSettings() { return this.request<any>('/api/settings/cloud-sync'); }
+  getCloudConnectionInformation() { return this.request<any>('/api/settings/cloud-connection'); }
   updateCloudSyncSettings(input: unknown) { return this.request<any>('/api/settings/cloud-sync', { method: 'PUT', body: input, operationKind: 'idempotent_write' }); }
   testCloudSyncConnection(input: unknown) { return this.request<any>('/api/settings/cloud-sync/test', { method: 'POST', body: input }); }
 

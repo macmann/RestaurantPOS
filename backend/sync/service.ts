@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { query, withTransaction, type DatabaseClient } from '../db/client';
+import { readAppMode } from '../config/environment';
 
 export type SyncEvent = {
   eventId: string; storeId: string; entityType: string; entityId: string;
@@ -56,7 +57,7 @@ async function applyMenuVersion(client: DatabaseClient, event: { eventId: string
 }
 
 export function appMode(env = process.env): 'POS' | 'CLOUD' {
-  return String(env.APP_MODE ?? 'POS').toUpperCase() === 'CLOUD' ? 'CLOUD' : 'POS';
+  return readAppMode(env);
 }
 
 export function requireSyncToken(value: unknown): void {
