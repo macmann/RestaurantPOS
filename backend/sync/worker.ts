@@ -1,48 +1,70 @@
 import { applyIncomingLocally, markOutgoingResult, pendingOutbox } from './service';
 import { query } from '../db/client';
+import { loadSyncConfig, syncEndpoint, type ResolvedSyncConfig } from './config';
 
-const numberEnv = (name: string, fallback: number) => Math.max(1000, Number(process.env[name] ?? fallback) || fallback);
+export interface LocalSyncRuntimeStatus { lastSuccessfulPush?: string; lastSuccessfulPull?: string; lastHeartbeat?: string; lastError?: string; }
+const runtimeStatus: LocalSyncRuntimeStatus = {};
+export const getLocalSyncRuntimeStatus = (): LocalSyncRuntimeStatus => ({ ...runtimeStatus });
+
+const delay = (ms: number, assign: (timer: ReturnType<typeof setTimeout>) => void) => new Promise<void>((resolve) => { const timer = setTimeout(resolve, ms); assign(timer); });
 
 export class SyncWorker {
   private stopped = false;
   private pushTimer?: ReturnType<typeof setTimeout>;
   private pollTimer?: ReturnType<typeof setTimeout>;
-  constructor(private readonly baseUrl = process.env.CLOUD_API_URL ?? '', private readonly token = process.env.SYNC_API_TOKEN ?? '', private readonly storeId = process.env.POS_STORE_ID ?? 'default') {}
-  start(): void {
-    if (!this.baseUrl || !this.token) return;
-    this.stopped = false; void this.pushLoop(); void this.pollLoop();
-  }
+  constructor(private readonly configLoader: () => Promise<ResolvedSyncConfig> = loadSyncConfig) {}
+  start(): void { this.stopped = false; void this.pushLoop(); void this.pollLoop(); }
   stop(): void { this.stopped = true; if (this.pushTimer) clearTimeout(this.pushTimer); if (this.pollTimer) clearTimeout(this.pollTimer); }
-  private headers() { return { 'content-type': 'application/json', 'x-sync-token': this.token }; }
+  private headers(config: ResolvedSyncConfig) { return { 'content-type': 'application/json', 'x-sync-token': config.token! }; }
   private async pushLoop(): Promise<void> {
     while (!this.stopped) {
-      const events = await pendingOutbox(Number(process.env.SYNC_BATCH_SIZE ?? 100)).catch(() => []);
-      if (events.length) {
-        try {
-          const response = await fetch(`${this.baseUrl}/cloud/sync/events`, { method: 'POST', headers: this.headers(), body: JSON.stringify({ events }), signal: AbortSignal.timeout(numberEnv('SYNC_REQUEST_TIMEOUT_MS', 8000)) });
-          if (!response.ok) throw new Error(`Cloud sync HTTP ${response.status}`);
-          await markOutgoingResult(events.map((e) => e.eventId));
-        } catch (error) { await markOutgoingResult(events.map((e) => e.eventId), error instanceof Error ? error.message : String(error)).catch(() => undefined); }
+      let interval = 30_000;
+      let attemptedEventIds: string[] = [];
+      try {
+        const config = await this.configLoader(); interval = config.pushIntervalMs;
+        if (config.enabled && config.configured) {
+          const events = await pendingOutbox(config.batchSize);
+          if (events.length) {
+            attemptedEventIds = events.map((event) => event.eventId);
+            const response = await fetch(syncEndpoint(config, '/cloud/sync/events'), { method: 'POST', headers: this.headers(config), body: JSON.stringify({ events }), signal: AbortSignal.timeout(config.requestTimeoutMs) });
+            if (!response.ok) throw new Error(`Cloud sync HTTP ${response.status}`);
+            await markOutgoingResult(attemptedEventIds); attemptedEventIds = []; runtimeStatus.lastSuccessfulPush = new Date().toISOString();
+          }
+          await this.heartbeat(config); runtimeStatus.lastError = undefined;
+        }
+      } catch (error) {
+        runtimeStatus.lastError = error instanceof Error ? error.message : 'Synchronization failed.';
+        if (attemptedEventIds.length) await markOutgoingResult(attemptedEventIds, runtimeStatus.lastError).catch(() => undefined);
       }
-      await this.heartbeat().catch(() => undefined);
-      await new Promise<void>((resolve) => { this.pushTimer = setTimeout(resolve, numberEnv('SYNC_PUSH_INTERVAL_MS', 30_000)); });
+      await delay(interval, (timer) => { this.pushTimer = timer; });
     }
   }
   private async pollLoop(): Promise<void> {
     while (!this.stopped) {
+      let interval = 10_000;
       try {
-        const response = await fetch(`${this.baseUrl}/cloud/sync/incoming?storeId=${encodeURIComponent(this.storeId)}`, { headers: this.headers(), signal: AbortSignal.timeout(numberEnv('SYNC_REQUEST_TIMEOUT_MS', 8000)) });
-        if (!response.ok) throw new Error(`Cloud poll HTTP ${response.status}`);
-        const body = await response.json() as { data: { events: any[] } };
-        const acknowledged: string[] = [];
-        for (const event of body.data.events) { await applyIncomingLocally(event); acknowledged.push(event.event_id); }
-        if (acknowledged.length) await fetch(`${this.baseUrl}/cloud/sync/incoming/ack`, { method: 'POST', headers: this.headers(), body: JSON.stringify({ storeId: this.storeId, eventIds: acknowledged }) });
-      } catch { /* Local POS availability must never depend on this loop. */ }
-      await new Promise<void>((resolve) => { this.pollTimer = setTimeout(resolve, numberEnv('SYNC_POLL_INTERVAL_MS', 10_000)); });
+        const config = await this.configLoader(); interval = config.pollIntervalMs;
+        if (config.enabled && config.configured) {
+          const response = await fetch(`${syncEndpoint(config, '/cloud/sync/incoming')}?storeId=${encodeURIComponent(config.storeId)}`, { headers: this.headers(config), signal: AbortSignal.timeout(config.requestTimeoutMs) });
+          if (!response.ok) throw new Error(`Cloud poll HTTP ${response.status}`);
+          const body = await response.json() as { data: { events: any[] } }; const acknowledged: string[] = [];
+          for (const event of body.data.events) {
+            if (String(event.store_id) !== config.storeId) throw new Error('Cloud returned an event for a different store.');
+            await applyIncomingLocally(event); acknowledged.push(event.event_id);
+          }
+          if (acknowledged.length) {
+            const ack = await fetch(syncEndpoint(config, '/cloud/sync/incoming/ack'), { method: 'POST', headers: this.headers(config), body: JSON.stringify({ storeId: config.storeId, eventIds: acknowledged }), signal: AbortSignal.timeout(config.requestTimeoutMs) });
+            if (!ack.ok) throw new Error(`Cloud acknowledgement HTTP ${ack.status}`);
+          }
+          runtimeStatus.lastSuccessfulPull = new Date().toISOString(); runtimeStatus.lastError = undefined;
+        }
+      } catch (error) { runtimeStatus.lastError = error instanceof Error ? error.message : 'Synchronization failed.'; }
+      await delay(interval, (timer) => { this.pollTimer = timer; });
     }
   }
-  private async heartbeat(): Promise<void> {
-    const counts = (await query<any>(`SELECT COUNT(*) FILTER(WHERE status='PENDING')::int pending, COUNT(*) FILTER(WHERE status='FAILED')::int failed, MAX(occurred_at) last_activity FROM sync_outbox WHERE store_id=$1`, [this.storeId])).rows[0];
-    await fetch(`${this.baseUrl}/cloud/sync/heartbeat`, { method: 'POST', headers: this.headers(), body: JSON.stringify({ storeId:this.storeId, deviceId:process.env.POS_DEVICE_ID ?? this.storeId, pendingEventCount:counts.pending, failedEventCount:counts.failed, lastPosActivity:counts.last_activity, applicationVersion:process.env.npm_package_version ?? 'unknown' }) });
+  private async heartbeat(config: ResolvedSyncConfig): Promise<void> {
+    const counts = (await query<any>(`SELECT COUNT(*) FILTER(WHERE status='PENDING')::int pending, COUNT(*) FILTER(WHERE status='FAILED')::int failed, MAX(occurred_at) last_activity FROM sync_outbox WHERE store_id=$1`, [config.storeId])).rows[0];
+    const response = await fetch(syncEndpoint(config, '/cloud/sync/heartbeat'), { method: 'POST', headers: this.headers(config), signal: AbortSignal.timeout(config.requestTimeoutMs), body: JSON.stringify({ storeId:config.storeId, deviceId:config.deviceId, pendingEventCount:counts.pending, failedEventCount:counts.failed, lastPosActivity:counts.last_activity, applicationVersion:process.env.npm_package_version ?? 'unknown' }) });
+    if (!response.ok) throw new Error(`Cloud heartbeat HTTP ${response.status}`); runtimeStatus.lastHeartbeat = new Date().toISOString();
   }
 }

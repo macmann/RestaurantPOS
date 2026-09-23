@@ -46,7 +46,10 @@ import { loginWithPassword, logoutSession } from './auth/service';
 import { getIdempotencyRecord, idempotencyFingerprint, idempotencyMatches, saveIdempotencyRecord } from './network-idempotency';
 import { appMode } from './sync/service';
 import { buildCloudRouter, buildCustomerRouter, buildManagerRouter } from './sync/router';
-import { SyncWorker } from './sync/worker';
+import { SyncWorker, getLocalSyncRuntimeStatus } from './sync/worker';
+import { loadSyncConfig, publicSyncConfig, saveSyncConfig, syncEndpoint, validateSyncSettings } from './sync/config';
+import { query } from './db/client';
+import { recordAuditEvent } from './audit/service';
 
 const DEFAULT_PORT = 8080;
 const DEFAULT_HOST = '0.0.0.0';
@@ -390,6 +393,42 @@ function buildSettingsRouter(): Router {
   router.get('/branch', send(() => getRuntimeSettings().branch));
   router.get('/inventory/deduction-policy', authorize(Actions.AdjustStock), send(() => InventoryAdminApi.getDeductionPolicy()));
   router.put('/inventory/deduction-policy', authorize(Actions.AdjustStock), send((req) => InventoryAdminApi.setDeductionPolicy(requireUser(req), requiredString(bodyObject(req).policy, 'policy') as any)));
+  router.get('/cloud-sync', authorize(Actions.ManageSystem), send(async () => {
+    if (appMode() !== 'POS') throw Object.assign(new Error('Cloud synchronization settings are available only on a POS deployment.'), { statusCode: 404 });
+    const config = await loadSyncConfig();
+    let pendingOutboxEvents = 0, pendingIncomingEvents = 0;
+    try {
+      const counts = await query<any>(`SELECT (SELECT COUNT(*) FROM sync_outbox WHERE status IN ('PENDING','FAILED'))::int outbox, (SELECT COUNT(*) FROM sync_inbox WHERE processed_at IS NULL)::int incoming`);
+      pendingOutboxEvents = counts.rows[0]?.outbox ?? 0; pendingIncomingEvents = counts.rows[0]?.incoming ?? 0;
+    } catch { /* Status remains useful in explicitly configured memory/test mode. */ }
+    const runtime = getLocalSyncRuntimeStatus();
+    const status = !config.enabled ? 'DISABLED' : !config.configured ? 'NOT_CONFIGURED' : runtime.lastError ? 'ERROR' : runtime.lastHeartbeat ? 'CONNECTED' : 'DISCONNECTED';
+    return { ...publicSyncConfig(config), status, ...runtime, pendingOutboxEvents, pendingIncomingEvents };
+  }));
+  router.put('/cloud-sync', authorize(Actions.ManageSystem), send(async (req) => {
+    if (appMode() !== 'POS') throw Object.assign(new Error('Cloud synchronization settings are available only on a POS deployment.'), { statusCode: 404 });
+    const body = bodyObject(req); const before = publicSyncConfig(await loadSyncConfig()); const saved = await saveSyncConfig(body);
+    await recordAuditEvent({ action: 'cloud_sync_settings_changed', actor: requireUser(req), entity: { type: 'platform_setting', id: 'cloud-sync', label: 'Cloud Synchronization' }, before, after: publicSyncConfig(saved), metadata: { tokenReplaced: typeof body.token === 'string' && Boolean(body.token.trim()) } });
+    return publicSyncConfig(saved);
+  }));
+  router.post('/cloud-sync/test', authorize(Actions.ManageSystem), send(async (req) => {
+    if (appMode() !== 'POS') throw Object.assign(new Error('Cloud synchronization settings are available only on a POS deployment.'), { statusCode: 404 });
+    const body = bodyObject(req); const existing = await loadSyncConfig(); const candidate = validateSyncSettings({ ...existing, ...body, enabled: typeof body.enabled === 'boolean' ? body.enabled : existing.enabled });
+    const token = typeof body.token === 'string' && body.token.trim() ? body.token.trim() : existing.token;
+    if (!candidate.cloudSyncBaseUrl) throw new HttpError(400, 'Cloud Sync URL is required.');
+    if (!token) throw new HttpError(400, 'Sync API Token is required.');
+    try {
+      const response = await fetch(syncEndpoint(candidate, '/cloud/sync/test'), { method: 'POST', headers: { 'content-type': 'application/json', 'x-sync-token': token }, body: JSON.stringify({ storeId: candidate.storeId, deviceId: candidate.deviceId, protocolVersion: '1' }), signal: AbortSignal.timeout(candidate.requestTimeoutMs) });
+      if (response.status === 401 || response.status === 403) throw new HttpError(response.status, 'Authentication failed.');
+      if (!response.ok) throw new HttpError(502, `Cloud sync API rejected the connection (HTTP ${response.status}).`);
+      const responseBody = await response.json() as any; const result = responseBody.data ?? responseBody;
+      if (result.compatible === false) throw new HttpError(409, 'Cloud API version is incompatible.');
+      return { success: true, message: 'Connection successful', cloud: candidate.cloudSyncBaseUrl, store: result.storeName ?? result.storeId ?? candidate.storeId, device: result.deviceId ?? candidate.deviceId, api: 'Compatible' };
+    } catch (error) {
+      if (error instanceof HttpError) throw error;
+      throw new HttpError(502, 'Cloud URL cannot be reached.');
+    }
+  }));
   return router;
 }
 
