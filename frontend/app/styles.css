@@ -330,7 +330,15 @@ button { min-height: var(--tap); touch-action: manipulation; }
 .progress-row { border-top: 1px solid var(--line); padding: 0.8rem 0; }
 .progress-row small, .menu-admin-row small { display: block; color: var(--muted); margin-top: 0.2rem; }
 .menu-admin-list { grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr)); }
-.menu-category-admin { display: grid; gap: 0.75rem; }
+.menu-category-admin { display: grid; gap: 0.75rem; overflow: hidden; }
+.menu-category-header { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; margin: calc(clamp(0.95rem, 2.5vw, 1.2rem) * -1) calc(clamp(0.95rem, 2.5vw, 1.2rem) * -1) 0; padding: 0.72rem clamp(0.95rem, 2.5vw, 1.2rem); border-bottom: 1px solid #cfe0ed; background: linear-gradient(135deg, #eef8f8, #edf4ff); }
+.menu-category-header h3 { min-width: 0; margin: 0; overflow-wrap: anywhere; }
+.menu-category-actions { display: flex; flex: 0 0 auto; gap: 0.35rem; }
+.menu-category-action { display: inline-grid; place-items: center; width: 2.25rem; min-height: 2.25rem; padding: 0; border: 1px solid rgb(15 118 110 / 18%); border-radius: 0.65rem; background: #fff; color: var(--primary); box-shadow: 0 3px 10px rgb(15 23 42 / 7%); cursor: pointer; transition: border-color 140ms ease, background 140ms ease, color 140ms ease, transform 140ms ease; }
+.menu-category-action svg { width: 1rem; height: 1rem; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.menu-category-action:hover { border-color: rgb(15 118 110 / 42%); background: #f8fffe; transform: translateY(-1px); }
+.menu-category-action.danger { border-color: rgb(220 38 38 / 18%); color: var(--danger); }
+.menu-category-action.danger:hover { border-color: rgb(220 38 38 / 42%); background: #fff7f7; }
 .menu-admin-row { border-top: 1px solid var(--line); padding-top: 0.75rem; }
 .alert-card.warning { border-left: 0.45rem solid var(--warning); }
 .alert-card.critical { border-left: 0.45rem solid var(--danger); }

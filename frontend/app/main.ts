@@ -1455,23 +1455,31 @@ async function renderMenuAdmin(): Promise<HTMLElement> {
   if (!categories.length) list.append(emptyState('No categories yet. Create one to start building the menu.'));
   for (const category of categories) {
     const card = el('article', 'card menu-category-admin');
+    const categoryHeader = el('div', 'menu-category-header');
     const heading = el('h3', '', `${category.name} (${category.items.length})`);
-    const categoryActions = el('div', 'menu-admin-actions');
-    const renameCategory = el('button', 'secondary', 'Rename');
+    const categoryActions = el('div', 'menu-category-actions');
+    const renameCategory = el('button', 'menu-category-action', '');
     renameCategory.type = 'button';
+    renameCategory.setAttribute('aria-label', `Rename ${category.name} category`);
+    renameCategory.title = 'Rename category';
+    renameCategory.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4l11-11a2.8 2.8 0 0 0-4-4L4 16v4Z"/><path d="m13.5 6.5 4 4"/></svg>';
     renameCategory.addEventListener('click', async () => {
       const name = window.prompt('Category name', category.name)?.trim();
       if (!name || name === category.name) return;
       await runMenuAction('Menu category could not be renamed', () => apiClient.updateMenuCategory(category.id, { name }));
     });
-    const deleteCategory = el('button', 'secondary danger', 'Delete category');
+    const deleteCategory = el('button', 'menu-category-action danger', '');
     deleteCategory.type = 'button';
+    deleteCategory.setAttribute('aria-label', `Delete ${category.name} category`);
+    deleteCategory.title = 'Delete category';
+    deleteCategory.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m3 0-1 13H7L6 7m4 4v5m4-5v5"/></svg>';
     deleteCategory.addEventListener('click', async () => {
       if (!window.confirm(`Delete ${category.name} and its menu items?`)) return;
       await runMenuAction('Menu category could not be deleted', () => apiClient.deleteMenuCategory(category.id));
     });
     categoryActions.append(renameCategory, deleteCategory);
-    card.append(heading, categoryActions);
+    categoryHeader.append(heading, categoryActions);
+    card.append(categoryHeader);
     if (!category.items.length) card.append(emptyState('No menu items in this category.'));
     for (const item of category.items) {
       const row = el('div', 'menu-admin-row');
