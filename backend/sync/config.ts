@@ -22,6 +22,16 @@ export interface ResolvedSyncConfig extends StoredSyncSettings {
   configured: boolean;
 }
 
+/** The protocol route catalogue is shared by the worker and diagnostics UI. */
+export const SYNC_ENDPOINTS = {
+  test: { label: 'Connection test', method: 'POST', path: '/cloud/sync/test' },
+  push: { label: 'Push', method: 'POST', path: '/cloud/sync/events' },
+  pull: { label: 'Incoming pull', method: 'GET', path: '/cloud/sync/incoming' },
+  acknowledgement: { label: 'Acknowledgement', method: 'POST', path: '/cloud/sync/incoming/ack' },
+  heartbeat: { label: 'Heartbeat', method: 'POST', path: '/cloud/sync/heartbeat' },
+} as const;
+export const LOCAL_SYNC_PROTOCOL_VERSION = '1';
+
 type EncryptedSecret = { version: 1; iv: string; tag: string; ciphertext: string };
 const SETTINGS_KEY = 'local-pos';
 const DEFAULTS: StoredSyncSettings = { enabled: false, cloudSyncBaseUrl: null, storeId: 'default', deviceId: 'default', pushIntervalMs: 30_000, pollIntervalMs: 10_000, requestTimeoutMs: 8_000, batchSize: 100, successRetentionDays: 30 };
@@ -110,3 +120,6 @@ export async function saveSyncConfig(input: any): Promise<ResolvedSyncConfig> {
 }
 export function publicSyncConfig(config: ResolvedSyncConfig) { const { token: _token, ...safe } = config; return safe; }
 export const syncEndpoint = (config: Pick<ResolvedSyncConfig, 'cloudSyncBaseUrl'>, path: string) => `${config.cloudSyncBaseUrl}${path.startsWith('/') ? path : `/${path}`}`;
+export function resolvedSyncEndpoints(config: Pick<ResolvedSyncConfig, 'cloudSyncBaseUrl'>) {
+  return Object.fromEntries(Object.entries(SYNC_ENDPOINTS).map(([key, endpoint]) => [key, { ...endpoint, url: config.cloudSyncBaseUrl ? syncEndpoint(config, endpoint.path) : null }]));
+}

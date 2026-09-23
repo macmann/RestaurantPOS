@@ -663,6 +663,9 @@ export class RestaurantApiClient {
   getCloudConnectionInformation() { return this.request<any>('/api/settings/cloud-connection'); }
   updateCloudSyncSettings(input: unknown) { return this.request<any>('/api/settings/cloud-sync', { method: 'PUT', body: input, operationKind: 'idempotent_write' }); }
   testCloudSyncConnection(input: unknown) { return this.request<any>('/api/settings/cloud-sync/test', { method: 'POST', body: input }); }
+  runCloudSync() { return this.request<any>('/api/settings/cloud-sync/run', { method: 'POST' }); }
+  getCloudSyncDiagnostics() { return this.request<any>('/api/settings/cloud-sync/diagnostics'); }
+  clearCloudSyncError() { return this.request<any>('/api/settings/cloud-sync/error', { method: 'DELETE' }); }
 
   getDailySummaryReport(filters: ReportFilters = {}): Promise<DailySummaryReport> {
     return this.request<DailySummaryReport>(`/api/reports/daily-summary${queryString(filters as Record<string, unknown>)}`);
