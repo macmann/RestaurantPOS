@@ -11,7 +11,7 @@ export interface DatabaseClient {
   release?(): void;
 }
 
-interface PoolLike extends DatabaseClient {
+export interface PoolLike extends DatabaseClient {
   connect(): Promise<DatabaseClient>;
   end(): Promise<void>;
 }
@@ -73,6 +73,28 @@ export function readDatabaseConfig(env: ProcessEnv = process.env): DatabaseConfi
   };
 }
 
+export function readAppMode(env: ProcessEnv = process.env): 'POS' | 'CLOUD' {
+  const appMode = (env.APP_MODE ?? 'POS').toUpperCase();
+  if (appMode !== 'POS' && appMode !== 'CLOUD') {
+    throw new Error(`Unsupported APP_MODE '${env.APP_MODE}'. Expected POS or CLOUD.`);
+  }
+  return appMode;
+}
+
+export function createPoolConfig(env: ProcessEnv = process.env): Record<string, unknown> {
+  const config = readDatabaseConfig(env);
+  return {
+    ...(config.connectionString ? { connectionString: config.connectionString } : {
+      host: config.host,
+      port: config.port,
+      database: config.database,
+      user: config.user,
+      password: config.password,
+    }),
+    ssl: config.ssl ? { rejectUnauthorized: false } : false,
+  };
+}
+
 function requirePgPool(): PgPoolConstructor {
   const pg = require('pg') as { Pool: PgPoolConstructor };
   return pg.Pool;
@@ -85,21 +107,8 @@ export function isSqlRepositoryEnabled(): boolean {
 
 export function getDatabasePool(): PoolLike {
   if (pool) return pool;
-  const config = readDatabaseConfig();
   const Pool = requirePgPool();
-  pool = new Pool({
-    ...(config.connectionString ? { connectionString: config.connectionString } : {
-      host: config.host,
-      port: config.port,
-      database: config.database,
-      user: config.user,
-      password: config.password,
-    }),
-    ssl: config.ssl ? { rejectUnauthorized: false } : false,
-    // Used by database triggers to distinguish local operational writes from
-    // cloud mirror writes.  It does not change which database the POS uses.
-    options: `-c restaurant_pos.app_mode=${(process.env.APP_MODE ?? 'POS').toUpperCase()}`,
-  });
+  pool = new Pool(createPoolConfig());
   return pool;
 }
 
@@ -111,7 +120,7 @@ export async function query<Row = Record<string, unknown>>(text: string, params?
   return getCurrentDatabaseClient().query<Row>(text, params);
 }
 
-export async function withTransaction<T>(callback: (client: DatabaseClient) => Promise<T>): Promise<T> {
+export async function withTransaction<T>(callback: (client: DatabaseClient) => Promise<T>, transactionPool?: PoolLike): Promise<T> {
   if (!isSqlRepositoryEnabled()) {
     const noopClient: DatabaseClient = {
       async query() {
@@ -124,9 +133,13 @@ export async function withTransaction<T>(callback: (client: DatabaseClient) => P
   const existing = txStorage.getStore();
   if (existing) return callback(existing);
 
-  const client = await getDatabasePool().connect();
+  const client = await (transactionPool ?? getDatabasePool()).connect();
   try {
     await client.query('BEGIN');
+    // APP_MODE is a closed set, so interpolating it here is safe. PostgreSQL's
+    // SET statement does not accept a bind parameter for the setting value.
+    const appMode = readAppMode();
+    await client.query(`SET LOCAL restaurant_pos.app_mode = '${appMode}'`);
     const result = await txStorage.run(client, () => callback(client));
     await client.query('COMMIT');
     return result;

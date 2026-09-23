@@ -1,4 +1,4 @@
-import { query } from './client';
+import { query, withTransaction } from './client';
 
 export type RepositoryNamespace = 'orders' | 'billing:bills' | 'billing:debt' | 'billing:audit' | 'inventory:items' | 'inventory:movements' | 'inventory:recipes' | 'inventory:deductions' | 'menu:categories' | 'menu:items' | 'kds:items' | 'kds:progress-history' | 'audit:events' | 'users' | 'auth:sessions' | 'tables' | 'table:sessions' | 'network:idempotency' | 'settings:pos' | 'settings:inventory' | 'settings:cloud-sync' | 'secrets:cloud-sync';
 
@@ -25,15 +25,17 @@ export async function ensureRepositoryStore(): Promise<void> {
 }
 
 export async function putRecord<T extends object>(namespace: RepositoryNamespace, recordKey: string, payload: T): Promise<T> {
-  await ensureRepositoryStore();
-  const now = new Date().toISOString();
-  await query(
-    `INSERT INTO repository_records (namespace, record_key, payload, created_at, updated_at)
-     VALUES ($1, $2, $3::jsonb, $4, $4)
-     ON CONFLICT (namespace, record_key)
-     DO UPDATE SET payload = EXCLUDED.payload, updated_at = $4`,
-    [namespace, recordKey, JSON.stringify(payload), now],
-  );
+  await withTransaction(async () => {
+    await ensureRepositoryStore();
+    const now = new Date().toISOString();
+    await query(
+      `INSERT INTO repository_records (namespace, record_key, payload, created_at, updated_at)
+       VALUES ($1, $2, $3::jsonb, $4, $4)
+       ON CONFLICT (namespace, record_key)
+       DO UPDATE SET payload = EXCLUDED.payload, updated_at = $4`,
+      [namespace, recordKey, JSON.stringify(payload), now],
+    );
+  });
   return structuredClone(payload);
 }
 
@@ -44,9 +46,11 @@ export async function getRecord<T>(namespace: RepositoryNamespace, recordKey: st
 }
 
 export async function deleteRecord(namespace: RepositoryNamespace, recordKey: string): Promise<boolean> {
-  await ensureRepositoryStore();
-  const result = await query('DELETE FROM repository_records WHERE namespace = $1 AND record_key = $2', [namespace, recordKey]);
-  return (result.rowCount ?? 0) > 0;
+  return withTransaction(async () => {
+    await ensureRepositoryStore();
+    const result = await query('DELETE FROM repository_records WHERE namespace = $1 AND record_key = $2', [namespace, recordKey]);
+    return (result.rowCount ?? 0) > 0;
+  });
 }
 
 export async function listRecords<T>(namespace: RepositoryNamespace): Promise<T[]> {
@@ -56,6 +60,8 @@ export async function listRecords<T>(namespace: RepositoryNamespace): Promise<T[
 }
 
 export async function clearRepositoryStore(): Promise<void> {
-  await ensureRepositoryStore();
-  await query('DELETE FROM repository_records');
+  await withTransaction(async () => {
+    await ensureRepositoryStore();
+    await query('DELETE FROM repository_records');
+  });
 }
