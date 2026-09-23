@@ -484,11 +484,49 @@ button { min-height: var(--tap); touch-action: manipulation; }
 .receipt-preview-paper .receipt-preview-paper__table { padding: 0.55rem; border: 2px solid var(--ink); border-radius: 0.55rem; background: #fef08a; color: #111827; font-size: 1.2rem; font-weight: 950; }
 .settings-help-card ol { margin: 0; padding-left: 1.15rem; color: var(--muted); line-height: 1.55; }
 
+/* Cloud synchronization has a denser information model than the shared admin
+   form. Keep its sections explicit so controls never compete for grid space. */
+.cloud-sync-panel { gap: 1.15rem; }
+.sync-health-card { gap: 1rem; overflow: hidden; }
+.sync-health-card__heading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.sync-health-card__heading h3 { margin: 0.16rem 0 0; font-size: clamp(1.25rem, 2vw, 1.6rem); }
+.sync-status-pill { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 0.48rem; padding: 0.5rem 0.75rem; border-radius: 999px; background: #f1f5f9; color: #475569; font-size: 0.76rem; font-weight: 950; letter-spacing: 0.04em; text-transform: uppercase; }
+.sync-status-pill i { width: 0.55rem; height: 0.55rem; border-radius: 50%; background: #94a3b8; box-shadow: 0 0 0 0.22rem rgb(148 163 184 / 16%); }
+.sync-status-pill--enabled { background: #dcfce7; color: #166534; }
+.sync-status-pill--enabled i { background: #22c55e; box-shadow: 0 0 0 0.22rem rgb(34 197 94 / 16%); }
+.sync-health-card .settings-overview-card { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.sync-health-card .settings-overview-card__item { min-height: 6.75rem; align-content: center; box-shadow: none; }
+.sync-health-card .settings-overview-card__item strong { font-size: clamp(1.05rem, 1.8vw, 1.45rem); }
+.sync-error-summary { display: flex; align-items: baseline; gap: 0.65rem; margin: 0; padding: 0.72rem 0.85rem; border-radius: var(--radius-sm); background: var(--surface-soft); color: var(--muted); font-size: 0.86rem; }
+.sync-error-summary strong { color: #475569; }
+.cloud-sync-form.staff-form { display: grid; grid-template-columns: 1fr; gap: 1.15rem; align-items: stretch; }
+.cloud-sync-form__intro { display: flex; align-items: center; justify-content: space-between; gap: 1.5rem; padding-bottom: 1rem; border-bottom: 1px solid var(--line); }
+.cloud-sync-form__intro h3 { margin: 0.15rem 0 0.25rem; font-size: clamp(1.25rem, 2vw, 1.55rem); }
+.cloud-sync-form__intro p:not(.eyebrow) { max-width: 42rem; margin: 0; color: var(--muted); line-height: 1.5; }
+.cloud-sync-form__intro .settings-toggle { flex: 0 0 min(100%, 20rem); padding: 0.8rem 0.9rem; }
+.cloud-sync-form__intro .settings-toggle span { display: grid; gap: 0.14rem; }
+.cloud-sync-form__intro .settings-toggle small { color: var(--muted); font-weight: 750; }
+.cloud-sync-fieldset { display: grid; min-width: 0; gap: 0.9rem; margin: 0; border: 0; border-radius: var(--radius-md); padding: 1rem; background: var(--surface-soft); }
+.cloud-sync-fieldset legend { padding: 0 0.35rem; color: var(--ink); font-size: 1rem; font-weight: 950; letter-spacing: -0.02em; }
+.cloud-sync-fieldset--connection { grid-template-columns: minmax(16rem, 1.55fr) repeat(2, minmax(9rem, 0.7fr)); }
+.cloud-sync-field--token { grid-column: 1 / -1; }
+.cloud-sync-fieldset--schedule { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.cloud-sync-fieldset label { position: relative; min-width: 0; }
+.cloud-sync-fieldset label > small { min-height: 1.1em; color: var(--muted); font-size: 0.75rem; font-weight: 750; overflow-wrap: anywhere; }
+.cloud-sync-fieldset .field-unit { position: absolute; top: 0.08rem; right: 0; color: var(--muted); font-size: 0.7rem; font-weight: 750; text-transform: uppercase; }
+.cloud-sync-form .settings-save-bar { grid-column: auto; margin-top: 0; }
+.cloud-sync-form .secondary-button { border: 1px solid #bfdbfe; background: #eff6ff; color: #1d4ed8; box-shadow: none; }
+.cloud-sync-form .secondary-button:hover { border-color: #93c5fd; background: #dbeafe; box-shadow: none; }
+
 
 @media (max-width: 1200px) {
   .bill-settings-panel { grid-template-columns: 1fr; }
   .settings-sidebar { position: static; grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr)); }
   .settings-field-grid--station { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .sync-health-card .settings-overview-card { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .cloud-sync-fieldset--connection { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .cloud-sync-field--url, .cloud-sync-field--token { grid-column: 1 / -1; }
+  .cloud-sync-fieldset--schedule { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
 @media (max-width: 760px) {
@@ -499,6 +537,18 @@ button { min-height: var(--tap); touch-action: manipulation; }
   .station-settings-card__order { width: 2rem; height: 2rem; }
   .settings-save-bar { bottom: 0.4rem; }
   .settings-save-bar button { width: 100%; }
+  .sync-health-card__heading, .cloud-sync-form__intro { align-items: stretch; flex-direction: column; }
+  .sync-status-pill { align-self: flex-start; }
+  .sync-health-card .settings-overview-card { grid-template-columns: 1fr 1fr; }
+  .cloud-sync-form__intro .settings-toggle { flex-basis: auto; width: 100%; }
+  .cloud-sync-fieldset--connection, .cloud-sync-fieldset--schedule { grid-template-columns: 1fr; }
+  .cloud-sync-field--url, .cloud-sync-field--token { grid-column: auto; }
+  .cloud-sync-form .settings-save-bar { gap: 0.65rem; }
+  .sync-error-summary { align-items: flex-start; flex-direction: column; gap: 0.2rem; }
+}
+
+@media (max-width: 430px) {
+  .sync-health-card .settings-overview-card { grid-template-columns: 1fr; }
 }
 
 .sales-history-panel { gap: 1rem; }
