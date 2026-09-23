@@ -1587,35 +1587,47 @@ async function renderLocalizationSettings(): Promise<HTMLElement> {
 async function renderLocalCloudSyncSettings(): Promise<HTMLElement> {
   const settings = await apiClient.getCloudSyncSettings();
   const section = page('Cloud Synchronization', 'Configure the outbound-only connection between this local POS and the cloud service.', ['Secure token storage', 'Environment fallback', 'Live worker reload']);
+  section.classList.add('cloud-sync-page');
   const panel = el('section', 'admin-panel cloud-sync-panel');
   const source = (key: string) => settings.sources?.[key] === 'platform' ? 'Platform Settings' : settings.sources?.[key] === 'environment' ? 'Environment' : 'Built-in default';
   const timestamp = (value?: string) => value ? new Date(value).toLocaleString() : 'Never';
   panel.innerHTML = `
     <article class="card admin-card sync-health-card">
-      <div><p class="eyebrow">Current synchronization health</p><h3>Status: ${escapeHtml(settings.status)}</h3></div>
-      <div class="settings-overview-card">
-        <div><span>Last Successful Push</span><strong>${escapeHtml(timestamp(settings.lastSuccessfulPush))}</strong></div>
-        <div><span>Last Successful Pull</span><strong>${escapeHtml(timestamp(settings.lastSuccessfulPull))}</strong></div>
-        <div><span>Last Heartbeat</span><strong>${escapeHtml(timestamp(settings.lastHeartbeat))}</strong></div>
-        <div><span>Pending Outbox Events</span><strong>${Number(settings.pendingOutboxEvents ?? 0)}</strong></div>
-        <div><span>Pending Incoming Events</span><strong>${Number(settings.pendingIncomingEvents ?? 0)}</strong></div>
+      <div class="sync-health-card__heading">
+        <div><p class="eyebrow">Current synchronization health</p><h3>Cloud worker status</h3></div>
+        <span class="sync-status-pill ${settings.enabled ? 'sync-status-pill--enabled' : ''}"><i aria-hidden="true"></i>${escapeHtml(settings.status)}</span>
       </div>
-      <p class="muted">Last Sync Error: ${escapeHtml(settings.lastError ?? 'None')}</p>
+      <div class="settings-overview-card">
+        <div class="settings-overview-card__item"><span>Last successful push</span><strong>${escapeHtml(timestamp(settings.lastSuccessfulPush))}</strong></div>
+        <div class="settings-overview-card__item"><span>Last successful pull</span><strong>${escapeHtml(timestamp(settings.lastSuccessfulPull))}</strong></div>
+        <div class="settings-overview-card__item"><span>Last heartbeat</span><strong>${escapeHtml(timestamp(settings.lastHeartbeat))}</strong></div>
+        <div class="settings-overview-card__item"><span>Pending outbox</span><strong>${Number(settings.pendingOutboxEvents ?? 0)}</strong><small>events waiting to push</small></div>
+        <div class="settings-overview-card__item"><span>Pending incoming</span><strong>${Number(settings.pendingIncomingEvents ?? 0)}</strong><small>events waiting to apply</small></div>
+      </div>
+      <p class="sync-error-summary"><strong>Last sync error</strong><span>${escapeHtml(settings.lastError ?? 'None')}</span></p>
     </article>
     <article class="card admin-card settings-card settings-card--wide">
       <form class="cloud-sync-form staff-form">
-        <label class="checkbox-row"><input type="checkbox" name="enabled" ${settings.enabled ? 'checked' : ''} /> Enable Cloud Synchronization</label>
-        <label>Cloud Sync URL<input type="url" name="cloudSyncBaseUrl" value="${escapeHtml(settings.cloudSyncBaseUrl ?? '')}" placeholder="https://cloud.example.com" /><small>Source: ${source('cloudSyncBaseUrl')}</small></label>
-        <label>Store ID<input name="storeId" value="${escapeHtml(settings.storeId)}" required /><small>Source: ${source('storeId')}</small></label>
-        <label>Device ID<input name="deviceId" value="${escapeHtml(settings.deviceId)}" required /><small>Source: ${source('deviceId')}</small></label>
-        <label>Sync API Token<input type="password" name="token" autocomplete="new-password" placeholder="${settings.tokenConfigured ? '••••••••••••••••' : 'Enter token'}" /><small>${settings.tokenConfigured ? `Token configured · Source: ${source('token')}. Leave blank to keep it.` : 'No token configured.'}</small></label>
-        <label>Push Interval (seconds)<input type="number" name="pushIntervalSeconds" min="5" value="${settings.pushIntervalMs / 1000}" required /></label>
-        <label>Incoming Poll Interval (seconds)<input type="number" name="pollIntervalSeconds" min="5" value="${settings.pollIntervalMs / 1000}" required /></label>
-        <label>Request Timeout (seconds)<input type="number" name="requestTimeoutSeconds" min="1" value="${settings.requestTimeoutMs / 1000}" required /></label>
-        <label>Sync Batch Size<input type="number" name="batchSize" min="1" max="1000" value="${settings.batchSize}" required /></label>
-        <label>Successful Sync Event Retention (days)<input type="number" name="successRetentionDays" min="1" max="3650" value="${settings.successRetentionDays}" required /></label>
-        <div class="settings-save-bar"><button type="button" class="secondary-button test-sync">Test Connection</button><button type="submit">Save</button></div>
-        <p class="form-error sync-result" aria-live="polite" hidden></p>
+        <div class="cloud-sync-form__intro">
+          <div><p class="eyebrow">Synchronization settings</p><h3>Connect this POS to the cloud</h3><p>Changes are securely stored and picked up by the sync worker on its next cycle.</p></div>
+          <label class="checkbox-row settings-toggle"><input type="checkbox" name="enabled" ${settings.enabled ? 'checked' : ''} /><span><strong>Enable cloud sync</strong><small>Start push and pull cycles after saving.</small></span></label>
+        </div>
+        <fieldset class="cloud-sync-fieldset cloud-sync-fieldset--connection">
+          <legend>Connection details</legend>
+          <label class="cloud-sync-field--url">Cloud Sync URL<input type="url" name="cloudSyncBaseUrl" value="${escapeHtml(settings.cloudSyncBaseUrl ?? '')}" placeholder="https://cloud.example.com" /><small>Source: ${source('cloudSyncBaseUrl')}</small></label>
+          <label>Store ID<input name="storeId" value="${escapeHtml(settings.storeId)}" required /><small>Source: ${source('storeId')}</small></label>
+          <label>Device ID<input name="deviceId" value="${escapeHtml(settings.deviceId)}" required /><small>Source: ${source('deviceId')}</small></label>
+          <label class="cloud-sync-field--token">Sync API Token<input type="password" name="token" autocomplete="new-password" placeholder="${settings.tokenConfigured ? '••••••••••••••••' : 'Enter token'}" /><small>${settings.tokenConfigured ? `Token configured · Source: ${source('token')}. Leave blank to keep it.` : 'No token configured.'}</small></label>
+        </fieldset>
+        <fieldset class="cloud-sync-fieldset cloud-sync-fieldset--schedule">
+          <legend>Worker schedule &amp; limits</legend>
+          <label>Push interval <span class="field-unit">seconds</span><input type="number" name="pushIntervalSeconds" min="5" value="${settings.pushIntervalMs / 1000}" required /></label>
+          <label>Incoming poll <span class="field-unit">seconds</span><input type="number" name="pollIntervalSeconds" min="5" value="${settings.pollIntervalMs / 1000}" required /></label>
+          <label>Request timeout <span class="field-unit">seconds</span><input type="number" name="requestTimeoutSeconds" min="1" value="${settings.requestTimeoutMs / 1000}" required /></label>
+          <label>Batch size <span class="field-unit">events</span><input type="number" name="batchSize" min="1" max="1000" value="${settings.batchSize}" required /></label>
+          <label>Event retention <span class="field-unit">days</span><input type="number" name="successRetentionDays" min="1" max="3650" value="${settings.successRetentionDays}" required /></label>
+        </fieldset>
+        <div class="settings-save-bar"><p class="form-error sync-result" aria-live="polite" hidden></p><button type="button" class="secondary-button test-sync">Test connection</button><button type="submit">Save settings</button></div>
       </form>
     </article>`;
   const form = panel.querySelector<HTMLFormElement>('.cloud-sync-form')!; const result = form.querySelector<HTMLElement>('.sync-result')!;
