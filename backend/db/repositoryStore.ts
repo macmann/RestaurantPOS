@@ -1,6 +1,6 @@
 import { query } from './client';
 
-export type RepositoryNamespace = 'orders' | 'billing:bills' | 'billing:debt' | 'billing:audit' | 'inventory:items' | 'inventory:movements' | 'inventory:recipes' | 'inventory:deductions' | 'menu:categories' | 'menu:items' | 'kds:items' | 'kds:progress-history' | 'audit:events' | 'users' | 'auth:sessions' | 'tables' | 'table:sessions' | 'network:idempotency' | 'settings:pos' | 'settings:inventory';
+export type RepositoryNamespace = 'orders' | 'billing:bills' | 'billing:debt' | 'billing:audit' | 'inventory:items' | 'inventory:movements' | 'inventory:recipes' | 'inventory:deductions' | 'menu:categories' | 'menu:items' | 'kds:items' | 'kds:progress-history' | 'audit:events' | 'users' | 'auth:sessions' | 'tables' | 'table:sessions' | 'network:idempotency' | 'settings:pos' | 'settings:inventory' | 'settings:cloud-sync' | 'secrets:cloud-sync';
 
 export interface StoredRecord<T> {
   namespace: RepositoryNamespace;

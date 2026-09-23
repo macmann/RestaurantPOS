@@ -12,6 +12,12 @@ const syncAuth = (req: Request, _res: Response, next: NextFunction) => { try { r
 
 export function buildCloudRouter(): Router {
   const router = express.Router();
+  router.post('/sync/test', syncAuth, route(async (req, res) => {
+    const body: any = req.body ?? {};
+    const storeId = text(body.storeId, 'storeId');
+    const deviceId = text(body.deviceId, 'deviceId');
+    res.json({ data: { ok: true, storeId, storeName: storeId, deviceId, protocolVersion: '1', compatible: true } });
+  }));
   router.post('/sync/events', syncAuth, route(async (req, res) => res.json({ data: await receiveOutgoingBatch(((req.body as any)?.events ?? []) as SyncEvent[]) })));
   router.get('/sync/incoming', syncAuth, route(async (req, res) => res.json({ data: { events: await getIncomingEvents(text((req.query as any)?.storeId, 'storeId')) } })));
   router.post('/sync/incoming/ack', syncAuth, route(async (req, res) => { await acknowledgeIncoming(text((req.body as any)?.storeId, 'storeId'), (req.body as any)?.eventIds ?? []); res.json({ data: { ok: true } }); }));

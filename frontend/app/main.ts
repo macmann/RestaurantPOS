@@ -1584,6 +1584,47 @@ async function renderLocalizationSettings(): Promise<HTMLElement> {
   return section;
 }
 
+async function renderCloudSyncSettings(): Promise<HTMLElement> {
+  const settings = await apiClient.getCloudSyncSettings();
+  const section = page('Cloud Synchronization', 'Configure the outbound-only connection between this local POS and the cloud service.', ['Secure token storage', 'Environment fallback', 'Live worker reload']);
+  const panel = el('section', 'admin-panel cloud-sync-panel');
+  const source = (key: string) => settings.sources?.[key] === 'platform' ? 'Platform Settings' : settings.sources?.[key] === 'environment' ? 'Environment' : 'Built-in default';
+  const timestamp = (value?: string) => value ? new Date(value).toLocaleString() : 'Never';
+  panel.innerHTML = `
+    <article class="card admin-card sync-health-card">
+      <div><p class="eyebrow">Current synchronization health</p><h3>Status: ${escapeHtml(settings.status)}</h3></div>
+      <div class="settings-overview-card">
+        <div><span>Last Successful Push</span><strong>${escapeHtml(timestamp(settings.lastSuccessfulPush))}</strong></div>
+        <div><span>Last Successful Pull</span><strong>${escapeHtml(timestamp(settings.lastSuccessfulPull))}</strong></div>
+        <div><span>Last Heartbeat</span><strong>${escapeHtml(timestamp(settings.lastHeartbeat))}</strong></div>
+        <div><span>Pending Outbox Events</span><strong>${Number(settings.pendingOutboxEvents ?? 0)}</strong></div>
+        <div><span>Pending Incoming Events</span><strong>${Number(settings.pendingIncomingEvents ?? 0)}</strong></div>
+      </div>
+      <p class="muted">Last Sync Error: ${escapeHtml(settings.lastError ?? 'None')}</p>
+    </article>
+    <article class="card admin-card settings-card settings-card--wide">
+      <form class="cloud-sync-form staff-form">
+        <label class="checkbox-row"><input type="checkbox" name="enabled" ${settings.enabled ? 'checked' : ''} /> Enable Cloud Synchronization</label>
+        <label>Cloud Sync URL<input type="url" name="cloudSyncBaseUrl" value="${escapeHtml(settings.cloudSyncBaseUrl ?? '')}" placeholder="https://cloud.example.com" /><small>Source: ${source('cloudSyncBaseUrl')}</small></label>
+        <label>Store ID<input name="storeId" value="${escapeHtml(settings.storeId)}" required /><small>Source: ${source('storeId')}</small></label>
+        <label>Device ID<input name="deviceId" value="${escapeHtml(settings.deviceId)}" required /><small>Source: ${source('deviceId')}</small></label>
+        <label>Sync API Token<input type="password" name="token" autocomplete="new-password" placeholder="${settings.tokenConfigured ? '••••••••••••••••' : 'Enter token'}" /><small>${settings.tokenConfigured ? `Token configured · Source: ${source('token')}. Leave blank to keep it.` : 'No token configured.'}</small></label>
+        <label>Push Interval (seconds)<input type="number" name="pushIntervalSeconds" min="5" value="${settings.pushIntervalMs / 1000}" required /></label>
+        <label>Incoming Poll Interval (seconds)<input type="number" name="pollIntervalSeconds" min="5" value="${settings.pollIntervalMs / 1000}" required /></label>
+        <label>Request Timeout (seconds)<input type="number" name="requestTimeoutSeconds" min="1" value="${settings.requestTimeoutMs / 1000}" required /></label>
+        <label>Sync Batch Size<input type="number" name="batchSize" min="1" max="1000" value="${settings.batchSize}" required /></label>
+        <label>Successful Sync Event Retention (days)<input type="number" name="successRetentionDays" min="1" max="3650" value="${settings.successRetentionDays}" required /></label>
+        <div class="settings-save-bar"><button type="button" class="secondary-button test-sync">Test Connection</button><button type="submit">Save</button></div>
+        <p class="form-error sync-result" aria-live="polite" hidden></p>
+      </form>
+    </article>`;
+  const form = panel.querySelector<HTMLFormElement>('.cloud-sync-form')!; const result = form.querySelector<HTMLElement>('.sync-result')!;
+  const payload = () => { const data = new FormData(form); return { enabled: data.get('enabled') === 'on', cloudSyncBaseUrl: String(data.get('cloudSyncBaseUrl') ?? ''), storeId: String(data.get('storeId') ?? ''), deviceId: String(data.get('deviceId') ?? ''), token: String(data.get('token') ?? ''), pushIntervalMs: Number(data.get('pushIntervalSeconds')) * 1000, pollIntervalMs: Number(data.get('pollIntervalSeconds')) * 1000, requestTimeoutMs: Number(data.get('requestTimeoutSeconds')) * 1000, batchSize: Number(data.get('batchSize')), successRetentionDays: Number(data.get('successRetentionDays')) }; };
+  form.querySelector<HTMLButtonElement>('.test-sync')?.addEventListener('click', async () => { result.hidden = false; result.textContent = 'Testing connection…'; try { const response = await apiClient.testCloudSyncConnection(payload()); result.textContent = `${response.message} · Cloud: ${response.cloud} · Store: ${response.store} · Device: ${response.device} · API: ${response.api}`; } catch (error) { result.textContent = error instanceof Error ? error.message : 'Connection test failed.'; } });
+  form.addEventListener('submit', async (event) => { event.preventDefault(); result.hidden = false; result.textContent = 'Saving…'; try { await apiClient.updateCloudSyncSettings(payload()); result.textContent = 'Cloud synchronization settings saved. The worker will use them on its next cycle.'; } catch (error) { result.textContent = error instanceof Error ? error.message : 'Unable to save settings.'; } });
+  section.append(panel); return section;
+}
+
 async function renderBillSettings(): Promise<HTMLElement> {
   const section = page('Bill, prep station & printer settings', 'Configure receipt details and add any prep board such as salad bar, helper counter, kitchen, or bar.', ['Receipt header', 'Prep stations', 'Station printers']);
   const settings = normalizeOperationalSettings(await apiClient.getSettings());
@@ -3486,6 +3527,9 @@ async function renderRoute(generation: number): Promise<void> {
       break;
     case '#/bill-settings':
       content = await renderBillSettings();
+      break;
+    case '#/cloud-sync-settings':
+      content = await renderCloudSyncSettings();
       break;
     case '#/staff-settings':
       content = await renderStaffSettings();

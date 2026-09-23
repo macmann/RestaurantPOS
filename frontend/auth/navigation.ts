@@ -34,6 +34,7 @@ export const appRoutes: AppRoute[] = [
   { path: '#/superadmin', label: 'Super admin panel', section: 'admin', requiredPermissions: [Actions.ManageSystem] },
   { path: '#/localization', label: 'Localization', section: 'admin', requiredPermissions: [Actions.ManageSystem], navigationScope: 'superadmin_settings' },
   { path: '#/bill-settings', label: 'Bill & printer settings', section: 'admin', requiredPermissions: [Actions.ManageSystem], navigationScope: 'superadmin_settings' },
+  { path: '#/cloud-sync-settings', label: 'Cloud Synchronization', section: 'admin', requiredPermissions: [Actions.ManageSystem], navigationScope: 'superadmin_settings' },
   { path: '#/staff-settings', label: 'Staff & settings', section: 'admin', requiredPermissions: [Actions.ManageStaff], hideFromPrimaryWhenPermissions: [Actions.ManageSystem] },
 ];
 
