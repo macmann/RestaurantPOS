@@ -54,10 +54,10 @@ function record(operation: SyncOperation, started: number, success: boolean, cou
 }
 const headers = (config: ResolvedSyncConfig) => ({ 'content-type': 'application/json', 'x-sync-token': config.token! });
 
-async function push(config: ResolvedSyncConfig): Promise<PhaseResult> {
+async function push(config: ResolvedSyncConfig, includeDeferred = false): Promise<PhaseResult> {
   const started = Date.now(); let ids: string[] = [];
   try {
-    const events = await pendingOutbox(config.storeId, config.batchSize); ids = events.map((event) => event.eventId);
+    const events = await pendingOutbox(config.storeId, config.batchSize, includeDeferred); ids = events.map((event) => event.eventId);
     if (!events.length) { runtimeStatus.lastSuccessfulPush = new Date().toISOString(); runtimeStatus.phases.push = { state: 'HEALTHY', lastSuccess: runtimeStatus.lastSuccessfulPush }; record('PUSH', started, true, 0); return { success: true, attempted: 0, accepted: 0 }; }
     const response = await fetch(syncEndpoint(config, SYNC_ENDPOINTS.push.path), { method: SYNC_ENDPOINTS.push.method, headers: headers(config), body: JSON.stringify({ events }), signal: AbortSignal.timeout(config.requestTimeoutMs) });
     if (!response.ok) { const error = await diagnostic('PUSH', config, SYNC_ENDPOINTS.push, response); throw Object.assign(new Error(error.message), { diagnostic: error }); }
@@ -72,13 +72,19 @@ async function pull(config: ResolvedSyncConfig): Promise<PhaseResult> {
   try {
     const response = await fetch(`${syncEndpoint(config, SYNC_ENDPOINTS.pull.path)}?storeId=${encodeURIComponent(config.storeId)}`, { method: SYNC_ENDPOINTS.pull.method, headers: headers(config), signal: AbortSignal.timeout(config.requestTimeoutMs) });
     if (!response.ok) { const error = await diagnostic('PULL', config, SYNC_ENDPOINTS.pull, response); throw Object.assign(new Error(error.message), { diagnostic: error }); }
-    const body = await response.json() as { data?: { events?: any[] } }; const events = body.data?.events ?? []; const acknowledged: string[] = [];
-    for (const event of events) { if (String(event.store_id) !== config.storeId) throw new Error('Cloud returned an event for a different store.'); await applyIncomingLocally(event); acknowledged.push(event.event_id); }
+    const body = await response.json() as { data?: { events?: any[] } }; const events = body.data?.events ?? []; const acknowledged: string[] = []; let applied = 0; let ignoredAsStale = 0;
+    for (const event of events) {
+      if (String(event.store_id) !== config.storeId) throw new Error('Cloud returned an event for a different store.');
+      const outcome = await applyIncomingLocally(event);
+      if (outcome === 'APPLIED') applied += 1;
+      else ignoredAsStale += 1;
+      acknowledged.push(event.event_id);
+    }
     if (acknowledged.length) {
       const ack = await fetch(syncEndpoint(config, SYNC_ENDPOINTS.acknowledgement.path), { method: SYNC_ENDPOINTS.acknowledgement.method, headers: headers(config), body: JSON.stringify({ storeId: config.storeId, eventIds: acknowledged }), signal: AbortSignal.timeout(config.requestTimeoutMs) });
       if (!ack.ok) { const error = await diagnostic('ACKNOWLEDGEMENT', config, SYNC_ENDPOINTS.acknowledgement, ack); throw Object.assign(new Error(error.message), { diagnostic: error }); }
     }
-    runtimeStatus.lastSuccessfulPull = new Date().toISOString(); runtimeStatus.phases.pull = { state: 'HEALTHY', lastSuccess: runtimeStatus.lastSuccessfulPull }; record('PULL', started, true, events.length); return { success: true, received: events.length, applied: acknowledged.length, ignoredAsStale: 0 };
+    runtimeStatus.lastSuccessfulPull = new Date().toISOString(); runtimeStatus.phases.pull = { state: 'HEALTHY', lastSuccess: runtimeStatus.lastSuccessfulPull }; record('PULL', started, true, events.length); return { success: true, received: events.length, applied, ignoredAsStale };
   } catch (cause) { const error = (cause as any)?.diagnostic ?? await diagnostic('PULL', config, SYNC_ENDPOINTS.pull, undefined, cause); runtimeStatus.phases.pull = { state: 'ERROR', lastSuccess: runtimeStatus.lastSuccessfulPull, error }; record(error.operation, started, false, undefined, error); return { success: false, httpStatus: error.httpStatus, message: error.message }; }
 }
 async function heartbeat(config: ResolvedSyncConfig): Promise<PhaseResult> {
@@ -91,14 +97,14 @@ async function heartbeat(config: ResolvedSyncConfig): Promise<PhaseResult> {
   } catch (cause) { const error = (cause as any)?.diagnostic ?? await diagnostic('HEARTBEAT', config, SYNC_ENDPOINTS.heartbeat, undefined, cause); runtimeStatus.phases.heartbeat = { state: 'ERROR', lastSuccess: runtimeStatus.lastHeartbeat, error }; record('HEARTBEAT', started, false, undefined, error); return { success: false, httpStatus: error.httpStatus, message: error.message }; }
 }
 
-export async function runSyncCycle(options: { rejectIfRunning?: boolean } = {}): Promise<SyncCycleResult> {
+export async function runSyncCycle(options: { rejectIfRunning?: boolean; includeDeferred?: boolean } = {}): Promise<SyncCycleResult> {
   if (activeCycle) { if (options.rejectIfRunning) throw Object.assign(new Error('Synchronization already in progress.'), { statusCode: 409 }); return activeCycle; }
   activeCycle = (async () => {
     const started = Date.now(); const startedAt = new Date().toISOString(); runtimeStatus.running = true; runtimeStatus.state = 'SYNCING';
     try {
       const config = await loadSyncConfig();
       if (!config.enabled || !config.configured) { runtimeStatus.state = !config.enabled ? 'DISABLED' : 'NOT_CONFIGURED'; throw Object.assign(new Error(!config.enabled ? 'Cloud synchronization is disabled.' : 'Cloud synchronization is not configured.'), { statusCode: 400 }); }
-      const pushResult = await push(config); const pullResult = await pull(config); const heartbeatResult = await heartbeat(config);
+      const pushResult = await push(config, options.includeDeferred); const pullResult = await pull(config); const heartbeatResult = await heartbeat(config);
       const successes = [pushResult, pullResult, heartbeatResult].filter((phase) => phase.success).length;
       runtimeStatus.state = successes === 3 ? 'HEALTHY' : successes ? 'DEGRADED' : 'ERROR';
       if (successes === 3) clearLocalSyncDiagnosticError();
@@ -121,7 +127,7 @@ export async function getSyncDiagnostics(): Promise<Record<string, unknown>> {
   const config = await loadSyncConfig(); let queues = { outbox: [] as any[], incoming: [] as any[] };
   try {
     const [outbox, incoming] = await Promise.all([
-      query<any>(`SELECT event_id "eventId", entity_type "entityType", entity_id "entityId", operation, occurred_at "createdAt", attempt_count "attemptCount", next_attempt_at "nextRetry", LEFT(COALESCE(last_error,''),500) "lastError" FROM sync_outbox WHERE status IN ('PENDING','FAILED') ORDER BY occurred_at LIMIT 100`),
+      query<any>(`SELECT event_id "eventId", entity_type "entityType", entity_id "entityId", operation, occurred_at "createdAt", attempt_count "attemptCount", next_attempt_at "nextRetry", LEFT(COALESCE(last_error,''),500) "lastError" FROM sync_outbox WHERE store_id=$1 AND status IN ('PENDING','FAILED') ORDER BY occurred_at LIMIT 100`, [config.storeId]),
       query<any>(`SELECT event_id "eventId", event_type "entityType", created_at "createdAt", processed_at "processedAt", outcome FROM sync_inbox WHERE processed_at IS NULL ORDER BY created_at LIMIT 100`),
     ]); queues = { outbox: outbox.rows, incoming: incoming.rows };
   } catch { /* memory/test mode */ }

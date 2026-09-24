@@ -31,7 +31,7 @@ export function buildCloudRouter(): Router {
 
 export function buildManagerRouter(): Router {
   const router = express.Router();
-  const managerStore = (req: Request): string => req.user?.branchId ?? process.env.POS_STORE_ID ?? 'default';
+  const managerStore = (req: Request): string => resolveManagerStore(req.user?.branchId);
   const assertStore = (req: Request, record: { branchId: string } | null): void => {
     if (!record || record.branchId !== managerStore(req)) throw Object.assign(new Error('Menu record not found for this manager store.'), { statusCode: 404 });
   };
@@ -65,6 +65,12 @@ export function buildManagerRouter(): Router {
   router.delete('/menu/items/:id', authorize(Actions.ManageMenu), route(async(req,res)=>{const storeId=managerStore(req);const existing=await getItemById(text(req.params.id,'id'));assertStore(req,existing);const record=await withTransaction(async(client)=>{await AdminMenuApi.deleteItem(text(req.params.id,'id'),{source:'CLOUD_MANAGER',actorId:req.user?.id});return queueMenuEvent(client,storeId,'MENU_ITEM_DELETED',{...(existing as any),deletedAt:new Date().toISOString(),isActive:false,isAvailable:false,updatedAt:new Date().toISOString(),updatedSource:'CLOUD_MANAGER',updatedBy:req.user?.id});});res.json({data:record});}));
   router.get('/sync-health', route(async (req,res) => res.json({ data: await syncHealth(text((req.query as any)?.storeId ?? process.env.POS_STORE_ID ?? 'default','storeId')) })));
   return router;
+}
+
+/** A single-restaurant cloud deployment's configured store is authoritative.
+ * Falling back to the user's branch keeps multi-tenant/dev deployments working. */
+export function resolveManagerStore(userBranchId?: string, environment = process.env): string {
+  return environment.POS_STORE_ID?.trim() || userBranchId?.trim() || 'default';
 }
 
 export function buildCustomerRouter(): Router {

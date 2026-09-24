@@ -94,8 +94,8 @@ export async function receiveOutgoingBatch(events: SyncEvent[]): Promise<{ accep
   return { accepted, outcomes };
 }
 
-export async function pendingOutbox(storeId: string, limit: number): Promise<SyncEvent[]> {
-  const result = await query<any>(`SELECT event_id, store_id, entity_type, entity_id, operation, payload, occurred_at FROM sync_outbox WHERE store_id=$1 AND status IN ('PENDING','FAILED') AND next_attempt_at <= NOW() ORDER BY occurred_at LIMIT $2`, [storeId, limit]);
+export async function pendingOutbox(storeId: string, limit: number, includeDeferred = false): Promise<SyncEvent[]> {
+  const result = await query<any>(`SELECT event_id, store_id, entity_type, entity_id, operation, payload, occurred_at FROM sync_outbox WHERE store_id=$1 AND status IN ('PENDING','FAILED') AND ($3::boolean OR next_attempt_at <= NOW()) ORDER BY occurred_at LIMIT $2`, [storeId, limit, includeDeferred]);
   return result.rows.map((row) => ({ eventId: row.event_id, storeId: row.store_id, entityType: row.entity_type, entityId: row.entity_id, operation: row.operation, payload: row.payload, occurredAt: row.occurred_at }));
 }
 
@@ -115,10 +115,10 @@ export async function acknowledgeIncoming(storeId: string, ids: string[]): Promi
 }
 
 /** Persist before applying; a duplicate event is a no-op and is safe to acknowledge. */
-export async function applyIncomingLocally(event: any): Promise<void> {
-  await withTransaction(async (client) => {
+export async function applyIncomingLocally(event: any): Promise<SyncOutcome> {
+  return withTransaction(async (client) => {
     const inserted = await client.query('INSERT INTO sync_inbox(event_id,event_type,payload) VALUES($1,$2,$3) ON CONFLICT DO NOTHING RETURNING event_id', [event.event_id, event.event_type, event.payload]);
-    if (!inserted.rowCount) return;
+    if (!inserted.rowCount) return 'ALREADY_PROCESSED';
     const p = event.payload;
     if (event.event_type === 'ONLINE_ORDER_CREATED') {
       await client.query(`INSERT INTO online_orders(id,store_id,customer_id,customer_name,customer_phone,requested_pickup_at,status,total,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,'RECEIVED_BY_POS',$7,$8,$8) ON CONFLICT(id) DO NOTHING`, [p.id,p.storeId,p.customerId,p.customerName,p.customerPhone,p.requestedPickupAt ?? null,p.total,p.createdAt]);
@@ -128,9 +128,10 @@ export async function applyIncomingLocally(event: any): Promise<void> {
       const entityType = String(event.event_type).startsWith('MENU_ITEM_') ? 'menu_items' : 'menu_categories';
       const outcome = await applyMenuVersion(client, { eventId: event.event_id, storeId: event.store_id, entityType, entityId: p.id, payload: p }, true);
       await client.query('UPDATE sync_inbox SET processed_at=NOW(),outcome=$2 WHERE event_id=$1', [event.event_id, outcome]);
-      return;
+      return outcome;
     }
     await client.query(`UPDATE sync_inbox SET processed_at=NOW(),outcome='APPLIED' WHERE event_id=$1`, [event.event_id]);
+    return 'APPLIED';
   });
 }
 
