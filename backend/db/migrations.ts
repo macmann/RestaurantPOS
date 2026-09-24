@@ -13,6 +13,7 @@ const MIGRATIONS = [
   { id: INITIAL_MIGRATION_ID, file: INITIAL_MIGRATION_FILE },
   { id: '20260922090000_hybrid_sync', file: path.resolve(process.cwd(), 'schema/migrations/20260922090000_hybrid_sync.sql') },
   { id: '20260923100000_bidirectional_menu', file: path.resolve(process.cwd(), 'schema/migrations/20260923100000_bidirectional_menu.sql') },
+  { id: '20260924120000_repair_menu_sync_outbox', file: path.resolve(process.cwd(), 'schema/migrations/20260924120000_repair_menu_sync_outbox.sql') },
 ];
 
 async function ensureMigrationsTable(): Promise<void> {

@@ -53,6 +53,11 @@ async function runDatabasePersistenceE2e(): Promise<void> {
     ['20260923100000_bidirectional_menu'],
   );
   assert(menuMigration.rows[0]?.exists === true, 'Bidirectional menu migration should succeed and be recorded as applied.');
+  const menuRepairMigration = await query<{ exists: boolean }>(
+    'SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE id = $1) AS exists',
+    ['20260924120000_repair_menu_sync_outbox'],
+  );
+  assert(menuRepairMigration.rows[0]?.exists === true, 'The menu outbox repair migration should run even when the original menu migration was already recorded.');
   await clearRepositoryStore();
 
   await withTransaction(async (client) => {
@@ -106,6 +111,11 @@ async function runDatabasePersistenceE2e(): Promise<void> {
        WHERE NOT tgisinternal AND tgname IN ('menu_categories_sync_outbox', 'menu_items_sync_outbox')`,
     );
     assertEqual(duplicateTriggers.rows[0]?.count, '0', 'Duplicate base menu table sync triggers should remain removed.');
+    const repositoryTrigger = await client.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM pg_trigger
+       WHERE NOT tgisinternal AND tgname = 'repository_menu_sync_outbox'`,
+    );
+    assertEqual(repositoryTrigger.rows[0]?.count, '1', 'The real menu repository should have exactly one sync outbox trigger.');
   });
 
   await savePosOperationalSettings({
