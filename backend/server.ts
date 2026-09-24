@@ -1,4 +1,4 @@
-declare const process: { env: Record<string, string | undefined>; cwd(): string };
+declare const process: { env: Record<string, string | undefined>; cwd(): string; exitCode?: number };
 declare const require: { main?: unknown };
 declare const module: unknown;
 declare const __dirname: string;
@@ -48,7 +48,8 @@ import { appMode } from './sync/service';
 import { buildCloudRouter, buildCustomerRouter, buildManagerRouter } from './sync/router';
 import { SyncWorker, clearLocalSyncDiagnosticError, getLocalSyncRuntimeStatus, getSyncDiagnostics, runSyncCycle } from './sync/worker';
 import { LOCAL_SYNC_PROTOCOL_VERSION, loadSyncConfig, publicSyncConfig, resolvedSyncEndpoints, saveSyncConfig, SYNC_ENDPOINTS, syncEndpoint, validateSyncSettings } from './sync/config';
-import { query } from './db/client';
+import { isSqlRepositoryEnabled, query } from './db/client';
+import { runInitialRestaurantPosMigration } from './db/migrations';
 import { recordAuditEvent } from './audit/service';
 import { getCloudConnectionInformation } from './config/cloudConnection';
 import { isCloudDeployment } from './config/environment';
@@ -584,7 +585,11 @@ export function createApp() {
   return app;
 }
 
-export function startServer(): unknown {
+export async function startServer(): Promise<unknown> {
+  // The sync outbox and inbox are installed by database migrations. Running
+  // them before creating the app also prevents settings/bootstrap writes from
+  // racing a freshly provisioned (or upgraded) database.
+  if (isSqlRepositoryEnabled()) await runInitialRestaurantPosMigration();
   const port = Number(process.env.PORT ?? DEFAULT_PORT);
   const host = process.env.HOST ?? DEFAULT_HOST;
   const app = createApp();
@@ -601,5 +606,8 @@ export function startServer(): unknown {
 }
 
 if (require.main === module) {
-  startServer();
+  void startServer().catch((error) => {
+    console.error('Unable to start SYM POS:', error);
+    process.exitCode = 1;
+  });
 }

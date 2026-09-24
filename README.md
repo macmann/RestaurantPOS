@@ -285,6 +285,11 @@ npm run start:local
 
 `start:local` rebuilds before starting. Browse to <http://localhost:8080/>. All records disappear when the process exits.
 
+When a PostgreSQL repository is configured, every API start applies pending
+database migrations before accepting requests. This includes the durable menu
+sync outbox/inbox migrations, so an upgraded local POS or cloud deployment does
+not require a separate migration command before synchronization can resume.
+
 ### Development commands
 
 Run the API directly from TypeScript (build the frontend separately first if browser assets are needed):
