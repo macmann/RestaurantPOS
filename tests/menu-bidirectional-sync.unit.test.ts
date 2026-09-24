@@ -2,6 +2,7 @@ import { strict as assert } from 'node:assert';
 import { compareMenuVersions } from '../backend/sync/service';
 import { Actions, RolePermissions } from '../backend/auth/permissions';
 import { cloudOperationalMethodAllowed } from '../backend/server';
+import { resolveManagerStore } from '../backend/sync/router';
 
 type MenuRecord = { id: string; price: number; updatedAt: string; updatedSource: 'LOCAL_POS'|'CLOUD_MANAGER'; deletedAt?: string };
 const record = (price: number, updatedAt: string, updatedSource: MenuRecord['updatedSource'], deletedAt?: string): MenuRecord => ({ id:'item-shared',price,updatedAt,updatedSource,deletedAt });
@@ -53,4 +54,6 @@ assert.equal(cloudOperationalMethodAllowed('PATCH'),false);
 assert.equal(cloudOperationalMethodAllowed('DELETE'),false);
 
 assert.throws(()=>compareMenuVersions({updatedAt:'browser-garbage'},cloud),/valid trusted/);
+assert.equal(resolveManagerStore('user-branch', { POS_STORE_ID: 'main-floor' } as NodeJS.ProcessEnv), 'main-floor');
+assert.equal(resolveManagerStore('user-branch', {} as NodeJS.ProcessEnv), 'user-branch');
 console.log('Bidirectional menu LWW, tombstone, replay, outage, and authorization tests passed.');

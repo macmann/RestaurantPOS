@@ -408,7 +408,7 @@ function buildSettingsRouter(): Router {
     const config = await loadSyncConfig();
     let pendingOutboxEvents = 0, pendingIncomingEvents = 0;
     try {
-      const counts = await query<any>(`SELECT (SELECT COUNT(*) FROM sync_outbox WHERE status IN ('PENDING','FAILED'))::int outbox, (SELECT COUNT(*) FROM sync_inbox WHERE processed_at IS NULL)::int incoming`);
+      const counts = await query<any>(`SELECT (SELECT COUNT(*) FROM sync_outbox WHERE store_id=$1 AND status IN ('PENDING','FAILED'))::int outbox, (SELECT COUNT(*) FROM sync_inbox WHERE processed_at IS NULL)::int incoming`, [config.storeId]);
       pendingOutboxEvents = counts.rows[0]?.outbox ?? 0; pendingIncomingEvents = counts.rows[0]?.incoming ?? 0;
     } catch { /* Status remains useful in explicitly configured memory/test mode. */ }
     const runtime = getLocalSyncRuntimeStatus();
@@ -417,7 +417,9 @@ function buildSettingsRouter(): Router {
   }));
   router.post('/cloud-sync/run', authorize(Actions.ManageSystem), send(async () => {
     if (appMode() !== 'POS') throw Object.assign(new Error('Cloud synchronization is available only on a POS deployment.'), { statusCode: 404 });
-    return runSyncCycle({ rejectIfRunning: true });
+    // A manual request is an explicit retry, so it must not leave failed events
+    // behind merely because their automatic exponential-backoff time is future.
+    return runSyncCycle({ rejectIfRunning: true, includeDeferred: true });
   }));
   router.get('/cloud-sync/diagnostics', authorize(Actions.ManageSystem), send(async () => {
     if (appMode() !== 'POS') throw Object.assign(new Error('Cloud synchronization diagnostics are available only on a POS deployment.'), { statusCode: 404 });
