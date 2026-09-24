@@ -1700,8 +1700,9 @@ async function copyText(value: string, button: HTMLButtonElement): Promise<void>
 
 function renderCloudConnectionInformation(info: any): HTMLElement {
   const url = String(info.publicBaseUrl ?? 'Not configured');
+  const storeId = String(info.storeId.value);
   const defaults = info.recommendedLocalSettings;
-  const configuration = `Local POS Cloud Sync Configuration\n\nCloud Sync URL:\n${url}\n\nStore ID:\n[restaurant/location assignment]\n\nDevice ID:\nregister-server-1\n\nPush Interval:\n${defaults.pushIntervalSeconds}\n\nPoll Interval:\n${defaults.pollIntervalSeconds}\n\nRequest Timeout:\n${defaults.requestTimeoutSeconds}\n\nBatch Size:\n${defaults.batchSize}`;
+  const configuration = `Local POS Cloud Sync Configuration\n\nCloud Sync URL:\n${url}\n\nStore ID:\n${storeId}\n\nDevice ID:\nregister-server-1\n\nPush Interval:\n${defaults.pushIntervalSeconds}\n\nPoll Interval:\n${defaults.pollIntervalSeconds}\n\nRequest Timeout:\n${defaults.requestTimeoutSeconds}\n\nBatch Size:\n${defaults.batchSize}`;
   const endpointRows = Object.entries(info.endpoints as Record<string, { method: string; path: string }>).map(([name, endpoint]) => `<tr><td>${escapeHtml(name.replace(/([A-Z])/g, ' $1'))}</td><td><code>${escapeHtml(endpoint.method)} ${escapeHtml(endpoint.path)}</code></td></tr>`).join('');
   const section = page('Cloud Connection Information', 'Use these cloud deployment details to configure a restaurant POS. Secrets are never displayed.', ['Super Admin only', 'Public base URL', 'Read-only guidance']);
   const panel = el('section', 'admin-panel cloud-connection-panel');
@@ -1720,8 +1721,8 @@ function renderCloudConnectionInformation(info: any): HTMLElement {
       <p class="muted">Copy only this base URL. The local POS constructs the endpoint paths itself.</p>
       <button type="button" class="copy-cloud-url" ${info.publicBaseUrl ? '' : 'disabled'}>Copy URL</button>
       <h3>Recommended Local Configuration</h3>
-      <div class="settings-overview-card">
-        <div class="settings-overview-card__item"><span>Store ID</span><strong>Restaurant-specific</strong><small>${escapeHtml(info.storeId.guidance)}</small></div>
+      <div class="settings-overview-card settings-overview-card--wrap-values">
+        <div class="settings-overview-card__item"><span>Store ID</span><strong>${escapeHtml(storeId)}</strong><small>${escapeHtml(info.storeId.guidance)}</small></div>
         <div class="settings-overview-card__item"><span>Device ID</span><strong>${escapeHtml(info.deviceId.example)}</strong><small>${escapeHtml(info.deviceId.guidance)}</small></div>
         <div class="settings-overview-card__item"><span>Push Interval</span><strong>${defaults.pushIntervalSeconds} seconds</strong></div>
         <div class="settings-overview-card__item"><span>Incoming Poll</span><strong>${defaults.pollIntervalSeconds} seconds</strong></div>

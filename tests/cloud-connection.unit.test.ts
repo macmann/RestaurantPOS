@@ -28,13 +28,15 @@ async function run(): Promise<void> {
     if (previousBranch === undefined) delete process.env.POS_BRANCH_ID; else process.env.POS_BRANCH_ID = previousBranch;
     if (previousStore === undefined) delete process.env.POS_STORE_ID; else process.env.POS_STORE_ID = previousStore;
     const token = 'raw-secret-that-must-never-leak';
-    const info = await getCloudConnectionInformation({ APP_MODE: 'CLOUD', NODE_ENV: 'production', PUBLIC_BASE_URL: 'https://sym-pos.onrender.com/', SYNC_API_TOKEN: token });
+    const info = await getCloudConnectionInformation({ APP_MODE: 'CLOUD', NODE_ENV: 'production', PUBLIC_BASE_URL: 'https://sym-pos.onrender.com/', SYNC_API_TOKEN: token, POS_STORE_ID: 'restaurant-yangon-downtown-with-a-long-identifier' });
     assert.equal(info.publicBaseUrl, 'https://sym-pos.onrender.com');
     assert.equal(info.tokenConfigured, true);
     assert.equal(info.status, 'DATABASE_UNAVAILABLE');
     assert.equal(JSON.stringify(info).includes(token), false);
     assert.equal(info.endpoints.push.path, '/cloud/sync/events');
     assert.equal(info.publicBaseUrl.includes('/cloud/sync/'), false);
+    assert.equal(info.storeId.value, 'restaurant-yangon-downtown-with-a-long-identifier');
+    assert.equal((await getCloudConnectionInformation({ APP_MODE: 'CLOUD', POS_BRANCH_ID: 'Branch East' })).storeId.value, 'branch-east', 'The branch ID is the Store ID fallback shown to cloud administrators.');
     assert.equal((await getCloudConnectionInformation({ APP_MODE: 'CLOUD', NODE_ENV: 'production' })).status, 'NOT_CONFIGURED');
   } finally {
     if (previousBackend === undefined) delete process.env.POS_REPOSITORY_BACKEND;
