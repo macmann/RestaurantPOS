@@ -46,7 +46,7 @@ import { loginWithPassword, logoutSession } from './auth/service';
 import { getIdempotencyRecord, idempotencyFingerprint, idempotencyMatches, saveIdempotencyRecord } from './network-idempotency';
 import { appMode } from './sync/service';
 import { buildCloudRouter, buildCustomerRouter, buildManagerRouter } from './sync/router';
-import { SyncWorker, clearLocalSyncDiagnosticError, getLocalSyncRuntimeStatus, getSyncDiagnostics, runSyncCycle } from './sync/worker';
+import { SyncWorker, clearLocalSyncDiagnosticError, getLocalSyncRuntimeStatus, getSyncDiagnostics, runMenuSync, runSyncCycle } from './sync/worker';
 import { LOCAL_SYNC_PROTOCOL_VERSION, loadSyncConfig, publicSyncConfig, resolvedSyncEndpoints, saveSyncConfig, SYNC_ENDPOINTS, syncEndpoint, validateSyncSettings } from './sync/config';
 import { isSqlRepositoryEnabled, query } from './db/client';
 import { runInitialRestaurantPosMigration } from './db/migrations';
@@ -421,6 +421,10 @@ function buildSettingsRouter(): Router {
     // A manual request is an explicit retry, so it must not leave failed events
     // behind merely because their automatic exponential-backoff time is future.
     return runSyncCycle({ rejectIfRunning: true, includeDeferred: true });
+  }));
+  router.post('/cloud-sync/menu', authorize(Actions.ManageSystem), send(async () => {
+    if (appMode() !== 'POS') throw Object.assign(new Error('Menu synchronization is available only on a POS deployment.'), { statusCode: 404 });
+    return runMenuSync();
   }));
   router.get('/cloud-sync/diagnostics', authorize(Actions.ManageSystem), send(async () => {
     if (appMode() !== 'POS') throw Object.assign(new Error('Cloud synchronization diagnostics are available only on a POS deployment.'), { statusCode: 404 });

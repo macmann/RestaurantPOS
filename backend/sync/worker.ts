@@ -3,14 +3,14 @@ import { query } from '../db/client';
 import { loadSyncConfig, resolvedSyncEndpoints, SYNC_ENDPOINTS, syncEndpoint, type ResolvedSyncConfig } from './config';
 import { isCloudDeployment } from '../config/environment';
 
-export type SyncOperation = 'CONFIGURATION' | 'PUSH' | 'PULL' | 'ACKNOWLEDGEMENT' | 'HEARTBEAT';
+export type SyncOperation = 'CONFIGURATION' | 'PUSH' | 'PULL' | 'MENU' | 'ACKNOWLEDGEMENT' | 'HEARTBEAT';
 export interface SyncDiagnosticError {
   operation: SyncOperation; occurredAt: string; method?: string; endpoint?: string; url?: string;
   httpStatus?: number; errorCode: string; message: string; responseMessage?: string; retryable: boolean; suggestedAction: string;
 }
 export interface SyncActivity { timestamp: string; operation: SyncOperation; outcome: 'SUCCESS' | 'ERROR'; eventCount?: number; httpStatus?: number; durationMs: number; message?: string; }
-export interface PhaseResult { success: boolean; attempted?: number; accepted?: number; received?: number; applied?: number; ignoredAsStale?: number; httpStatus?: number; message?: string; }
-export interface SyncCycleResult { status: 'completed' | 'completed_with_errors'; startedAt: string; completedAt: string; durationMs: number; push: PhaseResult; pull: PhaseResult; heartbeat: PhaseResult; }
+export interface PhaseResult { success: boolean; attempted?: number; accepted?: number; sent?: number; received?: number; applied?: number; ignoredAsStale?: number; httpStatus?: number; message?: string; }
+export interface SyncCycleResult { status: 'completed' | 'completed_with_errors'; startedAt: string; completedAt: string; durationMs: number; push: PhaseResult; pull: PhaseResult; menu: PhaseResult; heartbeat: PhaseResult; }
 export interface LocalSyncRuntimeStatus {
   state: 'DISABLED' | 'NOT_CONFIGURED' | 'IDLE' | 'SYNCING' | 'HEALTHY' | 'DEGRADED' | 'ERROR';
   lastSuccessfulPush?: string; lastSuccessfulPull?: string; lastHeartbeat?: string; lastError?: string;
@@ -84,23 +84,43 @@ async function pull(config: ResolvedSyncConfig): Promise<PhaseResult> {
       const ack = await fetch(syncEndpoint(config, SYNC_ENDPOINTS.acknowledgement.path), { method: SYNC_ENDPOINTS.acknowledgement.method, headers: headers(config), body: JSON.stringify({ storeId: config.storeId, eventIds: acknowledged }), signal: AbortSignal.timeout(config.requestTimeoutMs) });
       if (!ack.ok) { const error = await diagnostic('ACKNOWLEDGEMENT', config, SYNC_ENDPOINTS.acknowledgement, ack); throw Object.assign(new Error(error.message), { diagnostic: error }); }
     }
-    // Events are an optimization, not the source of truth. Exchange complete
-    // versioned snapshots every cycle so a lost event, an old deployment, or
-    // a manually cleared queue cannot leave cloud and POS menus divergent.
+    runtimeStatus.lastSuccessfulPull = new Date().toISOString(); runtimeStatus.phases.pull = { state: 'HEALTHY', lastSuccess: runtimeStatus.lastSuccessfulPull }; record('PULL', started, true, events.length); return { success: true, received: events.length, applied, ignoredAsStale };
+  } catch (cause) { const error = (cause as any)?.diagnostic ?? await diagnostic('PULL', config, SYNC_ENDPOINTS.pull, undefined, cause); runtimeStatus.phases.pull = { state: 'ERROR', lastSuccess: runtimeStatus.lastSuccessfulPull, error }; record(error.operation, started, false, undefined, error); return { success: false, httpStatus: error.httpStatus, message: error.message }; }
+}
+
+/** Exchange the complete versioned menu in both directions.
+ *
+ * Queue delivery remains useful for low latency, but this snapshot exchange is
+ * the anti-entropy source of truth: it also repairs records that pre-date sync,
+ * lost events, and tombstones for deletes.
+ */
+export async function syncMenu(config: ResolvedSyncConfig): Promise<PhaseResult> {
+  const started = Date.now();
+  try {
     const localRecords = await getLocalMenuSnapshot(config.storeId);
-    const reconciliation = await fetch(syncEndpoint(config, SYNC_ENDPOINTS.menuReconcile.path), {
+    const response = await fetch(syncEndpoint(config, SYNC_ENDPOINTS.menuReconcile.path), {
       method: SYNC_ENDPOINTS.menuReconcile.method,
       headers: headers(config),
       body: JSON.stringify({ storeId: config.storeId, records: localRecords }),
       signal: AbortSignal.timeout(config.requestTimeoutMs),
     });
-    if (!reconciliation.ok) { const error = await diagnostic('PULL', config, SYNC_ENDPOINTS.menuReconcile, reconciliation); throw Object.assign(new Error(error.message), { diagnostic: error }); }
-    const reconciliationBody = await reconciliation.json() as { data?: { records?: MenuSnapshotRecord[] } };
-    const snapshotResult = await reconcileMenuSnapshot(config.storeId, reconciliationBody.data?.records ?? [], true);
-    applied += snapshotResult.applied;
-    ignoredAsStale += snapshotResult.ignored;
-    runtimeStatus.lastSuccessfulPull = new Date().toISOString(); runtimeStatus.phases.pull = { state: 'HEALTHY', lastSuccess: runtimeStatus.lastSuccessfulPull }; record('PULL', started, true, events.length); return { success: true, received: events.length, applied, ignoredAsStale };
-  } catch (cause) { const error = (cause as any)?.diagnostic ?? await diagnostic('PULL', config, SYNC_ENDPOINTS.pull, undefined, cause); runtimeStatus.phases.pull = { state: 'ERROR', lastSuccess: runtimeStatus.lastSuccessfulPull, error }; record(error.operation, started, false, undefined, error); return { success: false, httpStatus: error.httpStatus, message: error.message }; }
+    if (!response.ok) { const error = await diagnostic('MENU', config, SYNC_ENDPOINTS.menuReconcile, response); throw Object.assign(new Error(error.message), { diagnostic: error }); }
+    const body = await response.json() as { data?: { records?: MenuSnapshotRecord[] } };
+    const cloudRecords = body.data?.records ?? [];
+    const result = await reconcileMenuSnapshot(config.storeId, cloudRecords, true);
+    record('MENU', started, true, localRecords.length + cloudRecords.length);
+    return { success: true, sent: localRecords.length, received: cloudRecords.length, applied: result.applied, ignoredAsStale: result.ignored };
+  } catch (cause) {
+    const error = (cause as any)?.diagnostic ?? await diagnostic('MENU', config, SYNC_ENDPOINTS.menuReconcile, undefined, cause);
+    record('MENU', started, false, undefined, error);
+    return { success: false, httpStatus: error.httpStatus, message: error.message };
+  }
+}
+
+export async function runMenuSync(): Promise<PhaseResult> {
+  const config = await loadSyncConfig();
+  if (!config.enabled || !config.configured) throw Object.assign(new Error(!config.enabled ? 'Cloud synchronization is disabled.' : 'Cloud synchronization is not configured.'), { statusCode: 400 });
+  return syncMenu(config);
 }
 async function heartbeat(config: ResolvedSyncConfig): Promise<PhaseResult> {
   const started = Date.now();
@@ -119,11 +139,11 @@ export async function runSyncCycle(options: { rejectIfRunning?: boolean; include
     try {
       const config = await loadSyncConfig();
       if (!config.enabled || !config.configured) { runtimeStatus.state = !config.enabled ? 'DISABLED' : 'NOT_CONFIGURED'; throw Object.assign(new Error(!config.enabled ? 'Cloud synchronization is disabled.' : 'Cloud synchronization is not configured.'), { statusCode: 400 }); }
-      const pushResult = await push(config, options.includeDeferred); const pullResult = await pull(config); const heartbeatResult = await heartbeat(config);
-      const successes = [pushResult, pullResult, heartbeatResult].filter((phase) => phase.success).length;
-      runtimeStatus.state = successes === 3 ? 'HEALTHY' : successes ? 'DEGRADED' : 'ERROR';
-      if (successes === 3) clearLocalSyncDiagnosticError();
-      const completedAt = new Date().toISOString(); return { status: successes === 3 ? 'completed' : 'completed_with_errors', startedAt, completedAt, durationMs: Date.now() - started, push: pushResult, pull: pullResult, heartbeat: heartbeatResult };
+      const pushResult = await push(config, options.includeDeferred); const pullResult = await pull(config); const menuResult = await syncMenu(config); const heartbeatResult = await heartbeat(config);
+      const successes = [pushResult, pullResult, menuResult, heartbeatResult].filter((phase) => phase.success).length;
+      runtimeStatus.state = successes === 4 ? 'HEALTHY' : successes ? 'DEGRADED' : 'ERROR';
+      if (successes === 4) clearLocalSyncDiagnosticError();
+      const completedAt = new Date().toISOString(); return { status: successes === 4 ? 'completed' : 'completed_with_errors', startedAt, completedAt, durationMs: Date.now() - started, push: pushResult, pull: pullResult, menu: menuResult, heartbeat: heartbeatResult };
     } finally { runtimeStatus.running = false; }
   })();
   try { return await activeCycle; } finally { activeCycle = undefined; }
