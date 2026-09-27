@@ -17,6 +17,9 @@ services:
         sync: false
       - key: SYNC_API_TOKEN
         generateValue: true
+      # Set this to the local POS_BRANCH_ID (for example, main-floor).
+      - key: POS_STORE_ID
+        sync: false
       - key: POS_REPOSITORY_BACKEND
         value: postgres
       - key: DB_SSL

@@ -21,6 +21,9 @@ APP_MODE=CLOUD
 PUBLIC_BASE_URL=https://<render-service-domain>
 DATABASE_URL=<cloud-postgres-url>
 SYNC_API_TOKEN=<long-random-secret>
+POS_STORE_ID=<same value as the local POS_BRANCH_ID>
 ```
+
+`POS_STORE_ID` is required on the cloud deployment. The cloud rejects a connection test and every sync request when it is missing or differs from the Store ID sent by the local POS. This prevents a valid token from masking a branch partition mismatch. For example, a local `POS_BRANCH_ID=main-floor` requires cloud `POS_STORE_ID=main-floor` and the local Platform Settings Store ID must also be `main-floor`.
 
 `PUBLIC_BASE_URL` is the authoritative internet-facing origin and is normalized without a trailing slash. Render's trusted `RENDER_EXTERNAL_HOSTNAME` metadata is used only when the explicit value is absent. Do not use Render's internal `localhost` binding, and do not set `CLOUD_API_URL` on the cloud: the cloud server never starts the local outbound worker or synchronizes to itself.

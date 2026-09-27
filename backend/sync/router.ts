@@ -5,30 +5,38 @@ import { authorize } from '../auth/middleware';
 import { Actions } from '../auth/permissions';
 import { AdminMenuApi } from '../menu/controller';
 import { getCategoryById, getItemById, listItems } from '../menu/repository';
+import { resolveCloudStoreId } from '../config/cloudConnection';
 
 const route = (fn: (req: Request, res: Response) => Promise<unknown>) => (req: Request, res: Response, next: NextFunction) => { void fn(req, res).catch(next); };
 const text = (value: unknown, field: string) => { if (typeof value !== 'string' || !value.trim()) throw new Error(`${field} is required.`); return value.trim(); };
 const syncAuth = (req: Request, _res: Response, next: NextFunction) => { try { requireSyncToken((req.headers ?? {})['x-sync-token']); next(); } catch (e) { next(e); } };
+export function requireAssignedCloudStore(requestedStoreId: string, environment = process.env): string {
+  const assignedStoreId = resolveCloudStoreId(environment);
+  if (!assignedStoreId) throw Object.assign(new Error('Cloud Store ID is not configured. Set POS_STORE_ID on the cloud to the local POS_BRANCH_ID.'), { statusCode: 503 });
+  if (requestedStoreId !== assignedStoreId) throw Object.assign(new Error(`Store ID mismatch: this cloud deployment is assigned to '${assignedStoreId}', but the POS sent '${requestedStoreId}'. Set the local Store ID and POS_BRANCH_ID to '${assignedStoreId}'.`), { statusCode: 409 });
+  return assignedStoreId;
+}
 
 export function buildCloudRouter(): Router {
   const router = express.Router();
   router.post('/sync/test', syncAuth, route(async (req, res) => {
     const body: any = req.body ?? {};
-    const storeId = text(body.storeId, 'storeId');
+    const storeId = requireAssignedCloudStore(text(body.storeId, 'storeId'));
     const deviceId = text(body.deviceId, 'deviceId');
     res.json({ data: { ok: true, storeId, storeName: storeId, deviceId, protocolVersion: '1', compatible: true } });
   }));
-  router.post('/sync/events', syncAuth, route(async (req, res) => res.json({ data: await receiveOutgoingBatch(((req.body as any)?.events ?? []) as SyncEvent[]) })));
-  router.get('/sync/incoming', syncAuth, route(async (req, res) => res.json({ data: { events: await getIncomingEvents(text((req.query as any)?.storeId, 'storeId')) } })));
+  router.post('/sync/events', syncAuth, route(async (req, res) => { const events = ((req.body as any)?.events ?? []) as SyncEvent[]; const requested = text((req.body as any)?.storeId ?? events[0]?.storeId, 'storeId'); const storeId = requireAssignedCloudStore(requested); if (events.some((event) => event.storeId !== storeId)) throw Object.assign(new Error('Sync event batch contains a different Store ID.'), { statusCode: 409 }); res.json({ data: await receiveOutgoingBatch(events) }); }));
+  router.get('/sync/incoming', syncAuth, route(async (req, res) => { const storeId = requireAssignedCloudStore(text((req.query as any)?.storeId, 'storeId')); res.json({ data: { events: await getIncomingEvents(storeId) } }); }));
   router.post('/sync/menu/reconcile', syncAuth, route(async (req, res) => {
     const body = req.body as { storeId?: unknown; records?: MenuSnapshotRecord[] };
-    const storeId = text(body?.storeId, 'storeId');
+    const storeId = requireAssignedCloudStore(text(body?.storeId, 'storeId'));
     res.json({ data: await reconcileMenuSnapshot(storeId, body?.records ?? [], false) });
   }));
-  router.post('/sync/incoming/ack', syncAuth, route(async (req, res) => { await acknowledgeIncoming(text((req.body as any)?.storeId, 'storeId'), (req.body as any)?.eventIds ?? []); res.json({ data: { ok: true } }); }));
+  router.post('/sync/incoming/ack', syncAuth, route(async (req, res) => { const storeId = requireAssignedCloudStore(text((req.body as any)?.storeId, 'storeId')); await acknowledgeIncoming(storeId, (req.body as any)?.eventIds ?? []); res.json({ data: { ok: true } }); }));
   router.post('/sync/heartbeat', syncAuth, route(async (req, res) => {
     const b: any = req.body ?? {};
-    await query(`INSERT INTO store_sync_status(store_id,device_id,last_seen_at,last_successful_sync_at,last_pos_activity_at,pending_event_count,failed_event_count,application_version,last_error) VALUES($1,$2,NOW(),NOW(),$3,$4,$5,$6,NULL) ON CONFLICT(store_id) DO UPDATE SET device_id=EXCLUDED.device_id,last_seen_at=NOW(),last_successful_sync_at=NOW(),last_pos_activity_at=EXCLUDED.last_pos_activity_at,pending_event_count=EXCLUDED.pending_event_count,failed_event_count=EXCLUDED.failed_event_count,application_version=EXCLUDED.application_version,last_error=NULL`, [text(b.storeId,'storeId'),text(b.deviceId,'deviceId'),b.lastPosActivity ?? null,Number(b.pendingEventCount ?? 0),Number(b.failedEventCount ?? 0),b.applicationVersion ?? null]);
+    const storeId = requireAssignedCloudStore(text(b.storeId, 'storeId'));
+    await query(`INSERT INTO store_sync_status(store_id,device_id,last_seen_at,last_successful_sync_at,last_pos_activity_at,pending_event_count,failed_event_count,application_version,last_error) VALUES($1,$2,NOW(),NOW(),$3,$4,$5,$6,NULL) ON CONFLICT(store_id) DO UPDATE SET device_id=EXCLUDED.device_id,last_seen_at=NOW(),last_successful_sync_at=NOW(),last_pos_activity_at=EXCLUDED.last_pos_activity_at,pending_event_count=EXCLUDED.pending_event_count,failed_event_count=EXCLUDED.failed_event_count,application_version=EXCLUDED.application_version,last_error=NULL`, [storeId,text(b.deviceId,'deviceId'),b.lastPosActivity ?? null,Number(b.pendingEventCount ?? 0),Number(b.failedEventCount ?? 0),b.applicationVersion ?? null]);
     res.json({ data: { ok: true } });
   }));
   return router;
