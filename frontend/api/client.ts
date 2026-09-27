@@ -673,6 +673,7 @@ export class RestaurantApiClient {
   updateCloudSyncSettings(input: unknown) { return this.request<any>('/api/settings/cloud-sync', { method: 'PUT', body: input, operationKind: 'idempotent_write' }); }
   testCloudSyncConnection(input: unknown) { return this.request<any>('/api/settings/cloud-sync/test', { method: 'POST', body: input }); }
   runCloudSync() { return this.request<any>('/api/settings/cloud-sync/run', { method: 'POST' }); }
+  runMenuSync() { return this.request<any>('/api/settings/cloud-sync/menu', { method: 'POST' }); }
   getCloudSyncDiagnostics() { return this.request<any>('/api/settings/cloud-sync/diagnostics'); }
   clearCloudSyncError() { return this.request<any>('/api/settings/cloud-sync/error', { method: 'DELETE' }); }
 
