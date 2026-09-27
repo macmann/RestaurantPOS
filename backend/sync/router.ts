@@ -1,6 +1,6 @@
 import express, { type Request, type Response, type NextFunction, type Router } from 'express';
 import { query, withTransaction, type DatabaseClient } from '../db/client';
-import { acknowledgeIncoming, createCustomerAccount, getIncomingEvents, receiveOutgoingBatch, requireSyncToken, syncHealth, type SyncEvent } from './service';
+import { acknowledgeIncoming, createCustomerAccount, getIncomingEvents, receiveOutgoingBatch, reconcileMenuSnapshot, requireSyncToken, syncHealth, type MenuSnapshotRecord, type SyncEvent } from './service';
 import { authorize } from '../auth/middleware';
 import { Actions } from '../auth/permissions';
 import { AdminMenuApi } from '../menu/controller';
@@ -20,6 +20,11 @@ export function buildCloudRouter(): Router {
   }));
   router.post('/sync/events', syncAuth, route(async (req, res) => res.json({ data: await receiveOutgoingBatch(((req.body as any)?.events ?? []) as SyncEvent[]) })));
   router.get('/sync/incoming', syncAuth, route(async (req, res) => res.json({ data: { events: await getIncomingEvents(text((req.query as any)?.storeId, 'storeId')) } })));
+  router.post('/sync/menu/reconcile', syncAuth, route(async (req, res) => {
+    const body = req.body as { storeId?: unknown; records?: MenuSnapshotRecord[] };
+    const storeId = text(body?.storeId, 'storeId');
+    res.json({ data: await reconcileMenuSnapshot(storeId, body?.records ?? [], false) });
+  }));
   router.post('/sync/incoming/ack', syncAuth, route(async (req, res) => { await acknowledgeIncoming(text((req.body as any)?.storeId, 'storeId'), (req.body as any)?.eventIds ?? []); res.json({ data: { ok: true } }); }));
   router.post('/sync/heartbeat', syncAuth, route(async (req, res) => {
     const b: any = req.body ?? {};

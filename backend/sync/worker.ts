@@ -1,4 +1,4 @@
-import { applyIncomingLocally, markOutgoingResult, pendingOutbox } from './service';
+import { applyIncomingLocally, getLocalMenuSnapshot, markOutgoingResult, pendingOutbox, reconcileMenuSnapshot, type MenuSnapshotRecord } from './service';
 import { query } from '../db/client';
 import { loadSyncConfig, resolvedSyncEndpoints, SYNC_ENDPOINTS, syncEndpoint, type ResolvedSyncConfig } from './config';
 import { isCloudDeployment } from '../config/environment';
@@ -84,6 +84,21 @@ async function pull(config: ResolvedSyncConfig): Promise<PhaseResult> {
       const ack = await fetch(syncEndpoint(config, SYNC_ENDPOINTS.acknowledgement.path), { method: SYNC_ENDPOINTS.acknowledgement.method, headers: headers(config), body: JSON.stringify({ storeId: config.storeId, eventIds: acknowledged }), signal: AbortSignal.timeout(config.requestTimeoutMs) });
       if (!ack.ok) { const error = await diagnostic('ACKNOWLEDGEMENT', config, SYNC_ENDPOINTS.acknowledgement, ack); throw Object.assign(new Error(error.message), { diagnostic: error }); }
     }
+    // Events are an optimization, not the source of truth. Exchange complete
+    // versioned snapshots every cycle so a lost event, an old deployment, or
+    // a manually cleared queue cannot leave cloud and POS menus divergent.
+    const localRecords = await getLocalMenuSnapshot(config.storeId);
+    const reconciliation = await fetch(syncEndpoint(config, SYNC_ENDPOINTS.menuReconcile.path), {
+      method: SYNC_ENDPOINTS.menuReconcile.method,
+      headers: headers(config),
+      body: JSON.stringify({ storeId: config.storeId, records: localRecords }),
+      signal: AbortSignal.timeout(config.requestTimeoutMs),
+    });
+    if (!reconciliation.ok) { const error = await diagnostic('PULL', config, SYNC_ENDPOINTS.menuReconcile, reconciliation); throw Object.assign(new Error(error.message), { diagnostic: error }); }
+    const reconciliationBody = await reconciliation.json() as { data?: { records?: MenuSnapshotRecord[] } };
+    const snapshotResult = await reconcileMenuSnapshot(config.storeId, reconciliationBody.data?.records ?? [], true);
+    applied += snapshotResult.applied;
+    ignoredAsStale += snapshotResult.ignored;
     runtimeStatus.lastSuccessfulPull = new Date().toISOString(); runtimeStatus.phases.pull = { state: 'HEALTHY', lastSuccess: runtimeStatus.lastSuccessfulPull }; record('PULL', started, true, events.length); return { success: true, received: events.length, applied, ignoredAsStale };
   } catch (cause) { const error = (cause as any)?.diagnostic ?? await diagnostic('PULL', config, SYNC_ENDPOINTS.pull, undefined, cause); runtimeStatus.phases.pull = { state: 'ERROR', lastSuccess: runtimeStatus.lastSuccessfulPull, error }; record(error.operation, started, false, undefined, error); return { success: false, httpStatus: error.httpStatus, message: error.message }; }
 }
