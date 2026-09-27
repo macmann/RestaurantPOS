@@ -9,7 +9,18 @@ export interface SyncDiagnosticError {
   httpStatus?: number; errorCode: string; message: string; responseMessage?: string; retryable: boolean; suggestedAction: string;
 }
 export interface SyncActivity { timestamp: string; operation: SyncOperation; outcome: 'SUCCESS' | 'ERROR'; eventCount?: number; httpStatus?: number; durationMs: number; message?: string; }
-export interface PhaseResult { success: boolean; attempted?: number; accepted?: number; sent?: number; received?: number; applied?: number; ignoredAsStale?: number; httpStatus?: number; message?: string; }
+export interface MenuSyncDetails {
+  storeId: string;
+  localBefore: MenuRecordCounts;
+  cloudAfterMerge: MenuRecordCounts;
+  localAfterMerge: MenuRecordCounts;
+  cloudApplied: number;
+  cloudIgnored: number;
+  mismatchCount: number;
+  mismatchRecordIds: string[];
+}
+export interface MenuRecordCounts { total: number; categories: number; items: number; active: number; tombstones: number; }
+export interface PhaseResult { success: boolean; attempted?: number; accepted?: number; sent?: number; received?: number; applied?: number; ignoredAsStale?: number; httpStatus?: number; message?: string; details?: MenuSyncDetails; }
 export interface SyncCycleResult { status: 'completed' | 'completed_with_errors'; startedAt: string; completedAt: string; durationMs: number; push: PhaseResult; pull: PhaseResult; menu: PhaseResult; heartbeat: PhaseResult; }
 export interface LocalSyncRuntimeStatus {
   state: 'DISABLED' | 'NOT_CONFIGURED' | 'IDLE' | 'SYNCING' | 'HEALTHY' | 'DEGRADED' | 'ERROR';
@@ -47,10 +58,34 @@ async function diagnostic(operation: SyncOperation, config: ResolvedSyncConfig, 
   return { operation, occurredAt: new Date().toISOString(), method: endpoint.method, endpoint: endpoint.path, url: syncEndpoint(config, endpoint.path), httpStatus,
     errorCode: httpStatus ? `HTTP_${httpStatus}` : timeout ? 'TIMEOUT' : 'NETWORK_ERROR', message, responseMessage, retryable: retryableStatus(httpStatus), suggestedAction: syncSuggestedAction(httpStatus, timeout ? 'TIMEOUT' : undefined) };
 }
-function record(operation: SyncOperation, started: number, success: boolean, count?: number, error?: SyncDiagnosticError): void {
-  runtimeStatus.activity.unshift({ timestamp: new Date().toISOString(), operation, outcome: success ? 'SUCCESS' : 'ERROR', eventCount: count, httpStatus: error?.httpStatus, durationMs: Date.now() - started, message: error?.message });
+function record(operation: SyncOperation, started: number, success: boolean, count?: number, error?: SyncDiagnosticError, message?: string): void {
+  runtimeStatus.activity.unshift({ timestamp: new Date().toISOString(), operation, outcome: success ? 'SUCCESS' : 'ERROR', eventCount: count, httpStatus: error?.httpStatus, durationMs: Date.now() - started, message: error?.message ?? message });
   runtimeStatus.activity.splice(50);
   if (error) { runtimeStatus.lastError = error.message; runtimeStatus.diagnosticError = error; }
+}
+
+export function countMenuRecords(records: MenuSnapshotRecord[]): MenuRecordCounts {
+  return records.reduce<MenuRecordCounts>((counts, record) => {
+    counts.total += 1;
+    if (record.entityType === 'menu_categories') counts.categories += 1; else counts.items += 1;
+    if (record.payload.deletedAt) counts.tombstones += 1; else counts.active += 1;
+    return counts;
+  }, { total: 0, categories: 0, items: 0, active: 0, tombstones: 0 });
+}
+
+function menuRecordMap(records: MenuSnapshotRecord[]): Map<string, string> {
+  const stableJson = (value: unknown): string => Array.isArray(value)
+    ? `[${value.map(stableJson).join(',')}]`
+    : value && typeof value === 'object'
+      ? `{${Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`).join(',')}}`
+      : JSON.stringify(value) ?? 'undefined';
+  return new Map(records.map((record) => [`${record.entityType}:${String(record.payload.id)}`, stableJson(record.payload)]));
+}
+
+export function findMenuMismatches(local: MenuSnapshotRecord[], cloud: MenuSnapshotRecord[]): string[] {
+  const localMap = menuRecordMap(local); const cloudMap = menuRecordMap(cloud);
+  return [...new Set([...localMap.keys(), ...cloudMap.keys()])]
+    .filter((id) => localMap.get(id) !== cloudMap.get(id)).sort();
 }
 const headers = (config: ResolvedSyncConfig) => ({ 'content-type': 'application/json', 'x-sync-token': config.token! });
 
@@ -105,11 +140,23 @@ export async function syncMenu(config: ResolvedSyncConfig): Promise<PhaseResult>
       signal: AbortSignal.timeout(config.requestTimeoutMs),
     });
     if (!response.ok) { const error = await diagnostic('MENU', config, SYNC_ENDPOINTS.menuReconcile, response); throw Object.assign(new Error(error.message), { diagnostic: error }); }
-    const body = await response.json() as { data?: { records?: MenuSnapshotRecord[] } };
+    const body = await response.json() as { data?: { records?: MenuSnapshotRecord[]; applied?: number; ignored?: number } };
     const cloudRecords = body.data?.records ?? [];
     const result = await reconcileMenuSnapshot(config.storeId, cloudRecords, true);
-    record('MENU', started, true, localRecords.length + cloudRecords.length);
-    return { success: true, sent: localRecords.length, received: cloudRecords.length, applied: result.applied, ignoredAsStale: result.ignored };
+    const mismatchRecordIds = findMenuMismatches(result.records, cloudRecords);
+    const details: MenuSyncDetails = {
+      storeId: config.storeId,
+      localBefore: countMenuRecords(localRecords),
+      cloudAfterMerge: countMenuRecords(cloudRecords),
+      localAfterMerge: countMenuRecords(result.records),
+      cloudApplied: Number(body.data?.applied ?? 0),
+      cloudIgnored: Number(body.data?.ignored ?? 0),
+      mismatchCount: mismatchRecordIds.length,
+      mismatchRecordIds: mismatchRecordIds.slice(0, 50),
+    };
+    const message = `store=${details.storeId}; local before=${details.localBefore.total} (${details.localBefore.categories} categories, ${details.localBefore.items} items, ${details.localBefore.tombstones} tombstones); cloud applied=${details.cloudApplied}; cloud after=${details.cloudAfterMerge.total}; local applied=${result.applied}; local after=${details.localAfterMerge.total}; mismatches=${details.mismatchCount}`;
+    record('MENU', started, true, localRecords.length + cloudRecords.length, undefined, message);
+    return { success: true, sent: localRecords.length, received: cloudRecords.length, applied: result.applied, ignoredAsStale: result.ignored, message, details };
   } catch (cause) {
     const error = (cause as any)?.diagnostic ?? await diagnostic('MENU', config, SYNC_ENDPOINTS.menuReconcile, undefined, cause);
     record('MENU', started, false, undefined, error);
@@ -159,12 +206,13 @@ export class SyncWorker {
 }
 
 export async function getSyncDiagnostics(): Promise<Record<string, unknown>> {
-  const config = await loadSyncConfig(); let queues = { outbox: [] as any[], incoming: [] as any[] };
+  const config = await loadSyncConfig(); let queues = { outbox: [] as any[], incoming: [] as any[] }; let menuInventory: any[] = [];
   try {
     const [outbox, incoming] = await Promise.all([
       query<any>(`SELECT event_id "eventId", entity_type "entityType", entity_id "entityId", operation, occurred_at "createdAt", attempt_count "attemptCount", next_attempt_at "nextRetry", LEFT(COALESCE(last_error,''),500) "lastError" FROM sync_outbox WHERE store_id=$1 AND status IN ('PENDING','FAILED') ORDER BY occurred_at LIMIT 100`, [config.storeId]),
       query<any>(`SELECT event_id "eventId", event_type "entityType", created_at "createdAt", processed_at "processedAt", outcome FROM sync_inbox WHERE processed_at IS NULL ORDER BY created_at LIMIT 100`),
     ]); queues = { outbox: outbox.rows, incoming: incoming.rows };
+    menuInventory = (await query<any>(`SELECT payload->>'branchId' "storeId", namespace, COUNT(*)::int total, COUNT(*) FILTER (WHERE payload->>'deletedAt' IS NOT NULL)::int tombstones FROM repository_records WHERE namespace IN ('menu:categories','menu:items') GROUP BY payload->>'branchId',namespace ORDER BY payload->>'branchId',namespace`)).rows;
   } catch { /* memory/test mode */ }
-  return { runtime: getLocalSyncRuntimeStatus(), endpoints: resolvedSyncEndpoints(config), queues, localProtocolVersion: '1', localApplicationVersion: process.env.APP_COMMIT ?? process.env.RENDER_GIT_COMMIT ?? process.env.npm_package_version ?? 'unknown' };
+  return { runtime: getLocalSyncRuntimeStatus(), endpoints: resolvedSyncEndpoints(config), queues, menuInventory, localProtocolVersion: '1', localApplicationVersion: process.env.APP_COMMIT ?? process.env.RENDER_GIT_COMMIT ?? process.env.npm_package_version ?? 'unknown' };
 }
