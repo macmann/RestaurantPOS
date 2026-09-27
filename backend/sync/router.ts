@@ -83,7 +83,11 @@ export function buildManagerRouter(): Router {
 /** A single-restaurant cloud deployment's configured store is authoritative.
  * Falling back to the user's branch keeps multi-tenant/dev deployments working. */
 export function resolveManagerStore(userBranchId?: string, environment = process.env): string {
-  return environment.POS_STORE_ID?.trim() || userBranchId?.trim() || 'default';
+  // Use the same assignment resolver as the sync endpoints. In particular,
+  // POS_BRANCH_ID is a supported cloud Store ID fallback; ignoring it here
+  // would let the manager write menu records into the signed-in user's branch
+  // while reconciliation correctly queried a different store partition.
+  return resolveCloudStoreId(environment) || userBranchId?.trim() || 'default';
 }
 
 export function buildCustomerRouter(): Router {

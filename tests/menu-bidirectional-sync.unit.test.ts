@@ -55,6 +55,7 @@ assert.equal(cloudOperationalMethodAllowed('DELETE'),false);
 
 assert.throws(()=>compareMenuVersions({updatedAt:'browser-garbage'},cloud),/valid trusted/);
 assert.equal(resolveManagerStore('user-branch', { POS_STORE_ID: 'main-floor' } as NodeJS.ProcessEnv), 'main-floor');
+assert.equal(resolveManagerStore('user-branch', { POS_BRANCH_ID: 'Main Floor' } as NodeJS.ProcessEnv), 'main-floor', 'Manager writes must use the same normalized POS_BRANCH_ID fallback as reconciliation.');
 assert.equal(resolveManagerStore('user-branch', {} as NodeJS.ProcessEnv), 'user-branch');
 
 // Full-snapshot anti-entropy rejects cross-store and ambiguous input before it
