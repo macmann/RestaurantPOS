@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { isCloudDeployment, readAppMode } from '../backend/config/environment';
-import { getCloudConnectionInformation, normalizePublicBaseUrl, resolvePublicBaseUrl } from '../backend/config/cloudConnection';
+import { getCloudConnectionInformation, normalizePublicBaseUrl, resolveCloudStoreId, resolvePublicBaseUrl } from '../backend/config/cloudConnection';
+import { requireAssignedCloudStore } from '../backend/sync/router';
 import { localSyncWorkerAllowed } from '../backend/sync/worker';
 import { loadSyncConfig, validateSyncSettings } from '../backend/sync/config';
 
@@ -16,6 +17,12 @@ async function run(): Promise<void> {
   assert.equal(resolvePublicBaseUrl({ ...production, RENDER_EXTERNAL_HOSTNAME: 'fallback.onrender.com' }), 'https://fallback.onrender.com');
   for (const invalid of ['localhost:10000', 'https://user:password@example.com', 'https://example.com/api/sync/events', 'https://example.com?token=abc', 'https://example.com#secret', 'http://example.com']) assert.throws(() => normalizePublicBaseUrl(invalid, production));
   assert.equal(normalizePublicBaseUrl('http://localhost:10000/', { NODE_ENV: 'development' }), 'http://localhost:10000');
+  assert.equal(resolveCloudStoreId({ POS_STORE_ID: 'main-floor' }), 'main-floor');
+  assert.equal(resolveCloudStoreId({ POS_BRANCH_ID: 'Main Floor' }), 'main-floor');
+  assert.equal(resolveCloudStoreId({}), null, 'Cloud store assignment must never silently fall back to main.');
+  assert.equal(requireAssignedCloudStore('main-floor', { POS_STORE_ID: 'main-floor' }), 'main-floor');
+  assert.throws(() => requireAssignedCloudStore('main-floor', {}), /not configured/);
+  assert.throws(() => requireAssignedCloudStore('main-floor', { POS_STORE_ID: 'other-floor' }), /Store ID mismatch/);
   const previousBackend = process.env.POS_REPOSITORY_BACKEND;
   process.env.POS_REPOSITORY_BACKEND = 'memory';
   try {
@@ -38,6 +45,9 @@ async function run(): Promise<void> {
     assert.equal(info.storeId.value, 'restaurant-yangon-downtown-with-a-long-identifier');
     assert.equal((await getCloudConnectionInformation({ APP_MODE: 'CLOUD', POS_BRANCH_ID: 'Branch East' })).storeId.value, 'branch-east', 'The branch ID is the Store ID fallback shown to cloud administrators.');
     assert.equal((await getCloudConnectionInformation({ APP_MODE: 'CLOUD', NODE_ENV: 'production' })).status, 'NOT_CONFIGURED');
+    const missingStore = await getCloudConnectionInformation({ APP_MODE: 'CLOUD', NODE_ENV: 'production', PUBLIC_BASE_URL: 'https://sym-pos.onrender.com', SYNC_API_TOKEN: token });
+    assert.equal(missingStore.status, 'STORE_NOT_CONFIGURED');
+    assert.equal(missingStore.storeId.configured, false);
   } finally {
     if (previousBackend === undefined) delete process.env.POS_REPOSITORY_BACKEND;
     else process.env.POS_REPOSITORY_BACKEND = previousBackend;
