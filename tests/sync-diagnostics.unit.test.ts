@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { resolvedSyncEndpoints, SYNC_ENDPOINTS } from '../backend/sync/config';
-import { countMenuRecords, findMenuMismatches, sanitizeSyncDiagnosticText, syncSuggestedAction } from '../backend/sync/worker';
+import { assertLocalMenuStoreAlignment, countMenuRecords, findMenuMismatches, sanitizeSyncDiagnosticText, syncSuggestedAction } from '../backend/sync/worker';
 
 function run(): void {
   const endpoints = resolvedSyncEndpoints({ cloudSyncBaseUrl: 'https://cloud.example.com' });
@@ -20,6 +20,12 @@ function run(): void {
   assert.deepEqual(countMenuRecords([category, item]), { total: 2, categories: 1, items: 1, active: 1, tombstones: 1 });
   assert.deepEqual(findMenuMismatches([category], [{ ...category, payload: { updatedAt: category.payload.updatedAt, branchId: 'main-floor', id: 'cat-1' } }]), []);
   assert.deepEqual(findMenuMismatches([category], [{ ...category, payload: { ...category.payload, name: 'Cloud name' } }]), ['menu_categories:cat-1']);
+  assert.doesNotThrow(() => assertLocalMenuStoreAlignment('main-floor', 2, ['legacy-store']));
+  assert.doesNotThrow(() => assertLocalMenuStoreAlignment('main-floor', 0, ['main-floor']));
+  assert.throws(
+    () => assertLocalMenuStoreAlignment('main-floor', 0, ['legacy-store']),
+    /No local menu records belong to configured Store ID 'main-floor'.*legacy-store/,
+  );
   console.log('Sync diagnostics unit test passed.');
 }
 run();

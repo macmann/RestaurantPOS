@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { query, withTransaction, type DatabaseClient } from '../db/client';
+import { isSqlRepositoryEnabled, query, withTransaction, type DatabaseClient } from '../db/client';
 import { readAppMode } from '../config/environment';
 
 export type SyncEvent = {
@@ -105,6 +105,22 @@ export async function reconcileMenuSnapshot(storeId: string, records: MenuSnapsh
 
 export async function getLocalMenuSnapshot(storeId: string): Promise<MenuSnapshotRecord[]> {
   return withTransaction((client) => readMenuSnapshot(client, storeId));
+}
+
+/** Return every store partition that currently owns menu records.  This is
+ * used by the worker to distinguish a genuinely empty menu from an existing
+ * menu that is invisible because the configured Store ID changed. */
+export async function getLocalMenuStoreIds(): Promise<string[]> {
+  if (!isSqlRepositoryEnabled()) return [];
+  const result = await query<{ store_id: string }>(
+    `SELECT DISTINCT payload->>'branchId' store_id
+       FROM repository_records
+      WHERE namespace IN ('menu:categories','menu:items')
+        AND NULLIF(payload->>'branchId','') IS NOT NULL
+        AND payload->>'deletedAt' IS NULL
+      ORDER BY store_id`,
+  );
+  return result.rows.map((row) => row.store_id);
 }
 
 export function appMode(env = process.env): 'POS' | 'CLOUD' {
