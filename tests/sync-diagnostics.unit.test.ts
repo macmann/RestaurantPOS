@@ -6,6 +6,7 @@ function run(): void {
   const endpoints = resolvedSyncEndpoints({ cloudSyncBaseUrl: 'https://cloud.example.com' });
   assert.deepEqual(endpoints.pull, { ...SYNC_ENDPOINTS.pull, url: 'https://cloud.example.com/cloud/sync/incoming' });
   assert.equal(endpoints.acknowledgement.url, 'https://cloud.example.com/cloud/sync/incoming/ack');
+  assert.deepEqual(endpoints.menuReconcile, { ...SYNC_ENDPOINTS.menuReconcile, url: 'https://cloud.example.com/cloud/sync/menu/reconcile' });
   assert.match(syncSuggestedAction(401), /Token was rejected/);
   assert.match(syncSuggestedAction(404), /did not recognize.*endpoint/);
   assert.match(syncSuggestedAction(500), /server error/);

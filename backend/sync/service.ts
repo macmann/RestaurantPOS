@@ -10,6 +10,7 @@ export type SyncEvent = {
 const MIRRORED_TABLES = new Set(['branches', 'roles', 'users', 'menu_categories', 'menu_items', 'tables', 'table_sessions', 'orders', 'order_items', 'bills', 'bill_splits', 'payments', 'inventory_items', 'stock_ledger', 'online_orders', 'reservations']);
 const BIDIRECTIONAL_MENU_TABLES = new Set(['menu_categories', 'menu_items']);
 export type SyncOutcome = 'APPLIED' | 'STALE_IGNORED' | 'ALREADY_PROCESSED';
+export type MenuSnapshotRecord = { entityType: 'menu_categories' | 'menu_items'; payload: Record<string, unknown> };
 
 function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
@@ -41,10 +42,14 @@ function menuNamespace(entityType: string): 'menu:categories' | 'menu:items' {
   throw new Error(`Unsupported bidirectional menu entity: ${entityType}`);
 }
 
-async function applyMenuVersion(client: DatabaseClient, event: { eventId: string; storeId: string; entityType: string; entityId: string; payload: Record<string, unknown> }, suppressLocalOutbox: boolean): Promise<SyncOutcome> {
+async function applyMenuVersion(client: DatabaseClient, event: { eventId: string | null; storeId: string; entityType: string; entityId: string; payload: Record<string, unknown> }, suppressLocalOutbox: boolean, recordAudit = true): Promise<SyncOutcome> {
   const namespace = menuNamespace(event.entityType);
   if (String(event.payload.id ?? '') !== event.entityId) throw new Error('Menu sync identity does not match its payload.');
   if (String(event.payload.branchId ?? '') !== event.storeId) throw new Error('Menu sync store scope does not match its payload.');
+  // FOR UPDATE cannot lock an absent row. The identity-scoped advisory lock
+  // also serializes two peers concurrently creating the same record, so the
+  // version comparison and following upsert remain one atomic decision.
+  await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`${namespace}:${event.entityId}`]);
   const existing = await client.query<{ payload: Record<string, unknown> }>('SELECT payload FROM repository_records WHERE namespace=$1 AND record_key=$2 FOR UPDATE', [namespace, event.entityId]);
   const comparison = compareMenuVersions(event.payload as any, existing.rows[0]?.payload as any);
   const outcome: SyncOutcome = comparison === 'NEWER' ? 'APPLIED' : comparison === 'STALE' ? 'STALE_IGNORED' : 'ALREADY_PROCESSED';
@@ -52,8 +57,54 @@ async function applyMenuVersion(client: DatabaseClient, event: { eventId: string
     if (suppressLocalOutbox) await client.query(`SET LOCAL restaurant_pos.sync_origin = 'CLOUD_MANAGER'`);
     await client.query(`INSERT INTO repository_records(namespace,record_key,payload,created_at,updated_at) VALUES($1,$2,$3::jsonb,NOW(),NOW()) ON CONFLICT(namespace,record_key) DO UPDATE SET payload=EXCLUDED.payload,updated_at=NOW()`, [namespace, event.entityId, JSON.stringify(event.payload)]);
   }
-  await client.query(`INSERT INTO menu_sync_audit(event_id,store_id,entity_type,entity_id,outcome,updated_source,updated_by,version_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, [event.eventId, event.storeId, event.entityType, event.entityId, outcome, event.payload.updatedSource ?? null, event.payload.updatedBy ?? null, event.payload.updatedAt]);
+  if (recordAudit) await client.query(`INSERT INTO menu_sync_audit(event_id,store_id,entity_type,entity_id,outcome,updated_source,updated_by,version_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, [event.eventId, event.storeId, event.entityType, event.entityId, outcome, event.payload.updatedSource ?? null, event.payload.updatedBy ?? null, event.payload.updatedAt]);
   return outcome;
+}
+
+export function validateMenuSnapshot(storeId: string, records: MenuSnapshotRecord[]): void {
+  if (!Array.isArray(records) || records.length > 5_000) throw new Error('Menu snapshot must contain at most 5000 records.');
+  const identities = new Set<string>();
+  for (const record of records) {
+    if (!BIDIRECTIONAL_MENU_TABLES.has(record?.entityType) || !record.payload || typeof record.payload !== 'object') throw new Error('Menu snapshot contains an unsupported record.');
+    const id = String(record.payload.id ?? '');
+    if (!id || String(record.payload.branchId ?? '') !== storeId) throw new Error('Menu snapshot record does not match the requested store.');
+    if (!Number.isFinite(Date.parse(String(record.payload.updatedAt ?? '')))) throw new Error('Menu snapshot record requires a valid updatedAt timestamp.');
+    const identity = `${record.entityType}:${id}`;
+    if (identities.has(identity)) throw new Error('Menu snapshot contains duplicate records.');
+    identities.add(identity);
+  }
+}
+
+async function readMenuSnapshot(client: DatabaseClient, storeId: string): Promise<MenuSnapshotRecord[]> {
+  const result = await client.query<{ namespace: string; payload: Record<string, unknown> }>(
+    `SELECT namespace,payload FROM repository_records
+     WHERE namespace IN ('menu:categories','menu:items') AND payload->>'branchId'=$1
+     ORDER BY namespace,record_key`, [storeId],
+  );
+  return result.rows.map((row) => ({ entityType: row.namespace === 'menu:categories' ? 'menu_categories' : 'menu_items', payload: row.payload }));
+}
+
+/**
+ * Merge a complete peer snapshot and return the post-merge local snapshot.
+ * This anti-entropy pass repairs missed/acknowledged events and pre-existing
+ * deployments while the normal queues continue to provide low-latency sync.
+ */
+export async function reconcileMenuSnapshot(storeId: string, records: MenuSnapshotRecord[], suppressLocalOutbox: boolean): Promise<{ records: MenuSnapshotRecord[]; applied: number; ignored: number }> {
+  validateMenuSnapshot(storeId, records);
+  return withTransaction(async (client) => {
+    let applied = 0;
+    let ignored = 0;
+    const ordered = [...records].sort((a, b) => `${a.entityType}:${a.payload.id}`.localeCompare(`${b.entityType}:${b.payload.id}`));
+    for (const record of ordered) {
+      const outcome = await applyMenuVersion(client, { eventId: null, storeId, entityType: record.entityType, entityId: String(record.payload.id), payload: record.payload }, suppressLocalOutbox, false);
+      if (outcome === 'APPLIED') applied += 1; else ignored += 1;
+    }
+    return { records: await readMenuSnapshot(client, storeId), applied, ignored };
+  });
+}
+
+export async function getLocalMenuSnapshot(storeId: string): Promise<MenuSnapshotRecord[]> {
+  return withTransaction((client) => readMenuSnapshot(client, storeId));
 }
 
 export function appMode(env = process.env): 'POS' | 'CLOUD' {

@@ -13,6 +13,7 @@ import { createOrderDraft, transitionOrderStatus } from '../backend/orders/servi
 import { generateBillFromSessionItems, recordSplitPayment } from '../backend/billing/service';
 import { listAuditEvents } from '../backend/audit/repository';
 import type { TableOrderItem } from '../backend/billing/repository';
+import { reconcileMenuSnapshot } from '../backend/sync/service';
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -58,6 +59,16 @@ async function runSqlRepositoryIntegration(): Promise<void> {
   const rice = await createInventoryMasterItem({ branchId, sku: 'RICE-SQL', name: 'SQL Rice', unit: 'portion', minimumThreshold: 1, currentStock: 6 });
   const category = await adminCreateCategory({ branchId, name: 'SQL Specials', sortOrder: 1 });
   const menuItem = await adminCreateItem({ branchId, categoryId: category.id, name: 'SQL Tea Rice', price: 10, prepStation: 'kitchen', inventoryItemId: rice.id, isAvailable: true });
+  const cloudOnlyItem = {
+    ...menuItem,
+    id: 'item-cloud-snapshot-repair',
+    name: 'Recovered Cloud Item',
+    updatedAt: new Date(Date.parse(menuItem.updatedAt) + 1_000).toISOString(),
+    updatedSource: 'CLOUD_MANAGER' as const,
+  };
+  const reconciledMenu = await reconcileMenuSnapshot(branchId, [{ entityType: 'menu_items', payload: cloudOnlyItem }], true);
+  assert(reconciledMenu.applied === 1, 'Snapshot reconciliation should restore a cloud record whose queue event was missed.');
+  assert(reconciledMenu.records.some((record) => record.payload.id === cloudOnlyItem.id), 'The repaired menu snapshot should include the previously missing item.');
   await saveMenuInventoryRecipe({ branchId, menuItemId: menuItem.id, inventoryItemId: rice.id, quantityPerUnit: 1 });
 
   const table = await createTable({ id: 'SQL-T1', branchId, name: 'SQL Table 1', capacity: 2 });

@@ -28,6 +28,7 @@ export const SYNC_ENDPOINTS = {
   test: { label: 'Connection test', method: 'POST', path: '/cloud/sync/test' },
   push: { label: 'Push', method: 'POST', path: '/cloud/sync/events' },
   pull: { label: 'Incoming pull', method: 'GET', path: '/cloud/sync/incoming' },
+  menuReconcile: { label: 'Menu reconciliation', method: 'POST', path: '/cloud/sync/menu/reconcile' },
   acknowledgement: { label: 'Acknowledgement', method: 'POST', path: '/cloud/sync/incoming/ack' },
   heartbeat: { label: 'Heartbeat', method: 'POST', path: '/cloud/sync/heartbeat' },
 } as const;

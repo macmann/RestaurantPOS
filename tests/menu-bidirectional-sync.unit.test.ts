@@ -1,5 +1,5 @@
 import { strict as assert } from 'node:assert';
-import { compareMenuVersions } from '../backend/sync/service';
+import { compareMenuVersions, validateMenuSnapshot } from '../backend/sync/service';
 import { Actions, RolePermissions } from '../backend/auth/permissions';
 import { cloudOperationalMethodAllowed } from '../backend/server';
 import { resolveManagerStore } from '../backend/sync/router';
@@ -56,4 +56,14 @@ assert.equal(cloudOperationalMethodAllowed('DELETE'),false);
 assert.throws(()=>compareMenuVersions({updatedAt:'browser-garbage'},cloud),/valid trusted/);
 assert.equal(resolveManagerStore('user-branch', { POS_STORE_ID: 'main-floor' } as NodeJS.ProcessEnv), 'main-floor');
 assert.equal(resolveManagerStore('user-branch', {} as NodeJS.ProcessEnv), 'user-branch');
+
+// Full-snapshot anti-entropy rejects cross-store and ambiguous input before it
+// can touch either database, while accepting tombstones for missed deletes.
+const snapshotPayload = { id: 'item-shared', branchId: 'main-floor', updatedAt: '2026-09-23T11:00:00.000Z', deletedAt: '2026-09-23T11:00:00.000Z' };
+validateMenuSnapshot('main-floor', [{ entityType: 'menu_items', payload: snapshotPayload }]);
+assert.throws(() => validateMenuSnapshot('other-floor', [{ entityType: 'menu_items', payload: snapshotPayload }]), /does not match/);
+assert.throws(() => validateMenuSnapshot('main-floor', [
+  { entityType: 'menu_items', payload: snapshotPayload },
+  { entityType: 'menu_items', payload: snapshotPayload },
+]), /duplicate/);
 console.log('Bidirectional menu LWW, tombstone, replay, outage, and authorization tests passed.');

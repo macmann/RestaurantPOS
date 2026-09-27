@@ -6,6 +6,8 @@ The Sync API Token is never included in the settings response or audit payload. 
 
 The worker resolves configuration again before every push and pull cycle, so saving does not require an application restart. Disabling synchronization skips push, polling, and heartbeat work without changing either durable queue. Cloud deployments (`APP_MODE=CLOUD`) do not expose these POS destination settings.
 
+Every synchronization cycle also exchanges a complete, versioned menu snapshot through `/cloud/sync/menu/reconcile`. The durable event queues still deliver normal changes quickly, but the snapshot is an anti-entropy safety net: it restores items or categories when an event was missed, acknowledged by an older installation, or created before bidirectional menu sync was deployed. Both sides merge by `updatedAt` with a deterministic source tie-break, include deletion tombstones, and suppress echo events while applying the peer snapshot. As a result, adding, editing, or deleting a menu record in either the local POS or cloud manager converges without requiring the queue history to remain intact.
+
 The Store ID must be the same stable identifier as the POS Branch ID (`POS_BRANCH_ID`). Menu events are partitioned by this value in the cloud incoming queue; using a different value can allow outbound uploads while preventing cloud menu edits from being pulled back. When `POS_STORE_ID` is omitted, the POS now uses its Branch ID automatically. Existing saved settings that still contain the old placeholder value `default` are resolved to the current Branch ID.
 
 ## Cloud connection information
