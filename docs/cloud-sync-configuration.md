@@ -10,6 +10,8 @@ Every synchronization cycle also exchanges a complete, versioned menu snapshot t
 
 The Store ID must be the same stable identifier as the POS Branch ID (`POS_BRANCH_ID`). Menu events are partitioned by this value in the cloud incoming queue; using a different value can allow outbound uploads while preventing cloud menu edits from being pulled back. When `POS_STORE_ID` is omitted, the POS now uses its Branch ID automatically. Existing saved settings that still contain the old placeholder value `default` are resolved to the current Branch ID.
 
+If the local application displays a menu but the cloud remains empty, open **Platform Settings → Cloud Synchronization → Synchronization diagnostics** and compare the configured Store ID with **Menu records by Store ID**. A menu created under an earlier Branch ID is still visible in the unscoped local administration view, but it does not belong to the configured synchronization partition. Menu synchronization now stops with an explicit error in that situation instead of reporting a successful zero-record exchange. Set the local `POS_BRANCH_ID`, the saved synchronization Store ID, and the cloud `POS_STORE_ID` to the identifier that owns the menu; do not rename a populated branch without migrating its data.
+
 ## Cloud connection information
 
 On a cloud deployment, Super Admin instead sees **Platform Settings → Cloud Connection Information**. It displays the public base URL, readiness checks, token-presence status, real sync routes, recommended local defaults, and a copyable (secret-free) local setup package. The existing `SYNC_API_TOKEN` is never returned to the browser.

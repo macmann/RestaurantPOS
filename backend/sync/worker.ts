@@ -1,4 +1,4 @@
-import { applyIncomingLocally, getLocalMenuSnapshot, markOutgoingResult, pendingOutbox, reconcileMenuSnapshot, type MenuSnapshotRecord } from './service';
+import { applyIncomingLocally, getLocalMenuSnapshot, getLocalMenuStoreIds, markOutgoingResult, pendingOutbox, reconcileMenuSnapshot, type MenuSnapshotRecord } from './service';
 import { query } from '../db/client';
 import { loadSyncConfig, resolvedSyncEndpoints, SYNC_ENDPOINTS, syncEndpoint, type ResolvedSyncConfig } from './config';
 import { isCloudDeployment } from '../config/environment';
@@ -87,6 +87,14 @@ export function findMenuMismatches(local: MenuSnapshotRecord[], cloud: MenuSnaps
   return [...new Set([...localMap.keys(), ...cloudMap.keys()])]
     .filter((id) => localMap.get(id) !== cloudMap.get(id)).sort();
 }
+
+export function assertLocalMenuStoreAlignment(storeId: string, localRecordCount: number, populatedStoreIds: string[]): void {
+  if (localRecordCount) return;
+  const mismatched = populatedStoreIds.filter((candidate) => candidate !== storeId);
+  if (mismatched.length) {
+    throw new Error(`No local menu records belong to configured Store ID '${storeId}'. Existing menu records belong to: ${mismatched.join(', ')}. Align POS_BRANCH_ID and the cloud POS_STORE_ID before synchronizing.`);
+  }
+}
 const headers = (config: ResolvedSyncConfig) => ({ 'content-type': 'application/json', 'x-sync-token': config.token! });
 
 async function push(config: ResolvedSyncConfig, includeDeferred = false): Promise<PhaseResult> {
@@ -133,6 +141,9 @@ export async function syncMenu(config: ResolvedSyncConfig): Promise<PhaseResult>
   const started = Date.now();
   try {
     const localRecords = await getLocalMenuSnapshot(config.storeId);
+    if (!localRecords.length) {
+      assertLocalMenuStoreAlignment(config.storeId, localRecords.length, await getLocalMenuStoreIds());
+    }
     const response = await fetch(syncEndpoint(config, SYNC_ENDPOINTS.menuReconcile.path), {
       method: SYNC_ENDPOINTS.menuReconcile.method,
       headers: headers(config),
