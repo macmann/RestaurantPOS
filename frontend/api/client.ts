@@ -20,6 +20,11 @@ type BillBreakdown = Awaited<ReturnType<typeof getBillCalculationBreakdown>>;
 type ReceiptPayload = Awaited<ReturnType<typeof getPrintedReceiptPayload>>;
 type MenuCategories = Awaited<ReturnType<typeof AdminMenuApi.list>>;
 export type DeploymentMode = 'POS' | 'CLOUD';
+export interface RuntimeCapabilitiesResponse {
+  deploymentMode: DeploymentMode;
+  capabilities: { operationalWrite: boolean; menuWrite: boolean; localHardware: boolean; localSyncConfiguration: boolean };
+  cloudMonitorRefreshMs: number;
+}
 type InventoryAlerts = Awaited<ReturnType<typeof InventoryAdminApi.listAlerts>>;
 type InventoryItems = Awaited<ReturnType<typeof InventoryAdminApi.listItems>>;
 type InventoryDeductionPolicy = Awaited<ReturnType<typeof InventoryAdminApi.getDeductionPolicy>>;
@@ -309,7 +314,8 @@ async function requestInProcess<T>(path: string, method: string, body: unknown, 
     }
     if (parts[2] === 'runtime' && method === 'GET') {
       const environment = await backendModule<any>('../../backend/config/environment.js');
-      return { deploymentMode: environment.isCloudDeployment() ? 'CLOUD' : 'POS' } as T;
+      const cloud = environment.isCloudDeployment();
+      return { deploymentMode: cloud ? 'CLOUD' : 'POS', capabilities: { operationalWrite: !cloud, menuWrite: true, localHardware: !cloud, localSyncConfiguration: !cloud }, cloudMonitorRefreshMs: 60_000 } as T;
     }
     if (parts[2] === 'printers' && parts[3] === 'status' && method === 'GET') {
       const printerStatus = await backendModule<any>('../../backend/hardware/printerStatus.js');
@@ -667,6 +673,14 @@ export class RestaurantApiClient {
 
   getSettings() {
     return this.request('/api/settings');
+  }
+
+  getRuntimeCapabilities(): Promise<RuntimeCapabilitiesResponse> {
+    return this.request<RuntimeCapabilitiesResponse>('/api/settings/runtime');
+  }
+
+  getSyncHealth(): Promise<Record<string, unknown>> {
+    return this.request<Record<string, unknown>>('/api/settings/sync-health');
   }
 
   getPrinterStatuses(): Promise<Record<string, PrinterStatus>> {

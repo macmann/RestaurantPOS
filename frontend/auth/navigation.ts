@@ -13,11 +13,13 @@ export interface AppRoute {
   navigationScope?: 'primary' | 'superadmin_settings' | 'hidden';
   /** Hide a primary route from users with these permissions when a higher-level workspace already contains it. */
   hideFromPrimaryWhenPermissions?: Action[];
+  /** Workspaces that only make sense beside the restaurant's local devices. */
+  localOnly?: boolean;
 }
 
 export const appRoutes: AppRoute[] = [
   { path: '#/dashboard', label: 'Dashboard', section: 'operations' },
-  { path: '#/order-station', label: 'Order station', section: 'operations', requiredPermissions: [Actions.CreateOrder] },
+  { path: '#/order-station', label: 'Order station', section: 'operations', requiredPermissions: [Actions.CreateOrder], localOnly: true },
   { path: '#/tables', label: 'Table floor', section: 'operations', requiredPermissions: [Actions.CreateOrder] },
   { path: '#/orders', label: 'Order', section: 'operations', requiredPermissions: [Actions.CreateOrder] },
   { path: '#/billing', label: 'Billing', section: 'operations', requiredPermissions: [Actions.ViewBill, Actions.CloseBill] },
@@ -27,15 +29,15 @@ export const appRoutes: AppRoute[] = [
   { path: '#/prep-stations', label: 'Prep boards', section: 'operations', requiredPermissions: [Actions.TransitionOrderStatus] },
   { path: '#/waiter-progress', label: 'Waiter progress', section: 'operations', requiredPermissions: [Actions.TransitionOrderStatus] },
   { path: '#/menu-admin', label: 'Menu admin', section: 'admin', requiredPermissions: [Actions.ManageMenu] },
-  { path: '#/table-admin', label: 'Table layout admin', section: 'admin', requiredPermissions: [Actions.ManageStaff] },
+  { path: '#/table-admin', label: 'Table layout admin', section: 'admin', requiredPermissions: [Actions.ManageStaff], localOnly: true },
   { path: '#/inventory-alerts', label: 'Inventory alerts', section: 'admin', requiredPermissions: [Actions.AdjustStock] },
   { path: '#/reports', label: 'Reports', section: 'admin', requiredPermissions: [Actions.ViewReports, Actions.ViewFinancialReports, Actions.ViewEmployeePerformanceReports, Actions.ViewVoidReports, Actions.ViewInventoryCostReports] },
   { path: '#/audit', label: 'Audit', section: 'admin', requiredPermissions: [Actions.ViewAudit] },
-  { path: '#/superadmin', label: 'Super admin panel', section: 'admin', requiredPermissions: [Actions.ManageSystem] },
-  { path: '#/localization', label: 'Localization', section: 'admin', requiredPermissions: [Actions.ManageSystem], navigationScope: 'superadmin_settings' },
-  { path: '#/bill-settings', label: 'Bill & printer settings', section: 'admin', requiredPermissions: [Actions.ManageSystem], navigationScope: 'superadmin_settings' },
-  { path: '#/cloud-sync-settings', label: 'Cloud Synchronization', section: 'admin', requiredPermissions: [Actions.ManageSystem], navigationScope: 'superadmin_settings' },
-  { path: '#/staff-settings', label: 'Staff & settings', section: 'admin', requiredPermissions: [Actions.ManageStaff], hideFromPrimaryWhenPermissions: [Actions.ManageSystem] },
+  { path: '#/superadmin', label: 'Super admin panel', section: 'admin', requiredPermissions: [Actions.ManageSystem], localOnly: true },
+  { path: '#/localization', label: 'Localization', section: 'admin', requiredPermissions: [Actions.ManageSystem], navigationScope: 'superadmin_settings', localOnly: true },
+  { path: '#/bill-settings', label: 'Bill & printer settings', section: 'admin', requiredPermissions: [Actions.ManageSystem], navigationScope: 'superadmin_settings', localOnly: true },
+  { path: '#/cloud-sync-settings', label: 'Cloud Synchronization', section: 'admin', requiredPermissions: [Actions.ManageSystem], navigationScope: 'superadmin_settings', localOnly: true },
+  { path: '#/staff-settings', label: 'Staff & settings', section: 'admin', requiredPermissions: [Actions.ManageStaff], hideFromPrimaryWhenPermissions: [Actions.ManageSystem], localOnly: true },
 ];
 
 export function canAccessRoute(route: AppRoute, permissions: Action[]): boolean {
@@ -46,8 +48,9 @@ export function accessibleRoutes(permissions: Action[]): AppRoute[] {
   return appRoutes.filter((route) => canAccessRoute(route, permissions));
 }
 
-export function visibleRoutes(permissions: Action[]): AppRoute[] {
+export function visibleRoutes(permissions: Action[], capabilities?: { localHardware: boolean; localSyncConfiguration: boolean }): AppRoute[] {
   return accessibleRoutes(permissions).filter((route) => {
+    if (route.localOnly && capabilities && !capabilities.localHardware) return false;
     if (route.navigationScope === 'superadmin_settings' || route.navigationScope === 'hidden') return false;
     return !route.hideFromPrimaryWhenPermissions?.some((permission) => permissions.includes(permission));
   });

@@ -316,8 +316,8 @@ export async function markInventoryDeductionCompleted(input: {
   });
 }
 
-export async function listInventoryWithBalances() {
-  const items = await listInventoryItems();
+export async function listInventoryWithBalances(branchId?: string) {
+  const items = (await listInventoryItems()).filter((item) => !branchId || item.branchId === branchId);
   return Promise.all(
     items.map(async (item) => ({
       ...item,
@@ -326,8 +326,8 @@ export async function listInventoryWithBalances() {
   );
 }
 
-export async function listLowStockAlerts(): Promise<LowStockAlert[]> {
-  const items = await listInventoryWithBalances();
+export async function listLowStockAlerts(branchId?: string): Promise<LowStockAlert[]> {
+  const items = await listInventoryWithBalances(branchId);
   const now = new Date().toISOString();
 
   return items

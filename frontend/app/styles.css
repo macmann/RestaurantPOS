@@ -701,6 +701,16 @@ button { min-height: var(--tap); touch-action: manipulation; }
   .superadmin-metrics, .superadmin-printers, .superadmin-monitor { grid-template-columns: 1fr; }
 }
 
+.cloud-monitor-banner { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin: 0 0 1rem; border: 1px solid #bae6fd; border-radius: 1rem; padding: .75rem 1rem; background: #f0f9ff; color: #0c4a6e; }
+.cloud-monitor-banner > div { display: grid; gap: .15rem; }
+.cloud-monitor-banner > div:last-child { text-align: right; }
+.cloud-monitor-banner strong { font-size: .92rem; }
+.cloud-monitor-banner span, .cloud-monitor-banner small { font-size: .76rem; font-weight: 750; }
+.cloud-monitor-banner--delayed { border-color: #fde68a; background: #fffbeb; color: #92400e; }
+.cloud-monitor-banner--remote-status-unknown, .cloud-monitor-banner--unknown { border-color: #e2e8f0; background: #f8fafc; color: #475569; }
+.cloud-operational-readonly button:disabled { cursor: not-allowed; opacity: .55; }
+@media (max-width: 620px) { .cloud-monitor-banner { align-items: flex-start; flex-direction: column; } .cloud-monitor-banner > div:last-child { text-align: left; } }
+
 /* Daily close report */
 .reports-page { gap: 1rem; }
 .reports-page .page-header { background: radial-gradient(circle at 88% 18%, rgb(255 255 255 / 18%), transparent 13rem), linear-gradient(135deg, #0f172a 0%, #115e59 48%, #2563eb 100%); }

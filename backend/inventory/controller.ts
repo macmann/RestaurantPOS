@@ -13,9 +13,9 @@ import {
 
 export const InventoryAdminApi = {
   createItem: (input: InventoryItemInput) => createInventoryMasterItem(input),
-  listItems: () => listInventoryWithBalances(),
+  listItems: (branchId?: string) => listInventoryWithBalances(branchId),
   addMovement: (input: StockMovementInput, actorUserId?: string) => appendStockMovement(input, actorUserId),
-  listAlerts: () => listLowStockAlerts(),
+  listAlerts: (branchId?: string) => listLowStockAlerts(branchId),
   getDeductionPolicy: () => getDeductionTriggerPolicy(),
   setDeductionPolicy: (user: AuthenticatedUser, policy: DeductionTriggerPolicy) => setDeductionTriggerPolicy(user, policy),
 };

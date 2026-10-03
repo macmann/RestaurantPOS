@@ -17,6 +17,8 @@ import { buildLocaleSwitchState, getLocaleResource, getTypographyForLocale, list
 import { buildEnglishMyanmarLocalizationMap, listEnglishMyanmarTranslationEntries, type EnglishMyanmarTranslationEntry, type SupportedLocale } from '../../backend/i18n/resources';
 import { getBusinessDayRange } from '../../shared/business-day';
 import { downloadReportCsv, printReport } from '../reports/export';
+import { canPerformOperationalWrite, deploymentRuntime, isCloudDeployment, loadDeploymentRuntime } from './deployment-mode';
+import { CloudMonitorRefreshController } from './cloud-monitor-refresh';
 
 const APP_NAME = 'SYM POS';
 
@@ -94,6 +96,7 @@ const root = rootElement;
 let session: BrowserSession | null = getStoredSession();
 
 function landingRoute(currentSession: BrowserSession | null): AppRoute {
+  if (isCloudDeployment()) return defaultRoute(currentSession?.permissions ?? []);
   if (currentSession) {
     const roles = Array.isArray(currentSession.user.role) ? currentSession.user.role : [currentSession.user.role];
     const preferredPath = roles.includes('waitstaff') ? '#/order-station'
@@ -107,6 +110,7 @@ function landingRoute(currentSession: BrowserSession | null): AppRoute {
   return defaultRoute(currentSession?.permissions ?? []);
 }
 
+const initialHashAbsent = !window.location.hash;
 let route = window.location.hash || landingRoute(session).path;
 let apiStatus = apiClient.getNetworkStatus();
 let apiStatusMessage = 'API connection healthy.';
@@ -121,6 +125,9 @@ let englishToMyanmarUiLabels: Record<string, string> = buildEnglishMyanmarLocali
 let cachedPrepStations: SuperadminPrepStation[] = normalizePrepStations(undefined);
 let sidebarCollapsed = window.localStorage.getItem('sym-pos-sidebar-collapsed') === 'true';
 let renderGeneration = 0;
+let cloudRefresh: CloudMonitorRefreshController | undefined;
+let cloudSyncHealth: Record<string, any> | undefined;
+let lastCloudRefresh: Date | undefined;
 
 apiClient.onNetworkStatus((status, detail) => {
   apiStatus = status;
@@ -379,7 +386,24 @@ function startHealthChecks(): void {
 }
 
 function shellRoutes(permissions: Action[]): AppRoute[] {
-  return visibleRoutes(permissions);
+  return visibleRoutes(permissions, deploymentRuntime().capabilities);
+}
+
+function relativeAge(seconds: number): string {
+  if (seconds < 60) return `${Math.max(0, Math.round(seconds))} seconds ago`;
+  if (seconds < 3_600) return `${Math.round(seconds / 60)} minutes ago`;
+  return `${Math.round(seconds / 3_600)} hours ago`;
+}
+
+function cloudMonitorBanner(): HTMLElement | undefined {
+  if (!isCloudDeployment()) return undefined;
+  const state = String(cloudSyncHealth?.state ?? 'unknown');
+  const banner = el('div', `cloud-monitor-banner cloud-monitor-banner--${state.toLowerCase().replace(/[^a-z]+/g, '-')}`);
+  const age = Number(cloudSyncHealth?.ageSeconds);
+  const freshness = Number.isFinite(age) ? `Last POS sync ${relativeAge(age)}` : 'Remote POS status unknown';
+  banner.innerHTML = `<div><strong>Cloud Monitoring</strong><span>Operational controls disabled</span></div><div><span>${escapeHtml(freshness)}</span><small>Last refreshed: ${lastCloudRefresh ? lastCloudRefresh.toLocaleTimeString() : 'waiting for first refresh'}</small></div>`;
+  banner.setAttribute('role', 'status');
+  return banner;
 }
 
 function shellRouteMatches(item: AppRoute, currentHash: string, current: AppRoute): boolean {
@@ -478,7 +502,10 @@ function renderShell(content: HTMLElement): void {
   banner.setAttribute('role', 'status');
   banner.setAttribute('aria-live', 'polite');
   updateNetworkBanner(banner);
-  main.append(mobileNav, tabletNav, banner, content);
+  main.append(mobileNav, tabletNav, banner);
+  const cloudBanner = cloudMonitorBanner();
+  if (cloudBanner) main.append(cloudBanner);
+  main.append(content);
   startHealthChecks();
   layout.append(sidebar, main);
   root.replaceChildren(layout);
@@ -1354,8 +1381,8 @@ async function renderKdsStation(station: string, stationLabel?: string): Promise
     `;
     ticket.querySelector('.ticket-head')?.append(badge(item.progress, item.progress));
     const actions = ticket.querySelector<HTMLElement>('.ticket-actions')!;
-    if (activeTab === 'history') {
-      actions.append(el('small', 'muted', 'Moved to history when marked ready.'));
+    if (activeTab === 'history' || !canPerformOperationalWrite()) {
+      actions.append(el('small', 'muted', activeTab === 'history' ? 'Moved to history when marked ready.' : 'View only in Cloud Monitoring.'));
     } else {
       for (const next of ['preparing', 'ready'] as const) {
         const button = el('button', next === item.progress ? 'secondary' : '', next === 'preparing' ? 'Start prep' : 'Mark ready');
@@ -1410,7 +1437,7 @@ async function renderWaiterProgress(): Promise<HTMLElement> {
 
 async function renderMenuAdmin(): Promise<HTMLElement> {
   const canEditMenuItems = Boolean(session?.permissions.includes(Actions.ManageMenu));
-  const section = page('Menu admin', canEditMenuItems ? 'Create, edit, delete, route, and promote menu items.' : 'Create items, route them to configured prep stations, toggle availability, and flag promotions.');
+  const section = page('Menu admin', isCloudDeployment() ? 'Menu configuration can be edited remotely and will synchronize to the restaurant POS.' : canEditMenuItems ? 'Create, edit, delete, route, and promote menu items.' : 'Create items, route them to configured prep stations, toggle availability, and flag promotions.');
   const state = await loadAdminMenuDashboard();
   const settings = normalizeOperationalSettings(await apiClient.getSettings());
   const stationOptions = (selected?: string) => settings.prepStations.map((station) => `<option value="${escapeHtml(station.id)}" ${station.id === selected ? 'selected' : ''}>${escapeHtml(station.displayName)}</option>`).join('');
@@ -1452,7 +1479,7 @@ async function renderMenuAdmin(): Promise<HTMLElement> {
     <article class="card admin-card bulk-upload-card">
       <h3>Bulk upload menu</h3>
       <p class="muted">Preview an .xlsx worksheet named <strong>Bulk Upload</strong> with Name, Category, Station, and Price columns.</p>
-      <button type="button" class="bulk-upload-open">Bulk Upload</button>
+      ${isCloudDeployment() ? '' : '<button type="button" class="bulk-upload-open">Bulk Upload</button>'}
     </article>
   `;
   if (state.error) panel.prepend(el('p', 'form-error', state.error));
@@ -2303,6 +2330,8 @@ async function renderReports(): Promise<HTMLElement> {
   const actions = el('div', 'page-actions daily-summary-actions');
   const printButton = el('button', 'secondary-button', 'Print report');
   printButton.type = 'button';
+  printButton.disabled = !deploymentRuntime().capabilities.localHardware;
+  if (printButton.disabled) printButton.title = 'Available only on the restaurant POS.';
   printButton.addEventListener('click', async () => {
     await apiClient.auditReportExport(report.reportId, 'print', filters);
     if (!printReport(report.export as any, reportTimezone)) window.alert('Allow pop-ups to print this report.');
@@ -2310,7 +2339,7 @@ async function renderReports(): Promise<HTMLElement> {
   const csvButton = el('button', 'secondary-button', 'Download CSV');
   csvButton.type = 'button';
   csvButton.addEventListener('click', async () => {
-    await apiClient.auditReportExport(report.reportId, 'csv', filters);
+    if (!isCloudDeployment()) await apiClient.auditReportExport(report.reportId, 'csv', filters);
     downloadReportCsv(report.export as any, `daily-summary-${summary.businessDate}.csv`);
   });
   actions.append(printButton, csvButton);
@@ -2363,8 +2392,11 @@ async function renderReports(): Promise<HTMLElement> {
     await apiClient.auditReportExport(productMix.reportId, 'print', filters);
     if (!printReport(productMix.export as any, reportTimezone)) window.alert('Allow pop-ups to print this report.');
   });
+  const mixPrint = mixPanel.querySelector<HTMLButtonElement>('[data-mix-print]')!;
+  mixPrint.disabled = !deploymentRuntime().capabilities.localHardware;
+  if (mixPrint.disabled) mixPrint.title = 'Available only on the restaurant POS.';
   mixPanel.querySelector<HTMLButtonElement>('[data-mix-csv]')!.addEventListener('click', async () => {
-    await apiClient.auditReportExport(productMix.reportId, 'csv', filters);
+    if (!isCloudDeployment()) await apiClient.auditReportExport(productMix.reportId, 'csv', filters);
     downloadReportCsv(productMix.export as any, `product-mix-${dimensionSelect.value}.csv`);
   });
   renderMixTable(); reportPanels.sales.append(mixPanel);
@@ -2377,7 +2409,7 @@ async function renderReports(): Promise<HTMLElement> {
   const stationCsv = el('button', 'secondary-button', 'Download station CSV');
   stationCsv.type = 'button';
   stationCsv.addEventListener('click', async () => {
-    await apiClient.auditReportExport(stationReport.reportId, 'csv', filters);
+    if (!isCloudDeployment()) await apiClient.auditReportExport(stationReport.reportId, 'csv', filters);
     downloadReportCsv(stationReport.export as any, `station-report-${params.get('stationId') ?? 'all'}.csv`);
   });
   stationPanel.prepend(stationCsv);
@@ -3668,6 +3700,24 @@ async function renderRestaurantPos(): Promise<HTMLElement> {
 
 async function renderRoute(generation: number): Promise<void> {
   if (!session) return renderLogin();
+  await loadDeploymentRuntime(() => apiClient.getRuntimeCapabilities());
+  if (initialHashAbsent && deploymentRuntime().deploymentMode === 'POS' && route === '#/dashboard') route = landingRoute(session).path;
+  const requestedRoute = activeRoute();
+  if (isCloudDeployment() && requestedRoute.localOnly) {
+    navigate('#/dashboard');
+    return;
+  }
+  if (isCloudDeployment()) {
+    try { cloudSyncHealth = await apiClient.getSyncHealth(); } catch { cloudSyncHealth = undefined; }
+    lastCloudRefresh = new Date();
+    if (!cloudRefresh) {
+      cloudRefresh = new CloudMonitorRefreshController(async () => { await render(); }, deploymentRuntime().cloudMonitorRefreshMs, true);
+      cloudRefresh.start();
+    }
+  } else if (cloudRefresh) {
+    cloudRefresh.stop();
+    cloudRefresh = undefined;
+  }
   await syncApplicationLocale();
   const current = activeRoute();
   let content: HTMLElement;
@@ -3742,8 +3792,30 @@ async function renderRoute(generation: number): Promise<void> {
   // be loading when the waiter submits the order). Never let an older response
   // replace the newer submitted-order view with its stale pending-order cart.
   if (generation !== renderGeneration) return;
+  applyDeploymentActionPolicy(content, current.path);
   renderShell(content);
   localizeElementText(root);
+}
+
+function applyDeploymentActionPolicy(content: HTMLElement, path: string): void {
+  if (!isOperationalMonitoringRoute(path) || canPerformOperationalWrite()) return;
+  content.classList.add('cloud-operational-readonly');
+  content.querySelectorAll<HTMLFormElement>('form').forEach((form) => {
+    form.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | HTMLButtonElement>('input, select, textarea, button').forEach((control) => {
+      control.disabled = true;
+      control.title = 'Available only on the restaurant POS.';
+    });
+  });
+  content.querySelectorAll<HTMLButtonElement>('button').forEach((button) => {
+    const inspectControl = button.classList.contains('table-tile') || button.matches('[data-tab], [data-station], [data-flow-action]');
+    if (inspectControl) return;
+    button.disabled = true;
+    button.title = 'Available only on the restaurant POS.';
+  });
+}
+
+function isOperationalMonitoringRoute(path: string): boolean {
+  return ['#/tables', '#/orders', '#/billing', '#/kitchen', '#/bar', '#/prep-stations', '#/inventory-alerts'].includes(path);
 }
 
 function render(): Promise<void> {
@@ -3763,6 +3835,12 @@ function render(): Promise<void> {
       const retry = el('button', 'secondary-button', 'Retry');
       retry.addEventListener('click', () => void render());
       failed.append(detail, retry);
+      renderShell(failed);
+      return;
+    }
+    if (isCloudDeployment()) {
+      const failed = page('Cloud mirror unavailable', 'Cloud mirror data is currently unavailable. This does not necessarily mean the restaurant POS is offline.');
+      failed.append(el('p', 'pos-status report-failure', caught instanceof Error ? caught.message : 'Unknown monitoring error.'));
       renderShell(failed);
       return;
     }
