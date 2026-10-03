@@ -45,7 +45,7 @@ import { TablesApi } from './tables/controller';
 import type { AuthenticatedUser } from './auth/policies';
 import { loginWithPassword, logoutSession } from './auth/service';
 import { getIdempotencyRecord, idempotencyFingerprint, idempotencyMatches, saveIdempotencyRecord } from './network-idempotency';
-import { appMode } from './sync/service';
+import { appMode, syncHealth } from './sync/service';
 import { buildCloudRouter, buildCustomerRouter, buildManagerRouter } from './sync/router';
 import { SyncWorker, clearLocalSyncDiagnosticError, getLocalSyncRuntimeStatus, getSyncDiagnostics, runMenuSync, runSyncCycle } from './sync/worker';
 import { LOCAL_SYNC_PROTOCOL_VERSION, loadSyncConfig, publicSyncConfig, resolvedSyncEndpoints, saveSyncConfig, SYNC_ENDPOINTS, syncEndpoint, validateSyncSettings } from './sync/config';
@@ -254,7 +254,7 @@ function buildMenuRouter(): Router {
 
 function buildTablesRouter(): Router {
   const router = express.Router();
-  router.get('/', send((req) => TablesApi.listFloor(optionalString(queryObject(req).branchId) ?? getCurrentBranchId())));
+  router.get('/', send((req) => TablesApi.listFloor(requireUser(req).branchId ?? getCurrentBranchId())));
   router.post('/', authorize(Actions.CreateOrder), send((req) => TablesApi.createTable(bodyObject(req) as any), 201));
   router.patch('/:tableId', authorize(Actions.CreateOrder), send((req) => TablesApi.updateTable(stringParam(req, 'tableId'), bodyObject(req) as any)));
   router.delete('/:tableId', authorize(Actions.CreateOrder), send((req) => TablesApi.removeTable(stringParam(req, 'tableId'))));
@@ -270,9 +270,13 @@ function buildTablesRouter(): Router {
 
 function buildOrdersRouter(): Router {
   const router = express.Router();
-  router.get('/', send(() => listOrders()));
+  router.get('/', send(async (req) => (await listOrders()).filter((order) => order.branchId === requireUser(req).branchId)));
   router.post('/', authorize(Actions.CreateOrder), send((req) => createOrderDraft(requireUser(req), bodyObject(req) as any), 201));
-  router.get('/:orderId', send((req) => getOrder(stringParam(req, 'orderId'))));
+  router.get('/:orderId', send(async (req) => {
+    const order = await getOrder(stringParam(req, 'orderId'));
+    if (!order || order.branchId !== requireUser(req).branchId) throw new HttpError(404, 'Order not found.');
+    return order;
+  }));
   router.patch('/:orderId', authorize(Actions.EditOrder), send((req) => editOrderBeforePayment(requireUser(req), stringParam(req, 'orderId'), bodyObject(req) as any)));
   router.post('/:orderId/cancel', authorize(Actions.EditOrder), send((req) => cancelOrder(requireUser(req), stringParam(req, 'orderId'), bodyObject(req) as any)));
   router.post('/:orderId/status', authorize(Actions.TransitionOrderStatus), send((req) => {
@@ -293,7 +297,7 @@ function buildKdsRouter(): Router {
   router.use(authorize(Actions.TransitionOrderStatus));
   router.get('/', send((req) => {
     const query = queryObject(req);
-    return listStationQueue(optionalString(query.station) as Station | undefined, parseKdsView(query.view));
+    return listStationQueue(optionalString(query.station) as Station | undefined, parseKdsView(query.view), requireUser(req).branchId);
   }));
   router.patch('/orders/:orderId/items/:orderItemId/progress', send((req) => {
     const body = bodyObject(req);
@@ -310,7 +314,7 @@ function buildKdsRouter(): Router {
       res.write(`data: ${JSON.stringify(event)}\n\n`);
     };
     const query = queryObject(req);
-    writeEvent({ type: 'snapshot', at: new Date().toISOString(), payload: await listStationQueue(optionalString(query.station) as Station | undefined, parseKdsView(query.view)) });
+    writeEvent({ type: 'snapshot', at: new Date().toISOString(), payload: await listStationQueue(optionalString(query.station) as Station | undefined, parseKdsView(query.view), requireUser(req).branchId) });
     const unsubscribe = onKdsEvent(writeEvent);
     req.on('close', unsubscribe);
   }));
@@ -342,10 +346,10 @@ function buildBillingRouter(): Router {
 function buildInventoryRouter(): Router {
   const router = express.Router();
   router.use(authorize(Actions.AdjustStock));
-  router.get('/items', send(() => InventoryAdminApi.listItems()));
+  router.get('/items', send((req) => InventoryAdminApi.listItems(requireUser(req).branchId)));
   router.post('/items', send((req) => InventoryAdminApi.createItem(bodyObject(req) as any), 201));
   router.post('/movements', send((req) => InventoryAdminApi.addMovement(bodyObject(req) as any, req.user!.id), 201));
-  router.get('/alerts', send(() => InventoryAdminApi.listAlerts()));
+  router.get('/alerts', send((req) => InventoryAdminApi.listAlerts(requireUser(req).branchId)));
   router.get('/deduction-policy', send(() => InventoryAdminApi.getDeductionPolicy()));
   router.put('/deduction-policy', send((req) => InventoryAdminApi.setDeductionPolicy(requireUser(req), requiredString(bodyObject(req).policy, 'policy') as any)));
   return router;
@@ -399,12 +403,41 @@ function buildUsersRouter(): Router {
 
 function buildSettingsRouter(): Router {
   const router = express.Router();
+  const readableSettings = () => {
+    const pos = getPosOperationalSettings();
+    if (!isCloudDeployment()) return pos;
+    const { printers: _printers, printerAssignments: _assignments, ...cloudSafe } = pos;
+    return cloudSafe;
+  };
   // This deliberately exposes only the non-sensitive deployment discriminator.
   // The client uses it to select the narrowly scoped cloud manager API; authorization
   // remains entirely server-side on both route families.
-  router.get('/runtime', send(() => ({ deploymentMode: isCloudDeployment() ? 'CLOUD' : 'POS' })));
-  router.get('/', send(() => ({ branch: getRuntimeSettings().branch, inventoryDeductionPolicy: InventoryAdminApi.getDeductionPolicy(), pos: getPosOperationalSettings() })));
-  router.get('/printers/status', authorize(Actions.ManageSystem), send(() => getPrinterStatuses()));
+  router.get('/runtime', send(() => {
+    const cloud = isCloudDeployment();
+    const configuredRefresh = Number(process.env.CLOUD_MONITOR_REFRESH_MS ?? 60_000);
+    return {
+      deploymentMode: cloud ? 'CLOUD' : 'POS',
+      capabilities: {
+        operationalWrite: !cloud,
+        menuWrite: true,
+        localHardware: !cloud,
+        localSyncConfiguration: !cloud,
+      },
+      cloudMonitorRefreshMs: Number.isFinite(configuredRefresh) && configuredRefresh >= 1_000 ? configuredRefresh : 60_000,
+    };
+  }));
+  router.get('/sync-health', send((req) => {
+    // Never accept a caller-provided store/branch identifier. Cloud monitoring is
+    // pinned to the deployment store (or the authenticated user's assigned branch).
+    const user = requireUser(req);
+    const storeId = process.env.POS_STORE_ID?.trim() || user.branchId || getCurrentBranchId();
+    return syncHealth(storeId);
+  }));
+  router.get('/', send(() => ({ branch: getRuntimeSettings().branch, inventoryDeductionPolicy: InventoryAdminApi.getDeductionPolicy(), pos: readableSettings() })));
+  router.get('/printers/status', authorize(Actions.ManageSystem), send(() => {
+    if (isCloudDeployment()) throw new HttpError(404, 'Local printer status is available only on a POS deployment.');
+    return getPrinterStatuses();
+  }));
   router.get('/system/status', authorize(Actions.ManageSystem), send(() => getSystemStatus()));
   router.get('/cloud-connection', authorize(Actions.ManageSystem), send(async () => {
     if (!isCloudDeployment()) throw Object.assign(new Error('Cloud connection information is available only on a cloud deployment.'), { statusCode: 404 });

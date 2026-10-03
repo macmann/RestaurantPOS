@@ -95,9 +95,9 @@ function matchesKdsView(row: KdsItemState, view: KdsView): boolean {
   return row.progress === 'queued' || row.progress === 'preparing';
 }
 
-export async function getKdsSnapshot(station?: Station, view: KdsView = 'all'): Promise<KdsSnapshot> {
+export async function getKdsSnapshot(station?: Station, view: KdsView = 'all', branchId?: string): Promise<KdsSnapshot> {
   const nowMs = Date.now();
-  const rows = await listKdsItemStates();
+  const rows = (await listKdsItemStates()).filter((row) => !branchId || row.branchId === branchId);
   const filtered = rows.filter((row) => (!station || row.station === station) && matchesKdsView(row, view));
 
   const stationIds = new Set(listPrepStations().map((row) => row.id));
