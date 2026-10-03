@@ -11,6 +11,8 @@ SYM POS is a TypeScript, browser-based point-of-sale system for restaurants. It 
 - [Prerequisites](#prerequisites)
 - [Installation](#installation)
 - [Configuration](#configuration)
+- [Menu bulk import](#menu-bulk-import)
+- [Local-first cloud synchronization](#local-first-cloud-synchronization)
 - [Running the application](#running-the-application)
 - [PostgreSQL setup](#postgresql-setup)
 - [Printer setup](#printer-setup)
@@ -25,8 +27,10 @@ SYM POS is a TypeScript, browser-based point-of-sale system for restaurants. It 
 - Branch-scoped records and reporting with role/permission enforcement at API boundaries.
 - Order lifecycle, item notes and modifiers, KDS progress, split bills, discounts, tax, payments, debt settlement, and receipt generation.
 - Inventory stock movements, low-stock alerts, and optional menu-to-inventory linking.
-- English/Myanmar UI resources and configurable receipt/business information.
+- English/Myanmar UI resources, editable label mappings, localized bulk-import controls, and configurable receipt/business information.
 - In-memory mode for a zero-database trial and PostgreSQL repositories for durable operation.
+- Transactional `.xlsx` menu bulk import with validation preview, automatic category/station creation, and sync-event queuing.
+- Local-first, bidirectional menu synchronization with durable queues, snapshot reconciliation, manual controls, health status, and store-partition diagnostics.
 - Retry-aware browser networking, optimistic concurrency, and idempotency-key replay protection.
 - Simulated, Windows spooler, and TCP network printer transports.
 
@@ -256,6 +260,23 @@ Environment variables are read when the Node process starts. Restart it after ch
 | `TIMEZONE` | operator supplied | Host/deployment timezone. Set it to the restaurant's IANA timezone. |
 | `LOG_LEVEL`, `AUDIT_RETENTION_DAYS` | template values | Operational policy values reserved for logging/retention tooling. |
 
+### Cloud synchronization settings
+
+Cloud synchronization is optional and requires PostgreSQL. Local POS deployments use `APP_MODE=POS`; the internet-facing peer uses `APP_MODE=CLOUD`. The Super Admin settings screen can persist the local connection values and takes precedence over environment bootstrap values.
+
+| Variable | Purpose |
+| --- | --- |
+| `APP_MODE` | Selects the local `POS` worker or cloud sync-service behavior. |
+| `CLOUD_API_URL` | Cloud base URL used as the local bootstrap/fallback destination. |
+| `SYNC_API_TOKEN` | Shared bootstrap token. Supply it through secret management, never source control. |
+| `SYNC_SETTINGS_ENCRYPTION_KEY` | Local key used to encrypt a token saved from Platform Settings. |
+| `POS_STORE_ID` | Stable synchronization partition; it must match `POS_BRANCH_ID` and the cloud assignment. |
+| `POS_DEVICE_ID` | Unique identity for this restaurant server/device. |
+| `PUBLIC_BASE_URL` | Authoritative public origin advertised by a cloud deployment. |
+| `SYNC_PUSH_INTERVAL_MS`, `SYNC_POLL_INTERVAL_MS`, `SYNC_REQUEST_TIMEOUT_MS`, `SYNC_BATCH_SIZE`, `SYNC_SUCCESS_RETENTION_DAYS` | Worker schedule, request, batching, and retention bootstrap values. |
+
+See the [cloud synchronization configuration guide](docs/cloud-sync-configuration.md) for secure setup, reconciliation behavior, and Store ID troubleshooting.
+
 ### Printer defaults
 
 Receipt variables use the `POS_RECEIPT_*` prefix. Kitchen and bar use `POS_KITCHEN_*` and `POS_BAR_*` respectively.
@@ -273,6 +294,20 @@ Receipt variables use the `POS_RECEIPT_*` prefix. Kitchen and bar use `POS_KITCH
 | `PRINTER_AUTO_PRINT` | enabled for prep stations | Automatic station printing. Receipt auto-print defaults off. |
 
 The `.env.example` contains a safe starting template. Values documented as “reserved” may not yet alter runtime behavior; they are included for deployment consistency.
+
+## Menu bulk import
+
+Authorized menu administrators can upload an Excel `.xlsx` workbook from **Menu admin → Bulk Upload**. The workbook must have a **Bulk Upload** worksheet with `Name`, `Category`, `Station`, and `Price` columns and is limited to 5 MB and 5,000 rows. SYM POS validates the file and shows creates, updates, unchanged rows, dependencies, and errors before any data is written. Confirmation creates categories/stations as needed and applies the complete import transactionally; local PostgreSQL installations also queue the resulting menu synchronization events.
+
+See [Menu bulk import](docs/menu-bulk-import.md) for workbook rules, the operator workflow, synchronization expectations, and safety checks.
+
+## Local-first cloud synchronization
+
+A PostgreSQL-backed restaurant POS can continue serving its LAN while a worker exchanges durable events with a cloud deployment. Menu changes are bidirectional: queue delivery handles routine changes and versioned snapshot reconciliation repairs missed history. Both sides resolve records by update time with a deterministic tie-break, preserve deletion tombstones, and avoid echoing changes received from the peer.
+
+A Super Admin can configure, test, enable, and manually run synchronization at **Platform Settings → Cloud Synchronization**. The page exposes push/pull/heartbeat health, resolved endpoints, recent activity, queues, safe error detail, and menu records grouped by Store ID. **Sync menu only** performs a complete menu merge. The cloud-side **Cloud Connection Information** page provides its public URL, readiness information, resolved Store ID, routes, and a secret-free local configuration package.
+
+`POS_STORE_ID`, local `POS_BRANCH_ID`, and the cloud store assignment must identify the same partition. A mismatched populated partition now stops menu reconciliation with an explicit diagnostic instead of reporting a misleading successful zero-record exchange. See [Cloud synchronization configuration](docs/cloud-sync-configuration.md).
 
 ## Running the application
 
@@ -518,6 +553,8 @@ Restores should be rehearsed into a separate database using the matching Postgre
 
 - [Architecture decisions](docs/architecture.md)
 - [LAN deployment guide](docs/deployment-lan.md)
+- [Cloud synchronization configuration](docs/cloud-sync-configuration.md)
+- [Menu bulk import](docs/menu-bulk-import.md)
 - [Entity relationship model](docs/erd.md)
 - [Role/permission matrix](docs/rbac-matrix.md)
 - [Pricing rules](docs/pricing-rules.md)

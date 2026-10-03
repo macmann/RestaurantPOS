@@ -234,6 +234,12 @@ Authorized users may choose **When prep starts**, **When item completes**, or **
 
 Prefer **Hide** for temporarily unavailable products. **Delete** is irreversible and should be reserved for erroneous/unused records after checking with management.
 
+#### Bulk upload an Excel menu
+
+For a large menu, select **Bulk Upload** and choose an `.xlsx` file no larger than 5 MB with no more than 5,000 rows. It must contain a worksheet named **Bulk Upload** with `Name`, `Category`, `Station`, and `Price` columns. Review the preview totals, every row action, and any category or station that will be created. Validation errors must be corrected in the workbook and previewed again.
+
+Select **Import _n_ Items** only after the preview is correct. The confirmation is transactional: all accepted category, station, and item changes succeed together or are rolled back. Missing workbook items are not deleted. After completion, select **View Menu**, verify representative prices and routing, place a test order, and—when cloud sync is enabled—confirm the queued changes reach the matching Store ID. See [Menu bulk import](docs/menu-bulk-import.md) for the complete format and safety checklist.
+
 ### 11. Table layout administration
 
 #### Add a table
@@ -542,6 +548,12 @@ Wastage အတွက် ပျက်စီး/ဆုံးရှုံးသည�
 4. Routing ပြောင်းပြီးလျှင် စမ်းသပ် order တစ်ခုဖြင့် board/printer မှန်ကန်မှု စစ်ပါ။
 
 ယာယီကုန်နေသော item အတွက် **Hide** ကို သုံးပါ။ **Delete** သည် ပြန်မရသောကြောင့် မှားယွင်း/မသုံးသည့် record ကို management နှင့် စစ်ပြီးမှသာ သုံးပါ။
+
+#### Excel ဖိုင်ဖြင့် မီနူး အစုလိုက်တင်ရန်
+
+မီနူးအများအပြား တင်ရန် **Bulk Upload** ကိုရွေးပြီး 5 MB ထက်မကြီး၊ အတန်း 5,000 ထက်မပိုသော `.xlsx` ဖိုင်ကို ရွေးပါ။ ဖိုင်တွင် **Bulk Upload** အမည်ရှိ worksheet နှင့် `Name`၊ `Category`၊ `Station`၊ `Price` ကော်လံများ ပါရပါမည်။ Preview တွင် စုစုပေါင်းအရေအတွက်၊ အတန်းတစ်ခုစီ၏ လုပ်ဆောင်ချက်နှင့် အသစ်ဖန်တီးမည့် category/station များကို သေချာစစ်ပါ။ Validation error ရှိပါက workbook ကိုပြင်ပြီး preview အသစ်ပြန်လုပ်ပါ။
+
+Preview မှန်ကန်မှသာ **Import _n_ Items** ကို တစ်ကြိမ်နှိပ်ပါ။ အတည်ပြုတင်သွင်းမှုသည် transaction တစ်ခုတည်းဖြစ်သောကြောင့် category၊ station နှင့် item အားလုံး အတူအောင်မြင်မည်၊ မအောင်မြင်ပါက အားလုံးပြန်ရုပ်သိမ်းမည်။ Workbook တွင်မပါသော လက်ရှိ item များကို မဖျက်ပါ။ ပြီးဆုံးပါက **View Menu** ဖြင့် စျေးနှုန်းနှင့် routing ကိုစစ်၊ test order တင်ပြီး cloud sync ဖွင့်ထားလျှင် Store ID တူသော cloud သို့ queued change များရောက်ကြောင်း စစ်ပါ။ Format နှင့် ဘေးကင်းရေးစစ်ဆေးချက်အပြည့်အစုံကို [Menu bulk import](docs/menu-bulk-import.md) တွင် ကြည့်ပါ။
 
 ### ၁၁။ Table layout administration
 
