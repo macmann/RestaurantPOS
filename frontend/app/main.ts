@@ -1458,6 +1458,12 @@ async function renderMenuAdmin(): Promise<HTMLElement> {
   if (state.error) panel.prepend(el('p', 'form-error', state.error));
   const list = el('div', 'menu-admin-list');
   if (!categories.length) list.append(emptyState('No categories yet. Create one to start building the menu.'));
+  if (categories.some((category) => category.items.length)) {
+    const columnHeader = el('div', 'menu-admin-column-header');
+    columnHeader.setAttribute('aria-hidden', 'true');
+    columnHeader.innerHTML = '<span>Menu item</span><span>Availability</span><span>Promotion</span><span>Actions</span>';
+    list.append(columnHeader);
+  }
   for (const category of categories) {
     const card = el('article', 'card menu-category-admin');
     const categoryHeader = el('div', 'menu-category-header');
@@ -1489,9 +1495,12 @@ async function renderMenuAdmin(): Promise<HTMLElement> {
     for (const item of category.items) {
       const row = el('div', 'menu-admin-row');
       let editForm: HTMLFormElement | undefined;
-      row.innerHTML = `<div><strong>${escapeHtml(item.name)}</strong><small>${money(item.price)} · ${escapeHtml(item.prepStation ?? 'service')}${item.description ? ` · ${escapeHtml(item.description)}` : ''}</small></div>`;
-      row.append(badge(item.isAvailable ? 'available' : 'hidden', item.isAvailable ? 'ready' : 'queued'));
-      row.append(badge(item.isPromotional ? 'promo' : 'regular'));
+      row.innerHTML = `<div class="menu-admin-item"><strong>${escapeHtml(item.name)}</strong><small>${money(item.price)} · ${escapeHtml(item.prepStation ?? 'service')}${item.description ? ` · ${escapeHtml(item.description)}` : ''}</small></div>`;
+      const availabilityBadge = badge(item.isAvailable ? 'available' : 'hidden', item.isAvailable ? 'ready' : 'queued');
+      availabilityBadge.classList.add('menu-admin-availability');
+      const promotionBadge = badge(item.isPromotional ? 'promo' : 'regular');
+      promotionBadge.classList.add('menu-admin-promotion');
+      row.append(availabilityBadge, promotionBadge);
       const actions = el('div', 'menu-admin-actions');
       const availability = el('button', 'secondary', item.isAvailable ? 'Hide' : 'Show');
       availability.type = 'button';
