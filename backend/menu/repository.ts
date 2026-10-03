@@ -43,6 +43,19 @@ export interface MenuItemRecord {
 const categories = new Map<string, MenuCategoryRecord>();
 const items = new Map<string, MenuItemRecord>();
 
+export interface MemoryMenuSnapshot { categories: MenuCategoryRecord[]; items: MenuItemRecord[] }
+
+/** Transaction fallback used only by the in-memory development repository. */
+export function snapshotMemoryMenu(): MemoryMenuSnapshot {
+  return { categories: structuredClone([...categories.values()]), items: structuredClone([...items.values()]) };
+}
+
+export function restoreMemoryMenu(snapshot: MemoryMenuSnapshot): void {
+  categories.clear(); items.clear();
+  snapshot.categories.forEach((row) => categories.set(row.id, structuredClone(row)));
+  snapshot.items.forEach((row) => items.set(row.id, structuredClone(row)));
+}
+
 export async function listCategories(): Promise<MenuCategoryRecord[]> {
   const rows = isSqlRepositoryEnabled() ? await listRecords<MenuCategoryRecord>('menu:categories') : [...categories.values()];
   return rows.filter((row) => !row.deletedAt).sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));

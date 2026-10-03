@@ -7,6 +7,7 @@ import { createTable } from '../backend/tables/service';
 import type { TableOrderItem } from '../backend/billing/repository';
 import { assert } from './helpers/assertions';
 import { apiRequest, login, seedLoginUser, startTestServer } from './helpers/apiTestHarness';
+import { createXlsxFixture } from './helpers/xlsx';
 
 async function runApiIntegration(): Promise<void> {
   updatePosOperationalSettings({ menuInventoryLinkEnabled: true });
@@ -38,6 +39,18 @@ async function runApiIntegration(): Promise<void> {
     assert(superadmin.user.role === 'superadmin', 'Default superadmin should have the superadmin role.');
     assert(manager.permissions.includes('menu:manage'), 'Manager login should return real RBAC permissions.');
     assert(cashier.permissions.includes('orders:transition_status'), 'Cashier login should include order transition permission for checkout table close flows.');
+
+    const upload = new FormData();
+    upload.append('file', new Blob([Uint8Array.from(createXlsxFixture([['Name', 'Category', 'Station', 'Price'], ['API Bulk Salad', 'API Bulk', 'Salad', 4500]]))]), 'api-menu.xlsx');
+    const forbiddenBulkPreview = await fetch(`${server.baseUrl}/api/menu/bulk-import/preview`, { method: 'POST', headers: { authorization: `Bearer ${waiter.token}` }, body: upload });
+    assert(forbiddenBulkPreview.status === 403, `Users without ManageMenu should be denied bulk preview, got ${forbiddenBulkPreview.status}.`);
+    const managerUpload = new FormData();
+    managerUpload.append('file', new Blob([Uint8Array.from(createXlsxFixture([['Name', 'Category', 'Station', 'Price'], ['API Bulk Salad', 'API Bulk', 'Salad', 4500]]))]), 'api-menu.xlsx');
+    const bulkPreviewResponse = await fetch(`${server.baseUrl}/api/menu/bulk-import/preview`, { method: 'POST', headers: { authorization: `Bearer ${manager.token}` }, body: managerUpload });
+    const bulkPreview = await bulkPreviewResponse.json() as { data: { token: string; stations: { toCreate: string[] }; items: { create: number } } };
+    assert(bulkPreviewResponse.status === 200 && bulkPreview.data.items.create === 1 && bulkPreview.data.stations.toCreate.includes('Salad'), 'ManageMenu bulk preview should validate dependencies without writing.');
+    const bulkImportResponse = await apiRequest<{ data: { itemsCreated: number; stationsCreated: number } }>(server.baseUrl, '/api/menu/bulk-import', { method: 'POST', token: manager.token, body: { token: bulkPreview.data.token } });
+    assert(bulkImportResponse.status === 200 && bulkImportResponse.body.data.itemsCreated === 1 && bulkImportResponse.body.data.stationsCreated === 1, 'Confirmed bulk import should create the item and station.');
 
     const managerSettingsUpdate = await apiRequest(server.baseUrl, '/api/settings', {
       method: 'PUT',

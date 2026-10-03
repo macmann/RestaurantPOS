@@ -205,6 +205,7 @@ function normalizePrinters(input: Partial<Record<string, Partial<PrinterDeviceCo
   const printers = {} as PrinterSettings;
   const keys = new Set([...Object.keys(fallback), ...Object.keys(source)]);
   keys.add('receipt');
+  stations.forEach((station) => keys.add(station.id));
   for (const key of keys) {
     const station = stations.find((row) => row.id === key);
     const fallbackPrinter = fallback[key] ?? (key === 'receipt'

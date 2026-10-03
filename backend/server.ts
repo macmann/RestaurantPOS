@@ -17,6 +17,7 @@ import { listUsers } from './users/repository';
 import { ensureDefaultSuperadmin } from './users/bootstrap';
 import { activateUser, createStaffProfile, deactivateUser, updateStaffProfile } from './users/service';
 import { AdminMenuApi } from './menu/controller';
+import { BulkMenuImportApi, readWorkbookUpload } from './menu/bulkImport/controller';
 import { createOrderDraft, editOrderBeforePayment, cancelOrder, transitionOrderStatus, getOrder } from './orders/service';
 import { listOrders } from './orders/repository';
 import { listStationQueue, patchItemProgress, onKdsEvent } from './kds/controller';
@@ -230,6 +231,15 @@ function buildMenuRouter(): Router {
   const router = express.Router();
   router.get('/', send(() => AdminMenuApi.list()));
   router.use(authorize(Actions.ManageMenu));
+  router.post('/bulk-import/preview', asyncRoute(async (req, res) => {
+    if (appMode() !== 'POS') throw new HttpError(404, 'Menu bulk import is available only on a local POS deployment.');
+    const upload = await readWorkbookUpload(req);
+    res.json({ data: await BulkMenuImportApi.preview(requireUser(req), upload.filename, upload.buffer) });
+  }));
+  router.post('/bulk-import', send((req) => {
+    if (appMode() !== 'POS') throw new HttpError(404, 'Menu bulk import is available only on a local POS deployment.');
+    return BulkMenuImportApi.confirm(requireUser(req), requiredString(bodyObject(req).token, 'token'));
+  }));
   router.post('/categories', send((req) => AdminMenuApi.createCategory(bodyObject(req) as any), 201));
   router.patch('/categories/:categoryId', send((req) => AdminMenuApi.updateCategory(stringParam(req, 'categoryId'), bodyObject(req) as any)));
   router.delete('/categories/:categoryId', send((req) => AdminMenuApi.deleteCategory(stringParam(req, 'categoryId'))));
@@ -468,7 +478,7 @@ function mapErrorToHttp(error: unknown): { statusCode: number; message: string; 
   if (/forbidden|cannot .* permission|missing permission/i.test(message)) return { statusCode: 403, message };
   if (/not found|not exist/i.test(message)) return { statusCode: 404, message };
   if (/version conflict|already exists|already cancelled|already closed|active session already exists|cannot be modified|cannot be cancelled|cannot be voided|cannot close|cannot delete|missing inventory recipe mapping|insufficient stock/i.test(message)) return { statusCode: 409, message };
-  if (/invalid|required|must be|use a, b, or c|greater than zero|non-negative|non-zero/i.test(message)) return { statusCode: 400, message };
+  if (/invalid|required|must be|use a, b, or c|greater than zero|non-negative|non-zero|workbook|worksheet|required column|\.xlsx/i.test(message)) return { statusCode: 400, message };
   return { statusCode: 500, message };
 }
 

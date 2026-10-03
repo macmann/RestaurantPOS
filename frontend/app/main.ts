@@ -1449,6 +1449,11 @@ async function renderMenuAdmin(): Promise<HTMLElement> {
         <p class="form-error" hidden></p>
       </form>
     </article>
+    <article class="card admin-card bulk-upload-card">
+      <h3>Bulk upload menu</h3>
+      <p class="muted">Preview an .xlsx worksheet named <strong>Bulk Upload</strong> with Name, Category, Station, and Price columns.</p>
+      <button type="button" class="bulk-upload-open">Bulk Upload</button>
+    </article>
   `;
   if (state.error) panel.prepend(el('p', 'form-error', state.error));
   const list = el('div', 'menu-admin-list');
@@ -1528,6 +1533,67 @@ async function renderMenuAdmin(): Promise<HTMLElement> {
     list.append(card);
   }
   panel.append(list);
+  const bulkDialog = el('dialog', 'bulk-upload-dialog');
+  bulkDialog.innerHTML = `
+    <form method="dialog" class="bulk-upload-shell">
+      <header><div><h2>Bulk Upload Menu</h2><p>Supported: .xlsx · maximum 5 MB and 5,000 rows</p></div><button class="secondary bulk-close" value="cancel" aria-label="Close">Close</button></header>
+      <section class="bulk-upload-picker">
+        <label>Choose Excel File<input name="file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required /></label>
+        <p><strong>Expected columns:</strong> Name · Category · Station · Price</p>
+      </section>
+      <p class="form-error bulk-error" hidden></p>
+      <section class="bulk-preview" hidden></section>
+    </form>`;
+  section.append(bulkDialog);
+  panel.querySelector<HTMLButtonElement>('.bulk-upload-open')?.addEventListener('click', () => bulkDialog.showModal());
+  const fileInput = bulkDialog.querySelector<HTMLInputElement>('input[type=file]')!;
+  const previewContainer = bulkDialog.querySelector<HTMLElement>('.bulk-preview')!;
+  const bulkError = bulkDialog.querySelector<HTMLElement>('.bulk-error')!;
+  fileInput.addEventListener('change', async () => {
+    const file = fileInput.files?.[0];
+    if (!file) return;
+    bulkError.hidden = true; previewContainer.hidden = true;
+    try {
+      const preview = await apiClient.previewMenuBulkImport(file);
+      const rowMarkup = (filter = 'ALL') => preview.rows
+        .filter((row) => filter === 'ALL' || row.action === filter)
+        .map((row) => `<tr data-action="${row.action}"><td>${escapeHtml(row.name)}</td><td>${escapeHtml(row.category)}</td><td>${escapeHtml(row.station)}</td><td>${money(row.price)}</td><td><span class="bulk-action bulk-action--${row.action.toLowerCase()}">${row.action}</span></td></tr>`).join('');
+      const errorRows = preview.errors.map((error) => `<li><strong>Row ${error.rowNumber} · ${error.field}</strong> — ${escapeHtml(JSON.stringify(error.value))}: ${escapeHtml(error.message)}</li>`).join('');
+      previewContainer.innerHTML = `
+        <div class="bulk-summary">
+          <div><small>File</small><strong>${escapeHtml(preview.filename)}</strong><span>${preview.rowCount} rows found</span></div>
+          <div><small>Categories</small><strong>${preview.categories.total} total</strong><span>${preview.categories.existing} exist · ${preview.categories.create} create</span></div>
+          <div><small>Stations</small><strong>${preview.stations.total} total</strong><span>${preview.stations.existing} exist · ${preview.stations.create} create</span></div>
+          <div><small>Menu items</small><strong>${preview.items.create} create</strong><span>${preview.items.update} update · ${preview.items.unchanged} unchanged · ${preview.items.invalid} invalid</span></div>
+        </div>
+        ${preview.categories.toCreate.length ? `<div class="bulk-dependencies"><strong>Categories to create:</strong> ${preview.categories.toCreate.map((name) => `<span>+ ${escapeHtml(name)}</span>`).join('')}</div>` : ''}
+        ${preview.stations.toCreate.length ? `<div class="bulk-dependencies"><strong>Stations to create:</strong> ${preview.stations.toCreate.map((name) => `<span>+ ${escapeHtml(name)}</span>`).join('')}</div>` : ''}
+        ${errorRows ? `<section class="bulk-validation-errors"><h3>Validation errors</h3><ul>${errorRows}</ul></section>` : ''}
+        <nav class="bulk-filters" aria-label="Preview filters">${['ALL', 'CREATE', 'UPDATE', 'UNCHANGED', 'ERROR'].map((filter) => `<button type="button" class="secondary" data-filter="${filter}">${filter === 'ALL' ? 'All' : filter[0] + filter.slice(1).toLowerCase()}</button>`).join('')}</nav>
+        <div class="bulk-table-wrap"><table class="staff-table"><thead><tr><th>Name</th><th>Category</th><th>Station</th><th>Price</th><th>Action</th></tr></thead><tbody>${rowMarkup()}</tbody></table></div>
+        <footer><button type="button" class="secondary bulk-cancel">Cancel</button><button type="button" class="bulk-confirm" ${!preview.token ? 'disabled' : ''}>Import ${preview.rowCount} Items</button></footer>`;
+      previewContainer.hidden = false;
+      previewContainer.querySelectorAll<HTMLButtonElement>('[data-filter]').forEach((button) => button.addEventListener('click', () => {
+        const filter = button.dataset.filter ?? 'ALL';
+        const tbody = previewContainer.querySelector('tbody')!;
+        tbody.innerHTML = filter === 'ERROR' ? '' : rowMarkup(filter);
+      }));
+      previewContainer.querySelector<HTMLButtonElement>('.bulk-cancel')?.addEventListener('click', () => bulkDialog.close());
+      previewContainer.querySelector<HTMLButtonElement>('.bulk-confirm')?.addEventListener('click', async (event) => {
+        if (!preview.token) return;
+        const button = event.currentTarget as HTMLButtonElement; button.disabled = true; button.textContent = 'Importing…';
+        try {
+          const result = await apiClient.confirmMenuBulkImport(preview.token);
+          previewContainer.innerHTML = `<section class="bulk-complete"><h3>Menu import complete</h3><p>Rows processed: <strong>${result.rowsProcessed}</strong></p><p>Categories created: <strong>${result.categoriesCreated}</strong> · Stations created: <strong>${result.stationsCreated}</strong></p><p>Menu items created: <strong>${result.itemsCreated}</strong> · updated: <strong>${result.itemsUpdated}</strong> · unchanged: <strong>${result.unchanged}</strong></p><p>Sync events queued: <strong>${result.syncEventsQueued}</strong></p><p>${escapeHtml(result.syncMessage)}</p><button type="button" class="bulk-view-menu">View Menu</button></section>`;
+          previewContainer.querySelector<HTMLButtonElement>('.bulk-view-menu')?.addEventListener('click', () => { bulkDialog.close(); render(); });
+        } catch (caught) {
+          bulkError.textContent = caught instanceof Error ? caught.message : 'Menu import failed.'; bulkError.hidden = false; button.disabled = false; button.textContent = `Import ${preview.rowCount} Items`;
+        }
+      });
+    } catch (caught) {
+      bulkError.textContent = caught instanceof Error ? caught.message : 'Workbook preview failed.'; bulkError.hidden = false;
+    }
+  });
   panel.querySelector<HTMLFormElement>('.category-form')?.addEventListener('submit', async (event) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget as HTMLFormElement);
