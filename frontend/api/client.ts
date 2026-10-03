@@ -5,6 +5,7 @@ import type { OrderRecord, OrderStatus } from '../../backend/orders/repository';
 import type { BillPricingOptions, BillPromotion, SplitLabel, TableOrderItem } from '../../backend/billing/repository';
 import type { getBillCalculationBreakdown, getPrintedReceiptPayload } from '../../backend/billing/service';
 import type { AdminMenuApi } from '../../backend/menu/controller';
+import type { BulkImportPreview, BulkImportResult } from '../../backend/menu/bulkImport/service';
 import type { InventoryAdminApi } from '../../backend/inventory/controller';
 import type { AdminAuditApi } from '../../backend/audit/controller';
 import type { KdsView } from '../../backend/kds/service';
@@ -392,8 +393,11 @@ export class RestaurantApiClient {
 
     let body: BodyInit | undefined;
     if (options.body !== undefined) {
-      headers['content-type'] = headers['content-type'] ?? 'application/json';
-      body = JSON.stringify(options.body);
+      if (typeof FormData !== 'undefined' && options.body instanceof FormData) body = options.body;
+      else {
+        headers['content-type'] = headers['content-type'] ?? 'application/json';
+        body = JSON.stringify(options.body);
+      }
     }
 
     const method = options.method ?? 'GET';
@@ -602,6 +606,15 @@ export class RestaurantApiClient {
 
   setMenuItemPromotional(itemId: string, isPromotional: boolean) {
     return this.menuAdmin().setPromotional(itemId, isPromotional);
+  }
+
+  previewMenuBulkImport(file: File): Promise<BulkImportPreview> {
+    const body = new FormData(); body.append('file', file, file.name);
+    return this.request<BulkImportPreview>('/api/menu/bulk-import/preview', { method: 'POST', body });
+  }
+
+  confirmMenuBulkImport(token: string): Promise<BulkImportResult> {
+    return this.request<BulkImportResult>('/api/menu/bulk-import', { method: 'POST', body: { token }, operationKind: 'idempotent_write' });
   }
 
   listInventoryItems(): Promise<InventoryItems> {

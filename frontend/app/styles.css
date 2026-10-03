@@ -325,6 +325,25 @@ button { min-height: var(--tap); touch-action: manipulation; }
 .menu-admin-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; justify-content: flex-end; }
 .menu-item-edit-form { width: 100%; margin-top: 0.85rem; padding: 0.85rem; border: 1px dashed var(--line); border-radius: var(--radius-sm); background: var(--surface-soft); }
 .menu-admin-row .danger, .menu-item-edit-form .cancel-edit { background: linear-gradient(135deg, var(--danger), #f97316); }
+.bulk-upload-dialog { width: min(1100px, 94vw); max-height: 90vh; border: 0; border-radius: var(--radius-md); padding: 0; box-shadow: var(--shadow-lg); }
+.bulk-upload-dialog::backdrop { background: rgb(15 23 42 / 58%); backdrop-filter: blur(3px); }
+.bulk-upload-shell { padding: 1.25rem; display: grid; gap: 1rem; }
+.bulk-upload-shell > header, .bulk-upload-shell footer { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+.bulk-upload-shell header h2, .bulk-upload-shell header p { margin: 0; }
+.bulk-upload-picker { padding: 1rem; border: 1px dashed var(--primary); border-radius: var(--radius-sm); background: var(--surface-soft); }
+.bulk-preview { display: grid; gap: 1rem; min-width: 0; }
+.bulk-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .7rem; }
+.bulk-summary > div { display: grid; gap: .2rem; padding: .8rem; border: 1px solid var(--line); border-radius: var(--radius-sm); }
+.bulk-summary small, .bulk-summary span { color: var(--muted); }
+.bulk-dependencies, .bulk-filters { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+.bulk-dependencies span { padding: .3rem .55rem; border-radius: 999px; background: #ecfdf5; color: #047857; font-weight: 800; }
+.bulk-table-wrap { max-height: 45vh; overflow: auto; border: 1px solid var(--line); border-radius: var(--radius-sm); }
+.bulk-table-wrap table { margin: 0; }
+.bulk-action { font-weight: 900; font-size: .76rem; }
+.bulk-action--create { color: #047857; } .bulk-action--update { color: #b45309; } .bulk-action--unchanged { color: var(--muted); }
+.bulk-validation-errors { padding: .8rem; border: 1px solid #fecaca; background: #fef2f2; border-radius: var(--radius-sm); color: #991b1b; }
+.bulk-complete { text-align: center; padding: 1.5rem; border-radius: var(--radius-sm); background: #ecfdf5; }
+@media (max-width: 760px) { .bulk-summary { grid-template-columns: 1fr 1fr; } }
 .progress-lanes { grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr)); }
 .progress-lane { padding: 1rem; }
 .progress-row { border-top: 1px solid var(--line); padding: 0.8rem 0; }

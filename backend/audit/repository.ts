@@ -27,11 +27,12 @@ export const AUDIT_ACTIONS = [
   'report_viewed',
   'report_exported',
   'cloud_sync_settings_changed',
+  'MENU_BULK_IMPORT',
 ] as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
-export const AUDIT_ENTITY_TYPES = ['auth_session', 'order', 'bill', 'bill_split', 'inventory_item', 'debt_ledger', 'user', 'hardware_device', 'report', 'platform_setting'] as const;
+export const AUDIT_ENTITY_TYPES = ['auth_session', 'order', 'bill', 'bill_split', 'inventory_item', 'debt_ledger', 'user', 'hardware_device', 'report', 'platform_setting', 'menu'] as const;
 
 export type AuditEntityType = (typeof AUDIT_ENTITY_TYPES)[number];
 

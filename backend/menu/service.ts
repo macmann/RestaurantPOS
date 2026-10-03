@@ -173,7 +173,7 @@ export async function adminCreateItem(input: ItemInput, context: MenuMutationCon
   if (duplicate) throw new Error(`Item '${name}' already exists in this category.`);
 
   const now = nowIso();
-  const menuItem = await createItem({
+  const menuItem: MenuItemRecord = {
     id: createId('item'),
     branchId: input.branchId ?? category.branchId ?? getCurrentBranchId(),
     categoryId: input.categoryId,
@@ -192,16 +192,14 @@ export async function adminCreateItem(input: ItemInput, context: MenuMutationCon
     updatedSource: context.source,
     updatedBy: context.actorId,
     originatingEventId: context.originatingEventId,
-  });
+  };
 
   // Cloud menu administration never creates or mutates inventory master data;
   // inventory remains restaurant-owned and one-way.
-  if (context.source === 'CLOUD_MANAGER' || menuItem.inventoryItemId || !isMenuInventoryLinkEnabled()) return menuItem;
+  if (context.source === 'CLOUD_MANAGER' || menuItem.inventoryItemId || !isMenuInventoryLinkEnabled()) return createItem(menuItem);
 
   const inventoryItemId = await createLinkedInventoryItemForMenuItem(menuItem, input);
-  const linkedMenuItem = await updateItem(menuItem.id, { inventoryItemId, updatedAt: nowIso(), updatedSource: context.source, updatedBy: context.actorId });
-  if (!linkedMenuItem) throw new Error('Menu item not found after linked inventory creation.');
-  return linkedMenuItem;
+  return createItem({ ...menuItem, inventoryItemId });
 }
 
 export async function adminUpdateItem(id: string, input: Partial<ItemInput>, context: MenuMutationContext = LOCAL_MUTATION) {
