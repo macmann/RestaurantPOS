@@ -12,6 +12,16 @@ The Store ID must be the same stable identifier as the POS Branch ID (`POS_BRANC
 
 If the local application displays a menu but the cloud remains empty, open **Platform Settings → Cloud Synchronization → Synchronization diagnostics** and compare the configured Store ID with **Menu records by Store ID**. A menu created under an earlier Branch ID is still visible in the unscoped local administration view, but it does not belong to the configured synchronization partition. Menu synchronization now stops with an explicit error in that situation instead of reporting a successful zero-record exchange. Set the local `POS_BRANCH_ID`, the saved synchronization Store ID, and the cloud `POS_STORE_ID` to the identifier that owns the menu; do not rename a populated branch without migrating its data.
 
+## Super Admin operating workflow
+
+1. Open **Platform Settings → Cloud Synchronization** on the local POS. Confirm that the displayed Store ID is the same as the local Branch ID and the cloud assignment.
+2. Enter the cloud base URL, unique Device ID, and token supplied through a secure channel. Select **Test connection** before enabling the worker; review authentication, Store ID, protocol compatibility, and latency in the response.
+3. Save settings and enable synchronization. The health card tracks push, incoming pull, and heartbeat independently, and refreshes without restarting the server.
+4. Use **Sync everything** for an immediate push, pull, complete menu reconciliation, and heartbeat. Use **Sync menu only** when troubleshooting menu convergence without forcing the other phases.
+5. Open **View diagnostics** to inspect resolved endpoints, menu records grouped by Store ID, recent activity, pending outgoing/incoming queues, and the most recent safe error detail. Clear a displayed error only after recording it and correcting its cause. Clearing the display does not discard queued events.
+
+A successful connection test proves connectivity and configuration compatibility; it does not prove that all queued records have been exchanged. Confirm phase timestamps, queue counts, the menu reconciliation result, and representative records on both deployments. Menu bulk imports enqueue normal menu changes after their transaction commits, so large imports may require multiple batches before the outgoing queue drains.
+
 ## Cloud connection information
 
 On a cloud deployment, Super Admin instead sees **Platform Settings → Cloud Connection Information**. It displays the public base URL, readiness checks, token-presence status, real sync routes, recommended local defaults, and a copyable (secret-free) local setup package. The existing `SYNC_API_TOKEN` is never returned to the browser.
