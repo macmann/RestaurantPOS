@@ -267,6 +267,16 @@ async function runCloudBulkImportIntegration(): Promise<void> {
     process.env.POS_STORE_ID = 'other-cloud-store';
     assert((await confirm(scoped.body.data.token)).status === 403, 'Cloud previews must be bound to the assigned store.');
     process.env.POS_STORE_ID = 'cloud-bulk-store';
+    await seedLoginUser({ id: 'cloud-panel-superadmin', branchId, role: 'superadmin', status: 'active', password: 'cloud-test' });
+    const superadmin = await login(server.baseUrl, 'cloud-panel-superadmin', 'cloud-test');
+    for (const path of ['/api/settings/system/status', '/api/settings/cloud-connection']) {
+      assert((await apiRequest(server.baseUrl, path, { token: superadmin.token })).status === 200, `Cloud superadmin must access ${path}.`);
+      assert((await apiRequest(server.baseUrl, path, { token: manager.token })).status === 403, `Manager must not access ${path}.`);
+      assert((await apiRequest(server.baseUrl, path)).status === 401, `${path} must require authentication.`);
+    }
+    assert((await apiRequest(server.baseUrl, '/api/settings/printers/status', { token: superadmin.token })).status === 404, 'Cloud must not perform local printer checks.');
+    assert((await apiRequest(server.baseUrl, '/api/settings/cloud-sync', { token: superadmin.token })).status === 404, 'Cloud must not expose the local sync worker.');
+    assert((await apiRequest(server.baseUrl, '/api/settings', { method: 'PUT', token: superadmin.token, body: { pos: { menuInventoryLinkEnabled: true } } })).status === 405, 'Cloud superadmin must not bypass operational settings restrictions.');
     const operational = await apiRequest(server.baseUrl, '/api/orders', { method: 'POST', token: manager.token, body: {} });
     assert(operational.status === 405, 'Cloud operational writes must remain blocked.');
   } finally {
