@@ -615,12 +615,11 @@ export class RestaurantApiClient {
   }
 
   previewMenuBulkImport(file: File): Promise<BulkImportPreview> {
-    const body = new FormData(); body.append('file', file, file.name);
-    return this.request<BulkImportPreview>('/api/menu/bulk-import/preview', { method: 'POST', body });
+    return this.menuAdmin().previewBulkImport(file);
   }
 
   confirmMenuBulkImport(token: string): Promise<BulkImportResult> {
-    return this.request<BulkImportResult>('/api/menu/bulk-import', { method: 'POST', body: { token }, operationKind: 'idempotent_write' });
+    return this.menuAdmin().confirmBulkImport(token);
   }
 
   listInventoryItems(): Promise<InventoryItems> {
@@ -762,6 +761,14 @@ export class MenuAdminClient {
   private async root(): Promise<'/api/menu' | '/manager-api/menu'> {
     this.modePromise ??= this.loadMode();
     return (await this.modePromise) === 'CLOUD' ? '/manager-api/menu' : '/api/menu';
+  }
+
+  async previewBulkImport(file: File): Promise<BulkImportPreview> {
+    const body = new FormData(); body.append('file', file, file.name);
+    return this.client.request<BulkImportPreview>(`${await this.root()}/bulk-import/preview`, { method: 'POST', body });
+  }
+  async confirmBulkImport(token: string): Promise<BulkImportResult> {
+    return this.client.request<BulkImportResult>(`${await this.root()}/bulk-import`, { method: 'POST', body: { token }, operationKind: 'idempotent_write' });
   }
 
   async list(): Promise<MenuCategories> { return this.client.request<MenuCategories>(await this.root()); }

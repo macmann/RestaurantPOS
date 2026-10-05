@@ -1479,7 +1479,7 @@ async function renderMenuAdmin(): Promise<HTMLElement> {
     <article class="card admin-card bulk-upload-card">
       <h3>Bulk upload menu</h3>
       <p class="muted">Preview an .xlsx worksheet named <strong>Bulk Upload</strong> with Name, Category, Station, and Price columns.</p>
-      ${isCloudDeployment() ? '' : '<button type="button" class="bulk-upload-open">Bulk Upload</button>'}
+      <button type="button" class="bulk-upload-open">Bulk Upload</button>
     </article>
   `;
   if (state.error) panel.prepend(el('p', 'form-error', state.error));

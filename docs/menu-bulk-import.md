@@ -1,6 +1,6 @@
 # Menu bulk import
 
-Menu administrators can create or update a large menu from one Excel workbook instead of entering every item individually. The import uses a **preview then confirm** workflow: previewing performs no writes, and confirmation applies all accepted changes in one transaction.
+Menu administrators on both local POS and cloud deployments can create or update a large menu from one Excel workbook instead of entering every item individually. The import uses a **preview then confirm** workflow: previewing performs no writes, and confirmation applies all accepted changes in one transaction.
 
 ## Workbook format
 
@@ -30,7 +30,7 @@ The preview token represents the validated workbook and expires after use or aft
 
 An existing item in the matched category is updated from the workbook; an identical row is reported as unchanged. Items absent from the workbook are **not deleted or hidden**. Availability, promotional state, descriptions, and historical transactions are not a substitute for reviewing the resulting menu in the UI.
 
-In a local POS configured for cloud synchronization, a successful import queues menu sync events. The completion screen reports the queued count and synchronization message. Queued does not mean delivered: an administrator should check **Platform Settings → Cloud Synchronization**, run **Sync menu only** when appropriate, and confirm that the local and cloud menus converge under the same Store ID.
+With PostgreSQL persistence, local POS imports queue outgoing menu sync events, while cloud imports queue changes for the assigned restaurant POS through the same incoming queue as individual cloud menu edits. Cloud previews and confirmations are scoped to the assigned Store ID and require menu-management permission. Memory mode does not provide durable synchronization. The completion screen reports the queued count and synchronization message. Queued does not mean delivered: an administrator should check **Platform Settings → Cloud Synchronization**, run **Sync menu only** when appropriate, and confirm that the local and cloud menus converge under the same Store ID.
 
 ## Safety checklist
 

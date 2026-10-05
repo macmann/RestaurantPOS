@@ -1,6 +1,8 @@
 declare const process: { env: Record<string, string | undefined>; exitCode?: number };
 declare const require: (name: string) => unknown;
 
+import { previewBulkImport, confirmBulkImport } from '../backend/menu/bulkImport/service';
+import { createXlsxFixture } from './helpers/xlsx';
 import { runInitialRestaurantPosMigration, INITIAL_MIGRATION_ID } from '../backend/db/migrations';
 import { clearRepositoryStore } from '../backend/db/repositoryStore';
 import { closeDatabasePool, query, withTransaction } from '../backend/db/client';
@@ -35,6 +37,42 @@ function configurePostgresRepository(): boolean {
   return true;
 }
 
+async function verifyCloudBulkImportQueue(): Promise<void> {
+  const previousMode = process.env.APP_MODE;
+  process.env.APP_MODE = 'CLOUD';
+  const context = { branchId: 'cloud-bulk-db-test', source: 'CLOUD_MANAGER' as const };
+  const manager: AuthenticatedUser = { id: 'cloud-bulk-db-manager', branchId: 'login-branch', role: 'manager', status: 'active' };
+  const file = (price: number) => createXlsxFixture([['Name', 'Category', 'Station', 'Price'], ['Cloud DB Rice', 'Cloud DB Meals', 'Kitchen', price]]);
+  try {
+    await query('DELETE FROM incoming_pos_events WHERE store_id=$1', [context.branchId]);
+    await query("DELETE FROM repository_records WHERE namespace IN ('menu:categories', 'menu:items') AND payload->>'branchId'=$1", [context.branchId]);
+    const preview = await previewBulkImport(manager, 'cloud-menu.xlsx', file(4500), context);
+    const imported = await confirmBulkImport(manager, preview.token!, context);
+    assertEqual(imported.syncEventsQueued, 2, 'Cloud bulk import must queue its category and item.');
+    const events = await query<any>('SELECT * FROM incoming_pos_events WHERE store_id=$1 ORDER BY created_at', [context.branchId]);
+    assertEqual(events.rows.length, 2, 'Cloud import must persist two incoming POS events.');
+    assert(events.rows.some((event) => event.event_type === 'CATEGORY_CREATED') && events.rows.some((event) => event.event_type === 'MENU_ITEM_CREATED'), 'Cloud import must queue both record types.');
+    for (const event of events.rows) {
+      assertEqual(event.payload.branchId, context.branchId, 'Cloud event must use the assigned restaurant store.');
+      assertEqual(event.payload.updatedSource, 'CLOUD_MANAGER', 'Cloud event must preserve its mutation source.');
+      assertEqual(event.payload.originatingEventId, event.event_id, 'Cloud record must identify its queued event.');
+      const stored = await query<any>('SELECT payload FROM repository_records WHERE record_key=$1', [event.aggregate_id]);
+      assertEqual(stored.rows[0]?.payload.originatingEventId, event.event_id, 'Queued event identity must persist in the menu record.');
+    }
+    const localOutbox = await query('SELECT * FROM sync_outbox WHERE store_id=$1', [context.branchId]);
+    assertEqual(localOutbox.rows.length, 0, 'Cloud imports must not create local outgoing events.');
+    const update = await previewBulkImport(manager, 'cloud-menu.xlsx', file(5000), context);
+    assertEqual((await confirmBulkImport(manager, update.token!, context)).syncEventsQueued, 1, 'Cloud price update must queue one item event.');
+    const identical = await previewBulkImport(manager, 'cloud-menu.xlsx', file(5000), context);
+    assertEqual((await confirmBulkImport(manager, identical.token!, context)).syncEventsQueued, 0, 'Identical cloud upload must not queue events.');
+    const count = await query('SELECT * FROM incoming_pos_events WHERE store_id=$1', [context.branchId]);
+    assertEqual(count.rows.length, 3, 'Only changed cloud records must be queued.');
+    console.log('Cloud bulk import PostgreSQL queue checks passed.');
+  } finally {
+    if (previousMode === undefined) delete process.env.APP_MODE; else process.env.APP_MODE = previousMode;
+  }
+}
+
 async function runDatabasePersistenceE2e(): Promise<void> {
   if (!configurePostgresRepository()) {
     console.warn('Skipping database persistence E2E test because DB_HOST/PGHOST is not configured.');
@@ -46,6 +84,7 @@ async function runDatabasePersistenceE2e(): Promise<void> {
   }
 
   await runInitialRestaurantPosMigration();
+  await verifyCloudBulkImportQueue();
   const migration = await query<{ exists: boolean }>('SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE id = $1) AS exists', [INITIAL_MIGRATION_ID]);
   assert(migration.rows[0]?.exists === true, 'Initial SYM POS SQL migration should be recorded as applied.');
   const menuMigration = await query<{ exists: boolean }>(
