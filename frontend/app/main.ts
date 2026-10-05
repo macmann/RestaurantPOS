@@ -890,7 +890,7 @@ function systemMonitorCards(status?: SystemStatus, error?: string): string {
   return `
     <div class="superadmin-monitor-card">
       <span class="badge ready">Working</span>
-      <strong>POS API</strong>
+      <strong>${isCloudDeployment() ? 'Cloud API' : 'POS API'}</strong>
       <span>Uptime: ${formatUptime(status.api.uptimeSeconds)}</span>
       <small>${escapeHtml(status.api.detail)}</small>
     </div>
@@ -995,6 +995,55 @@ function rolesFor(user: AuthenticatedUser): string {
 
 function canCloseBills(): boolean {
   return !!session?.permissions.includes(Actions.CloseBill);
+}
+
+async function renderCloudSuperadminPanel(): Promise<HTMLElement> {
+  const section = page('Super admin workspace', 'Monitor the cloud service, restaurant synchronization, and system settings.', ['Cloud status', 'Restaurant connection', 'System settings']);
+  section.classList.add('superadmin-page');
+  const panel = el('section', 'admin-panel superadmin-panel');
+  const [statusResult, settingsResult, connectionResult, syncResult] = await Promise.allSettled([
+    apiClient.getSystemStatus(), apiClient.getSettings(), apiClient.getCloudConnectionInformation(), apiClient.getSyncHealth(),
+  ]);
+  const errorText = (result: PromiseRejectedResult) => escapeHtml(result.reason instanceof Error ? result.reason.message : 'Status could not be loaded.');
+  const connection = connectionResult.status === 'fulfilled' ? connectionResult.value : undefined;
+  const sync = syncResult.status === 'fulfilled' ? syncResult.value : undefined;
+  const settings = settingsResult.status === 'fulfilled' ? normalizeOperationalSettings(settingsResult.value) : undefined;
+  const settingsRoutes = superadminSettingsRoutes(session?.permissions ?? []);
+  panel.innerHTML = `
+    <article class="card admin-card superadmin-overview-card">
+      <p class="eyebrow">Cloud service</p><h3>System status</h3>
+      <div class="superadmin-monitor" aria-label="Live system monitor">${systemMonitorCards(statusResult.status === 'fulfilled' ? statusResult.value : undefined, statusResult.status === 'rejected' ? String(statusResult.reason?.message ?? 'System status could not be loaded.') : undefined)}</div>
+    </article>
+    <article class="card admin-card settings-card">
+      <p class="eyebrow">Restaurant connection</p><h3>Cloud synchronization status</h3>
+      ${connection ? `<dl><dt>Assigned Store ID</dt><dd>${escapeHtml(connection.storeId.value)}</dd><dt>Cloud Sync URL</dt><dd>${escapeHtml(connection.publicBaseUrl ?? 'Not configured')}</dd><dt>Sync service readiness</dt><dd>${escapeHtml(connection.status)}</dd><dt>Sync token</dt><dd>${connection.tokenConfigured ? 'Configured' : 'Not configured'}</dd></dl>` : `<p class="form-error">${connectionResult.status === 'rejected' ? errorText(connectionResult) : 'Connection information unavailable.'}</p>`}
+      ${sync ? `<dl><dt>Restaurant synchronization</dt><dd>${escapeHtml(String(sync.state ?? 'REMOTE STATUS UNKNOWN'))}</dd><dt>Last restaurant activity</dt><dd>${escapeHtml(String(sync.last_pos_activity_at ?? 'Unknown'))}</dd><dt>Last successful sync</dt><dd>${escapeHtml(String(sync.last_successful_sync_at ?? 'Unknown'))}</dd><dt>Pending cloud-to-POS events</dt><dd>${escapeHtml(String(sync.pendingIncomingEvents ?? 'Unknown'))}</dd><dt>Pending events reported by restaurant</dt><dd>${escapeHtml(String(sync.pending_event_count ?? 'Unknown'))}</dd><dt>Failed events reported by restaurant</dt><dd>${escapeHtml(String(sync.failed_event_count ?? 'Unknown'))}</dd></dl>` : `<p class="form-error">${syncResult.status === 'rejected' ? errorText(syncResult) : 'Synchronization status unavailable.'}</p>`}
+      <a class="secondary-link" href="#/cloud-sync-settings">Open cloud connection information</a>
+    </article>
+    <article class="card admin-card settings-card">
+      <p class="eyebrow">Current settings</p><h3>Restaurant profile & language</h3>
+      ${settings ? `<dl><dt>Restaurant</dt><dd>${escapeHtml(settings.restaurantBillInfo.restaurantName)}</dd><dt>Address</dt><dd>${escapeHtml(settings.restaurantBillInfo.address)}</dd><dt>Contact</dt><dd>${escapeHtml(settings.restaurantBillInfo.contact)}</dd><dt>Default language</dt><dd>${escapeHtml(getLocaleResource(settings.localization.defaultLocale).nativeName)}</dd><dt>Preparation stations</dt><dd>${escapeHtml(settings.prepStations.map((station) => station.displayName).join(', '))}</dd></dl>` : `<p class="form-error">${settingsResult.status === 'rejected' ? errorText(settingsResult) : 'Settings unavailable.'}</p>`}
+      <p class="muted">Settings shown here belong to this cloud instance. Restaurant printer connectivity is checked on the local POS.</p>
+    </article>
+    <section class="admin-launchpad superadmin-settings-launchpad">
+      <div class="admin-launchpad-heading"><p class="eyebrow">Superadmin-only settings</p><h3>Settings menu</h3></div>
+      ${settingsRoutes.map((item) => `<button type="button" data-target="${escapeHtml(item.path)}" ${item.localOnly ? 'disabled' : ''}><span>${escapeHtml(item.path === '#/cloud-sync-settings' ? 'Cloud Connection Information' : item.label)}</span><small>${item.localOnly ? 'Configure on the restaurant POS; editing is unavailable in cloud mode.' : 'Assigned store, service readiness, and restaurant connection guidance.'}</small></button>`).join('')}
+    </section>
+    <article class="card admin-card settings-card"><h3>Local POS controls</h3><p>Printer checks, printer configuration, local sync-worker controls, and staff or operational settings changes are available on the restaurant POS.</p></article>`;
+  panel.querySelectorAll<HTMLButtonElement>('[data-target]:not([disabled])').forEach((button) => button.addEventListener('click', () => navigate(button.dataset.target!)));
+  if (session?.permissions.includes(Actions.ManageStaff)) {
+    const directory = el('article', 'card admin-card staff-list-card');
+    directory.innerHTML = '<h3>Staff directory</h3><p class="muted">Read-only cloud account information. Manage restaurant staff on the local POS.</p>';
+    try {
+      const users = await apiClient.listUsers();
+      const table = el('table', 'staff-table');
+      table.innerHTML = `<thead><tr><th>Staff</th><th>Role</th><th>Branch</th><th>Status</th></tr></thead><tbody>${users.map((user) => `<tr><td>${escapeHtml(user.username ?? user.id)}</td><td>${escapeHtml(rolesFor(user))}</td><td>${escapeHtml(user.branchId ?? '—')}</td><td>${escapeHtml(user.status)}</td></tr>`).join('')}</tbody>`;
+      directory.append(table);
+    } catch (error) { directory.append(el('p', 'form-error', error instanceof Error ? error.message : 'Staff directory unavailable.')); }
+    panel.append(directory);
+  }
+  section.append(panel);
+  return section;
 }
 
 async function renderStaffSettings(isSuperadminPanel = false): Promise<HTMLElement> {
@@ -1845,6 +1894,7 @@ function renderCloudConnectionInformation(info: any): HTMLElement {
 }
 
 async function renderCloudSyncSettings(): Promise<HTMLElement> {
+  if (isCloudDeployment()) return renderCloudConnectionInformation(await apiClient.getCloudConnectionInformation());
   try { return renderCloudConnectionInformation(await apiClient.getCloudConnectionInformation()); }
   catch (error) {
     if (error instanceof ApiClientError && error.status === 404) return renderLocalCloudSyncSettings();
@@ -3770,7 +3820,7 @@ async function renderRoute(generation: number): Promise<void> {
       content = await renderAudit();
       break;
     case '#/superadmin':
-      content = await renderStaffSettings(true);
+      content = isCloudDeployment() ? await renderCloudSuperadminPanel() : await renderStaffSettings(true);
       break;
     case '#/localization':
       content = await renderLocalizationSettings();

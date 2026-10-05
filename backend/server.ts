@@ -46,7 +46,7 @@ import type { AuthenticatedUser } from './auth/policies';
 import { loginWithPassword, logoutSession } from './auth/service';
 import { getIdempotencyRecord, idempotencyFingerprint, idempotencyMatches, saveIdempotencyRecord } from './network-idempotency';
 import { appMode, syncHealth } from './sync/service';
-import { buildCloudRouter, buildCustomerRouter, buildManagerRouter } from './sync/router';
+import { buildCloudRouter, buildCustomerRouter, buildManagerRouter, resolveManagerStore } from './sync/router';
 import { SyncWorker, clearLocalSyncDiagnosticError, getLocalSyncRuntimeStatus, getSyncDiagnostics, runMenuSync, runSyncCycle } from './sync/worker';
 import { LOCAL_SYNC_PROTOCOL_VERSION, loadSyncConfig, publicSyncConfig, resolvedSyncEndpoints, saveSyncConfig, SYNC_ENDPOINTS, syncEndpoint, validateSyncSettings } from './sync/config';
 import { isSqlRepositoryEnabled, query } from './db/client';
@@ -426,12 +426,15 @@ function buildSettingsRouter(): Router {
       cloudMonitorRefreshMs: Number.isFinite(configuredRefresh) && configuredRefresh >= 1_000 ? configuredRefresh : 60_000,
     };
   }));
-  router.get('/sync-health', send((req) => {
+  router.get('/sync-health', send(async (req) => {
     // Never accept a caller-provided store/branch identifier. Cloud monitoring is
     // pinned to the deployment store (or the authenticated user's assigned branch).
     const user = requireUser(req);
-    const storeId = process.env.POS_STORE_ID?.trim() || user.branchId || getCurrentBranchId();
-    return syncHealth(storeId);
+    const storeId = isCloudDeployment() ? resolveManagerStore(user.branchId) : process.env.POS_STORE_ID?.trim() || user.branchId || getCurrentBranchId();
+    const health = await syncHealth(storeId);
+    if (!isCloudDeployment()) return health;
+    const incoming = await query<{ pending: number }>('SELECT COUNT(*)::int pending FROM incoming_pos_events WHERE store_id=$1 AND acknowledged_at IS NULL', [storeId]);
+    return { ...health, pendingIncomingEvents: incoming.rows[0]?.pending ?? 0 };
   }));
   router.get('/', send(() => ({ branch: getRuntimeSettings().branch, inventoryDeductionPolicy: InventoryAdminApi.getDeductionPolicy(), pos: readableSettings() })));
   router.get('/printers/status', authorize(Actions.ManageSystem), send(() => {

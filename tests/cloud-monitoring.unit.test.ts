@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { Actions, RolePermissions } from '../backend/auth/permissions';
+import { appRoutes, canAccessRoute, visibleRoutes, superadminSettingsRoutes } from '../frontend/auth/navigation';
 import { CloudMonitorRefreshController, type RefreshScheduler } from '../frontend/app/cloud-monitor-refresh';
 import { canPerformOperationalWrite, isCloudDeployment, resetDeploymentRuntimeForTests, setDeploymentRuntime } from '../frontend/app/deployment-mode';
 
@@ -8,6 +10,20 @@ async function run(): Promise<void> {
   setDeploymentRuntime({ deploymentMode: 'CLOUD', capabilities: { operationalWrite: false, menuWrite: true, localHardware: false, localSyncConfiguration: false }, cloudMonitorRefreshMs: 60_000 });
   assert.equal(isCloudDeployment(), true);
   assert.equal(canPerformOperationalWrite(), false);
+
+  const cloudCapabilities = { localHardware: false, localSyncConfiguration: false };
+  const superadmin = RolePermissions.superadmin;
+  const cloudRoutes = visibleRoutes(superadmin, cloudCapabilities);
+  assert.ok(cloudRoutes.some((route) => route.path === '#/superadmin'), 'Cloud superadmin navigation must expose the panel.');
+  assert.ok(visibleRoutes([Actions.ManageSystem], cloudCapabilities).some((route) => route.path === '#/superadmin'), 'ManageSystem alone must grant panel access.');
+  assert.ok(!visibleRoutes(RolePermissions.manager, cloudCapabilities).some((route) => route.path === '#/superadmin'), 'Cloud mode must not grant managers superadmin access.');
+  const panelRoute = appRoutes.find((route) => route.path === '#/superadmin')!;
+  assert.equal(panelRoute.localOnly, undefined, 'Direct cloud panel links must not redirect as local-only.');
+  assert.equal(canAccessRoute(panelRoute, []), false);
+  const settingsRoutes = superadminSettingsRoutes(superadmin);
+  assert.equal(settingsRoutes.find((route) => route.path === '#/cloud-sync-settings')?.localOnly, undefined, 'Cloud connection information must be reachable.');
+  assert.equal(settingsRoutes.find((route) => route.path === '#/bill-settings')?.localOnly, true, 'Local printer configuration must remain local-only.');
+  assert.ok(visibleRoutes(superadmin, { localHardware: true, localSyncConfiguration: true }).some((route) => route.path === '#/superadmin'), 'Local panel access must remain available.');
 
   let scheduled: (() => void) | undefined;
   let clearCount = 0;

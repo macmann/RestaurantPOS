@@ -33,10 +33,10 @@ export const appRoutes: AppRoute[] = [
   { path: '#/inventory-alerts', label: 'Inventory alerts', section: 'admin', requiredPermissions: [Actions.AdjustStock] },
   { path: '#/reports', label: 'Reports', section: 'admin', requiredPermissions: [Actions.ViewReports, Actions.ViewFinancialReports, Actions.ViewEmployeePerformanceReports, Actions.ViewVoidReports, Actions.ViewInventoryCostReports] },
   { path: '#/audit', label: 'Audit', section: 'admin', requiredPermissions: [Actions.ViewAudit] },
-  { path: '#/superadmin', label: 'Super admin panel', section: 'admin', requiredPermissions: [Actions.ManageSystem], localOnly: true },
+  { path: '#/superadmin', label: 'Super admin panel', section: 'admin', requiredPermissions: [Actions.ManageSystem] },
   { path: '#/localization', label: 'Localization', section: 'admin', requiredPermissions: [Actions.ManageSystem], navigationScope: 'superadmin_settings', localOnly: true },
   { path: '#/bill-settings', label: 'Bill & printer settings', section: 'admin', requiredPermissions: [Actions.ManageSystem], navigationScope: 'superadmin_settings', localOnly: true },
-  { path: '#/cloud-sync-settings', label: 'Cloud Synchronization', section: 'admin', requiredPermissions: [Actions.ManageSystem], navigationScope: 'superadmin_settings', localOnly: true },
+  { path: '#/cloud-sync-settings', label: 'Cloud Synchronization', section: 'admin', requiredPermissions: [Actions.ManageSystem], navigationScope: 'superadmin_settings' },
   { path: '#/staff-settings', label: 'Staff & settings', section: 'admin', requiredPermissions: [Actions.ManageStaff], hideFromPrimaryWhenPermissions: [Actions.ManageSystem], localOnly: true },
 ];
 

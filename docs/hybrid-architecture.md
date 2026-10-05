@@ -51,3 +51,9 @@ Menu conflicts use last-write-wins: a strictly newer trusted backend timestamp i
 Availability (`isAvailable`) is already edited through the POS menu administration workflow rather than inventory movements, so it follows the same bidirectional LWW rule. Stock quantities and inventory ledgers remain local-owned and one-way.
 
 PostgreSQL stores these instants as `TIMESTAMPTZ`, and neither API accepts a browser-supplied version timestamp. Keep Windows automatic time synchronization enabled on restaurant hosts because reliable ordering between trusted local and cloud writes depends on correctly synchronized UTC clocks.
+
+## Superadmin access in cloud mode
+
+The Super admin panel requires `ManageSystem` permission in both POS and cloud modes. Cloud mode provides cloud API/database health, assigned Store ID, connection readiness, restaurant heartbeat and sync status, pending cloud-to-POS events, and read-only settings. The staff directory is shown only with `ManageStaff` permission. A failed status request is displayed independently so other available status cards remain usable.
+
+Cloud Connection Information is reachable from the panel's settings menu. Local printer checks, printer configuration, localization editing, staff changes, and local sync-worker controls remain unavailable in cloud mode, with explanations in the panel. The existing local POS administration workspace and backend authorization remain in place.
