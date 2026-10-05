@@ -1874,36 +1874,36 @@ function renderCloudConnectionInformation(info: any): HTMLElement {
   const defaults = info.recommendedLocalSettings;
   const configuration = `Local POS Cloud Sync Configuration\n\nCloud Sync URL:\n${url}\n\nStore ID:\n${storeId}\n\nDevice ID:\nregister-server-1\n\nPush Interval:\n${defaults.pushIntervalSeconds}\n\nPoll Interval:\n${defaults.pollIntervalSeconds}\n\nRequest Timeout:\n${defaults.requestTimeoutSeconds}\n\nBatch Size:\n${defaults.batchSize}`;
   const endpointRows = Object.entries(info.endpoints as Record<string, { method: string; path: string }>).map(([name, endpoint]) => `<tr><td>${escapeHtml(name.replace(/([A-Z])/g, ' $1'))}</td><td><code>${escapeHtml(endpoint.method)} ${escapeHtml(endpoint.path)}</code></td></tr>`).join('');
-  const section = page('Cloud Connection Information', 'Use these cloud deployment details to configure a restaurant POS. Secrets are never displayed.', ['Super Admin only', 'Public base URL', 'Read-only guidance']);
+  const section = page('Cloud Connection Information', 'Use these cloud deployment details to configure a restaurant POS. Secrets are never displayed.');
+  section.classList.add('cloud-connection-page');
   const panel = el('section', 'admin-panel cloud-connection-panel');
+  const detail = (label: string, value: unknown) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(String(value))}</dd></div>`;
   panel.innerHTML = `
-    <article class="card admin-card sync-health-card">
-      <p class="eyebrow">Cloud Sync Service</p><h3>${escapeHtml(info.status)}</h3>
-      <div class="settings-overview-card">
-        <div class="settings-overview-card__item"><span>Deployment Mode</span><strong>${escapeHtml(info.deploymentMode)}</strong></div>
-        <div class="settings-overview-card__item"><span>Sync API</span><strong>${info.syncApiAvailable ? 'Available' : 'Unavailable'}</strong></div>
-        <div class="settings-overview-card__item"><span>Sync Token</span><strong>${info.tokenConfigured ? 'Configured' : 'Not configured'}</strong></div>
-        <div class="settings-overview-card__item"><span>Database</span><strong>${info.databaseAvailable ? 'Available' : 'Unavailable'}</strong></div>
-      </div>
+    <article class="card cloud-admin-card connection-overview">
+      <header class="cloud-card-heading"><div><p class="eyebrow">Cloud sync service</p><h3>Connection readiness</h3></div><span class="badge ${info.status === 'READY' ? 'ready' : 'warning'}">${escapeHtml(String(info.status).replaceAll('_', ' '))}</span></header>
+      <div class="connection-status-grid">${[['Deployment', info.deploymentMode], ['Sync API', info.syncApiAvailable ? 'Available' : 'Unavailable'], ['Sync token', info.tokenConfigured ? 'Configured' : 'Not configured'], ['Database', info.databaseAvailable ? 'Available' : 'Unavailable']].map(([label, value]) => `<div><span>${escapeHtml(String(label))}</span><strong>${escapeHtml(String(value))}</strong></div>`).join('')}</div>
     </article>
-    <article class="card admin-card settings-card settings-card--wide">
-      <p class="eyebrow">Cloud Sync URL</p><h3><code class="cloud-base-url">${escapeHtml(url)}</code></h3>
-      <p class="muted">Copy only this base URL. The local POS constructs the endpoint paths itself.</p>
-      <button type="button" class="copy-cloud-url" ${info.publicBaseUrl ? '' : 'disabled'}>Copy URL</button>
-      <h3>Recommended Local Configuration</h3>
-      <div class="settings-overview-card settings-overview-card--wrap-values">
-        <div class="settings-overview-card__item"><span>Store ID</span><strong>${escapeHtml(storeId)}</strong><small>${escapeHtml(info.storeId.guidance)}</small></div>
-        <div class="settings-overview-card__item"><span>Device ID</span><strong>${escapeHtml(info.deviceId.example)}</strong><small>${escapeHtml(info.deviceId.guidance)}</small></div>
-        <div class="settings-overview-card__item"><span>Push Interval</span><strong>${defaults.pushIntervalSeconds} seconds</strong></div>
-        <div class="settings-overview-card__item"><span>Incoming Poll</span><strong>${defaults.pollIntervalSeconds} seconds</strong></div>
-        <div class="settings-overview-card__item"><span>Request Timeout</span><strong>${defaults.requestTimeoutSeconds} seconds</strong></div>
-        <div class="settings-overview-card__item"><span>Batch Size</span><strong>${defaults.batchSize}</strong></div>
-      </div>
-      <h3>Local POS Cloud Sync Configuration</h3><pre class="connection-package">${escapeHtml(configuration)}</pre>
-      <button type="button" class="copy-configuration">Copy Configuration</button>
-      <h3>API endpoints</h3><table class="staff-table"><thead><tr><th>Purpose</th><th>Existing route</th></tr></thead><tbody>${endpointRows}</tbody></table>
-      <h3>Restaurant POS setup</h3><p><strong>Super Admin → Platform Settings → Cloud Synchronization</strong></p>
-      <ol><li>Paste the Cloud Sync URL above.</li><li>Enter the restaurant's assigned Store ID.</li><li>Choose a unique Device ID, such as <code>register-server-1</code>.</li><li>Enter the matching Sync API Token supplied securely by the cloud administrator.</li><li>Test the connection, then enable synchronization.</li></ol>
+    <article class="card cloud-admin-card connection-url-card">
+      <header class="cloud-card-heading"><div><p class="eyebrow">Restaurant connection</p><h3>Cloud sync URL</h3></div><button type="button" class="connection-button copy-cloud-url" ${info.publicBaseUrl ? '' : 'disabled'}>Copy URL</button></header>
+      <code class="connection-url">${escapeHtml(url)}</code><p class="cloud-card-note">Use this base URL on the restaurant POS. Endpoint paths are added automatically.</p>
+    </article>
+    <article class="card cloud-admin-card">
+      <header class="cloud-card-heading"><div><p class="eyebrow">Recommended settings</p><h3>Local POS configuration</h3></div><span class="cloud-context-label">Read only</span></header>
+      <dl class="cloud-detail-list">${detail('Store ID', storeId)}${detail('Device ID example', info.deviceId.example)}${detail('Push interval', `${defaults.pushIntervalSeconds} seconds`)}${detail('Incoming poll', `${defaults.pollIntervalSeconds} seconds`)}${detail('Request timeout', `${defaults.requestTimeoutSeconds} seconds`)}${detail('Batch size', defaults.batchSize)}</dl>
+      <p class="cloud-card-note">${escapeHtml(info.storeId.guidance)} ${escapeHtml(info.deviceId.guidance)}</p>
+    </article>
+    <article class="card cloud-admin-card">
+      <header class="cloud-card-heading"><div><p class="eyebrow">Setup package</p><h3>Copy-ready configuration</h3></div><button type="button" class="connection-button copy-configuration">Copy configuration</button></header>
+      <pre class="connection-package" tabindex="0" aria-label="Local POS configuration to copy">${escapeHtml(configuration)}</pre><p class="cloud-card-note">The sync token is supplied separately through a secure channel. It is never included here.</p>
+    </article>
+    <article class="card cloud-admin-card connection-endpoints">
+      <header class="cloud-card-heading"><div><p class="eyebrow">Reference</p><h3>Sync API endpoints</h3></div></header>
+      <div class="connection-table-wrap"><table class="staff-table connection-endpoint-table"><thead><tr><th scope="col">Purpose</th><th scope="col">Method & route</th></tr></thead><tbody>${endpointRows}</tbody></table></div>
+    </article>
+    <article class="card cloud-admin-card connection-setup">
+      <header class="cloud-card-heading"><div><p class="eyebrow">Getting connected</p><h3>Restaurant POS setup</h3></div></header>
+      <p class="cloud-card-note">On the restaurant POS, open <strong>Super admin → System settings → Cloud Synchronization</strong>.</p>
+      <ol class="connection-steps"><li><strong>Set the cloud URL</strong><span>Paste the base URL above.</span></li><li><strong>Match the store</strong><span>Enter the assigned Store ID and choose a unique Device ID.</span></li><li><strong>Add the sync token</strong><span>Use the matching token supplied securely by the cloud administrator.</span></li><li><strong>Test and enable</strong><span>Test the connection, then enable synchronization.</span></li></ol>
     </article>`;
   panel.querySelector<HTMLButtonElement>('.copy-cloud-url')?.addEventListener('click', (event) => { void copyText(String(info.publicBaseUrl), event.currentTarget as HTMLButtonElement); });
   panel.querySelector<HTMLButtonElement>('.copy-configuration')?.addEventListener('click', (event) => { void copyText(configuration, event.currentTarget as HTMLButtonElement); });
@@ -2432,9 +2432,11 @@ async function renderReports(): Promise<HTMLElement> {
 
   const productMix = await apiClient.getProductMixReport(filters);
   const mixPanel = el('article', 'card report-card product-mix-report');
-  mixPanel.innerHTML = `<h2>Product mix</h2><p class="muted">Actual selling prices and historical order snapshots are used. Contribution margin is estimated from recipe-linked inventory costs; incomplete rows are clearly flagged.</p>
-    <div class="page-actions"><label>Group by <select data-mix-dimension>${[['menu_item','Menu item'],['category','Category'],['station','Prep station'],['service_mode','Service mode'],['weekday','Weekday'],['hour','Hour interval']].map(([value,label]) => `<option value="${value}">${label}</option>`).join('')}</select></label><label>View <select data-mix-view><option value="all">All</option><option value="top">Top 10</option><option value="bottom">Bottom 10</option></select></label><button type="button" class="secondary-button" data-mix-csv>Download CSV</button><button type="button" class="secondary-button" data-mix-print>Print</button></div>
-    <p data-mix-warning class="pos-status"></p><div class="table-scroll" data-mix-table></div>`;
+  mixPanel.innerHTML = `<header class="sales-report-heading"><div><p class="eyebrow">Sales analysis</p><h2>Product mix</h2><p class="muted">Review sales by item, category, station, and service period.</p></div><span class="cloud-context-label">Historical sales</span></header>
+    <div class="sales-report-metrics">${[['Net sales', money(productMix.summary.netSales)], ['Gross sales', money(productMix.summary.grossSales)], ['Items sold', String(productMix.summary.quantity)], ['Orders', String(productMix.summary.orderCount)]].map(([label, value]) => `<div><span>${label}</span><strong>${value}</strong></div>`).join('')}</div>
+    <div class="sales-mix-toolbar"><div class="sales-mix-filters"><label>Group by<select data-mix-dimension>${[['menu_item','Menu item'],['category','Category'],['station','Prep station'],['service_mode','Service mode'],['weekday','Weekday'],['hour','Hour interval']].map(([value,label]) => `<option value="${value}">${label}</option>`).join('')}</select></label><label>Show<select data-mix-view><option value="all">All results</option><option value="top">Top 10</option><option value="bottom">Bottom 10</option></select></label></div><div class="sales-mix-actions"><button type="button" class="secondary-button" data-mix-csv>Download CSV</button><button type="button" class="secondary-button" data-mix-print>Print</button></div></div>
+    <p data-mix-warning class="sales-cost-notice" role="status"></p><div class="table-scroll sales-mix-table" data-mix-table></div>
+    <p class="sales-report-footnote">Uses actual selling prices and historical order snapshots. Contribution margin is estimated from recipe-linked inventory costs.</p>`;
   const dimensionSelect = mixPanel.querySelector<HTMLSelectElement>('[data-mix-dimension]')!;
   const viewSelect = mixPanel.querySelector<HTMLSelectElement>('[data-mix-view]')!;
   const tableHost = mixPanel.querySelector<HTMLElement>('[data-mix-table]')!;
@@ -2450,8 +2452,9 @@ async function renderReports(): Promise<HTMLElement> {
   };
   const renderMixTable = () => {
     const rows = visibleMixRows();
+    warning.classList.toggle('sales-cost-notice--warning', Boolean(productMix.summary.missingRecipeItemIds.length || productMix.summary.missingCostItemIds.length));
     warning.textContent = productMix.summary.missingRecipeItemIds.length || productMix.summary.missingCostItemIds.length ? `Cost gaps — missing recipe: ${productMix.summary.missingRecipeItemIds.join(', ') || 'none'}; missing cost: ${productMix.summary.missingCostItemIds.join(', ') || 'none'}.` : 'Recipe cost coverage is complete.';
-    tableHost.innerHTML = `<table><thead><tr>${mixColumns.map(([key,label]) => `<th><button type="button" class="table-sort" data-sort="${key}">${label}${sortKey === key ? (sortDirection > 0 ? ' ↑' : ' ↓') : ''}</button></th>`).join('')}</tr></thead><tbody>${rows.map((row: any) => `<tr>${mixColumns.map(([key,,format]) => `<td>${row[key] === null ? 'Unavailable' : format === 'money' ? money(row[key]) : escapeHtml(String(row[key]))}</td>`).join('')}</tr>`).join('') || `<tr><td colspan="${mixColumns.length}">No product-mix sales match these filters.</td></tr>`}</tbody></table>`;
+    tableHost.innerHTML = `<table><thead><tr>${mixColumns.map(([key,label]) => `<th scope="col" aria-sort="${sortKey === key ? (sortDirection > 0 ? 'ascending' : 'descending') : 'none'}"><button type="button" class="table-sort" data-sort="${key}">${label}${sortKey === key ? (sortDirection > 0 ? ' ↑' : ' ↓') : ''}</button></th>`).join('')}</tr></thead><tbody>${rows.map((row: any) => `<tr>${mixColumns.map(([key,,format]) => `<td class="${format === 'text' ? 'sales-text-cell' : 'sales-number-cell'}">${row[key] === null ? 'Unavailable' : format === 'money' ? money(row[key]) : escapeHtml(String(row[key]))}</td>`).join('')}</tr>`).join('') || `<tr><td colspan="${mixColumns.length}">No product-mix sales match these filters.</td></tr>`}</tbody></table>`;
     tableHost.querySelectorAll<HTMLButtonElement>('[data-sort]').forEach((button) => button.addEventListener('click', () => { const next = button.dataset.sort!; sortDirection = sortKey === next ? -sortDirection : (next === 'label' || next === 'costDataStatus' ? 1 : -1); sortKey = next; renderMixTable(); }));
   };
   dimensionSelect.addEventListener('change', renderMixTable); viewSelect.addEventListener('change', renderMixTable);

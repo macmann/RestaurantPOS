@@ -815,3 +815,64 @@ button { min-height: var(--tap); touch-action: manipulation; }
 }
 
 .cloud-staff-table caption { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+/* Cloud connection and sales analysis share the administration visual language. */
+.cloud-connection-panel { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 1.1rem; }
+.connection-overview, .connection-url-card { grid-column: 1 / -1; }
+.connection-status-grid, .sales-report-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .75rem; }
+.connection-status-grid > div, .sales-report-metrics > div { display: grid; align-content: start; gap: .55rem; padding: 1rem; border: 1px solid #e2e8f0; border-radius: .85rem; background: #f8fafc; min-width: 0; }
+.connection-status-grid span, .sales-report-metrics span { color: #64748b; font-size: .75rem; font-weight: 650; }
+.connection-status-grid strong, .sales-report-metrics strong { color: #102a43; font-size: 1.1rem; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.connection-url { display: block; padding: 1rem; border: 1px solid #b5ded8; border-radius: .8rem; background: #f0fdfa; color: #115e59; font-size: .95rem; overflow-wrap: anywhere; }
+.connection-button, .sales-mix-actions .secondary-button { min-height: 2.65rem; padding: .65rem .9rem; border: 1px solid #b5ded8; border-radius: .7rem; background: #f0fdfa; color: #0f766e; font: inherit; font-size: .8rem; font-weight: 750; cursor: pointer; box-shadow: none; }
+.connection-button:hover, .sales-mix-actions .secondary-button:hover { background: #ccfbf1; }
+.connection-button:disabled, .sales-mix-actions .secondary-button:disabled { color: #64748b; background: #f1f5f9; border-color: #e2e8f0; cursor: not-allowed; }
+.connection-package { margin: 0; padding: 1rem; border: 1px solid #e2e8f0; border-radius: .8rem; background: #f8fafc; color: #334155; white-space: pre-wrap; overflow-wrap: anywhere; font-size: .78rem; line-height: 1.65; }
+.connection-table-wrap { min-width: 0; overflow-x: auto; border: 1px solid #e2e8f0; border-radius: .8rem; }
+.connection-endpoint-table { min-width: 22rem; font-size: .8rem; }
+.connection-endpoint-table code { overflow-wrap: anywhere; }
+.connection-endpoint-table tr:last-child td { border-bottom: 0; }
+.connection-steps { list-style: none; counter-reset: connection-step; margin: 0; padding: 0; display: grid; gap: 1rem; }
+.connection-steps li { position: relative; counter-increment: connection-step; display: grid; gap: .3rem; padding-left: 2.6rem; }
+.connection-steps li::before { content: counter(connection-step); position: absolute; left: 0; top: 0; display: grid; place-items: center; width: 1.8rem; height: 1.8rem; border-radius: 50%; background: #e6f5f2; color: #0f766e; font-size: .8rem; font-weight: 800; }
+.connection-steps strong { color: #1e293b; font-size: .85rem; }
+.connection-steps span { color: #64748b; font-size: .8rem; line-height: 1.5; }
+.product-mix-report { display: grid; gap: 1.1rem; min-width: 0; padding: 1.4rem; border: 1px solid #e2e8f0; border-radius: 1.25rem; }
+.sales-report-heading { display: flex; justify-content: space-between; align-items: start; flex-wrap: wrap; gap: .75rem; }
+.sales-report-heading > div { display: grid; gap: .4rem; }
+.sales-report-heading h2, .sales-report-heading p { margin: 0; }
+.sales-report-heading h2 { color: #102a43; font-size: 1.35rem; letter-spacing: -.025em; }
+.sales-report-heading .muted, .sales-report-footnote { color: #64748b; font-size: .8rem; line-height: 1.6; }
+.sales-report-metrics > div:first-child { background: #f0fdfa; border-color: #b5ded8; }
+.sales-report-metrics strong { font-size: 1.4rem; }
+.sales-mix-toolbar { display: flex; align-items: end; justify-content: space-between; flex-wrap: wrap; gap: 1rem; padding: 1rem; border: 1px solid #e2e8f0; border-radius: .85rem; background: #f8fafc; }
+.sales-mix-filters, .sales-mix-actions { display: flex; flex-wrap: wrap; gap: .65rem; }
+.sales-mix-filters label { display: grid; gap: .4rem; color: #475569; font-size: .75rem; font-weight: 700; }
+.sales-mix-filters select { min-width: 9rem; min-height: 2.65rem; padding: .55rem .7rem; border: 1px solid #cbd5e1; border-radius: .65rem; background: #fff; color: #1e293b; font: inherit; font-size: .85rem; }
+.sales-cost-notice { margin: 0; padding: .8rem 1rem; border: 1px solid #b5ded8; border-radius: .75rem; background: #f0fdfa; color: #115e59; font-size: .8rem; line-height: 1.6; overflow-wrap: anywhere; }
+.sales-cost-notice--warning { border-color: #fde68a; background: #fffbeb; color: #92400e; }
+.sales-mix-table { max-width: 100%; border: 1px solid #e2e8f0; border-radius: .8rem; }
+.sales-mix-table table { width: 100%; min-width: 65rem; border-collapse: collapse; font-size: .8rem; }
+.sales-mix-table th, .sales-mix-table td { padding: .9rem; border-bottom: 1px solid #e2e8f0; }
+.sales-mix-table th { background: #f8fafc; vertical-align: top; text-align: left; }
+.sales-mix-table .table-sort { padding: 0; border: 0; background: transparent; color: #475569; box-shadow: none; font: inherit; font-size: .73rem; font-weight: 750; text-align: left; cursor: pointer; }
+.sales-mix-table .table-sort:hover { color: #0f766e; }
+.sales-mix-table th[aria-sort="ascending"], .sales-mix-table th[aria-sort="descending"] { background: #e6f5f2; }
+.sales-number-cell { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.sales-text-cell { color: #334155; min-width: 8rem; }
+.sales-mix-table tbody tr:hover { background: #f8fafc; }
+.sales-mix-table tbody tr:last-child td { border-bottom: 0; }
+.sales-report-footnote { margin: 0; }
+.connection-button:focus-visible, .sales-mix-toolbar button:focus-visible, .sales-mix-toolbar select:focus-visible, .sales-mix-table button:focus-visible { outline: 3px solid #2563eb; outline-offset: 3px; }
+@media (max-width: 1000px) { .cloud-connection-panel { grid-template-columns: minmax(0, 1fr); } .connection-overview, .connection-url-card { grid-column: auto; } }
+@media (max-width: 600px) {
+  .connection-status-grid, .sales-report-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .product-mix-report { padding: 1rem; }
+  .sales-mix-filters, .sales-mix-actions { width: 100%; }
+  .sales-mix-filters label { flex: 1; min-width: 0; }
+  .sales-mix-filters select { min-width: 0; width: 100%; }
+  .sales-mix-actions button { flex: 1; }
+}
+
+.cloud-connection-panel .connection-package { max-height: 20rem; overflow-y: auto; }
+.cloud-connection-panel .connection-package:focus-visible { outline: 3px solid #2563eb; outline-offset: 3px; }
