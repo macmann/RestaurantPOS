@@ -1,3 +1,4 @@
+import { queueMenuEvent } from '../../sync/menuEvents';
 import { randomUUID } from 'node:crypto';
 import type { AuthenticatedUser } from '../../auth/policies';
 import { recordAuditEvent } from '../../audit/service';
@@ -27,7 +28,10 @@ export interface BulkImportResult {
   syncMessage: string;
 }
 
-interface TokenRecord { userId: string; branchId: string; filename: string; rows: BulkImportRow[]; expiresAt: number }
+export interface BulkImportContext { branchId: string; source: 'LOCAL_POS' | 'CLOUD_MANAGER' }
+const localContext = (): BulkImportContext => ({ branchId: getCurrentBranchId(), source: 'LOCAL_POS' });
+
+interface TokenRecord { source: BulkImportContext['source']; userId: string; branchId: string; filename: string; rows: BulkImportRow[]; expiresAt: number }
 const tokens = new Map<string, TokenRecord>();
 const TOKEN_TTL_MS = 10 * 60 * 1000;
 
@@ -37,8 +41,7 @@ function uniqueInOrder(values: string[]): string[] {
   return values.filter((value) => { const key = normalized(value); if (seen.has(key)) return false; seen.add(key); return true; });
 }
 
-async function buildPreview(filename: string, rows: BulkImportRow[], errors: BulkImportValidationError[] = []): Promise<BulkImportPreview> {
-  const branchId = getCurrentBranchId();
+async function buildPreview(filename: string, rows: BulkImportRow[], errors: BulkImportValidationError[] = [], branchId = getCurrentBranchId()): Promise<BulkImportPreview> {
   const categories = (await listCategories()).filter((row) => row.branchId === branchId && row.isActive);
   const categoryNames = uniqueInOrder(rows.map((row) => row.category));
   const categoryByName = new Map(categories.map((row) => [normalized(row.name), row]));
@@ -73,13 +76,13 @@ async function buildPreview(filename: string, rows: BulkImportRow[], errors: Bul
   };
 }
 
-export async function previewBulkImport(user: AuthenticatedUser, filename: string, file: Buffer): Promise<BulkImportPreview> {
+export async function previewBulkImport(user: AuthenticatedUser, filename: string, file: Buffer, context: BulkImportContext = localContext()): Promise<BulkImportPreview> {
   const parsed = parseBulkUploadWorkbook(file);
   const validated = validateBulkUploadRows(parsed);
-  const preview = await buildPreview(filename, validated.rows, validated.errors);
+  const preview = await buildPreview(filename, validated.rows, validated.errors, context.branchId);
   if (!validated.errors.length) {
     const token = randomUUID();
-    tokens.set(token, { userId: user.id, branchId: getCurrentBranchId(), filename, rows: structuredClone(validated.rows), expiresAt: Date.now() + TOKEN_TTL_MS });
+    tokens.set(token, { userId: user.id, branchId: context.branchId, source: context.source, filename, rows: structuredClone(validated.rows), expiresAt: Date.now() + TOKEN_TTL_MS });
     preview.token = token;
   }
   return preview;
@@ -89,14 +92,21 @@ async function importRows(user: AuthenticatedUser, record: TokenRecord): Promise
   const previousSettings = getPosOperationalSettings();
   const memorySnapshot = snapshotMemoryMenu();
   try {
-    return await withTransaction(async () => {
+    return await withTransaction(async (client) => {
+      const mutation = { source: record.source, actorId: user.id };
+      const queueCloudChange = async (eventType: string, changed: any) => {
+        if (record.source === 'CLOUD_MANAGER' && isSqlRepositoryEnabled()) {
+          await queueMenuEvent(client, record.branchId, eventType, changed);
+        }
+      };
       const categoryRows = (await listCategories()).filter((row) => row.branchId === record.branchId);
       let nextSort = categoryRows.reduce((maximum, row) => Math.max(maximum, row.sortOrder), 0);
       const categoryByName = new Map(categoryRows.filter((row) => row.isActive).map((row) => [normalized(row.name), row]));
       let categoriesCreated = 0;
       for (const name of uniqueInOrder(record.rows.map((row) => row.category))) {
         if (categoryByName.has(normalized(name))) continue;
-        const created = await adminCreateCategory({ branchId: record.branchId, name, sortOrder: ++nextSort, isActive: true }, { source: 'LOCAL_POS', actorId: user.id });
+        const created = await adminCreateCategory({ branchId: record.branchId, name, sortOrder: ++nextSort, isActive: true }, mutation);
+        await queueCloudChange('CATEGORY_CREATED', created);
         categoryByName.set(normalized(name), created); categoriesCreated += 1;
       }
 
@@ -119,11 +129,13 @@ async function importRows(user: AuthenticatedUser, record: TokenRecord): Promise
         const station = normalizePrepStationId(row.station);
         const existing = await getItemByNameInCategory(category.id, row.name);
         if (!existing) {
-          await adminCreateItem({ branchId: record.branchId, categoryId: category.id, name: row.name, price: row.price, prepStation: station, isActive: true, isAvailable: true }, { source: 'LOCAL_POS', actorId: user.id });
+          const created = await adminCreateItem({ branchId: record.branchId, categoryId: category.id, name: row.name, price: row.price, prepStation: station, isActive: true, isAvailable: true }, mutation);
+          await queueCloudChange('MENU_ITEM_CREATED', created);
           itemsCreated += 1;
         } else if (existing.price === row.price && existing.prepStation === station && existing.isActive && existing.isAvailable) unchanged += 1;
         else {
-          await adminUpdateItem(existing.id, { categoryId: category.id, price: row.price, prepStation: station, isActive: true, isAvailable: true }, { source: 'LOCAL_POS', actorId: user.id });
+          const updated = await adminUpdateItem(existing.id, { categoryId: category.id, price: row.price, prepStation: station, isActive: true, isAvailable: true }, mutation);
+          await queueCloudChange('MENU_ITEM_UPDATED', updated);
           itemsUpdated += 1;
         }
       }
@@ -134,7 +146,7 @@ async function importRows(user: AuthenticatedUser, record: TokenRecord): Promise
       });
       // Ensure all SQL work (including trigger-produced outbox events) has run before returning.
       if (isSqlRepositoryEnabled()) await query('SELECT 1');
-      return { filename: record.filename, rowsProcessed: record.rows.length, categoriesCreated, stationsCreated, itemsCreated, itemsUpdated, unchanged, syncEventsQueued, syncMessage: 'Changes have been queued for cloud synchronization.' };
+      return { filename: record.filename, rowsProcessed: record.rows.length, categoriesCreated, stationsCreated, itemsCreated, itemsUpdated, unchanged, syncEventsQueued, syncMessage: !isSqlRepositoryEnabled() ? 'Changes saved in memory; durable synchronization requires PostgreSQL.' : record.source === 'CLOUD_MANAGER' ? 'Changes have been queued for synchronization to the restaurant POS.' : 'Changes have been queued for cloud synchronization.' };
     });
   } catch (error) {
     if (!isSqlRepositoryEnabled()) restoreMemoryMenu(memorySnapshot);
@@ -143,11 +155,11 @@ async function importRows(user: AuthenticatedUser, record: TokenRecord): Promise
   }
 }
 
-export async function confirmBulkImport(user: AuthenticatedUser, token: string): Promise<BulkImportResult> {
+export async function confirmBulkImport(user: AuthenticatedUser, token: string, context: BulkImportContext = localContext()): Promise<BulkImportResult> {
   const record = tokens.get(token);
   tokens.delete(token);
   if (!record || record.expiresAt < Date.now()) throw Object.assign(new Error('Bulk import preview token is invalid or expired.'), { statusCode: 410 });
-  if (record.userId !== user.id || record.branchId !== getCurrentBranchId()) throw Object.assign(new Error('Bulk import preview token does not belong to this user and branch.'), { statusCode: 403 });
+  if (record.userId !== user.id || record.branchId !== context.branchId || record.source !== context.source) throw Object.assign(new Error('Bulk import preview token does not belong to this user and branch.'), { statusCode: 403 });
   return importRows(user, record);
 }
 

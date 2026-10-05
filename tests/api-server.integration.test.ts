@@ -1,4 +1,4 @@
-declare const process: { exitCode?: number };
+declare const process: { env: Record<string, string | undefined>; exitCode?: number };
 
 import { updatePosOperationalSettings } from '../backend/config/posSettings';
 import { createInventoryMasterItem, saveMenuInventoryRecipe } from '../backend/inventory/service';
@@ -7,6 +7,7 @@ import { createTable } from '../backend/tables/service';
 import type { TableOrderItem } from '../backend/billing/repository';
 import { assert } from './helpers/assertions';
 import { apiRequest, login, seedLoginUser, startTestServer } from './helpers/apiTestHarness';
+import { getCurrentBranchId } from '../backend/config/branch';
 import { createXlsxFixture } from './helpers/xlsx';
 
 async function runApiIntegration(): Promise<void> {
@@ -218,7 +219,65 @@ async function runApiIntegration(): Promise<void> {
   }
 }
 
+async function runCloudBulkImportIntegration(): Promise<void> {
+  const previousMode = process.env.APP_MODE;
+  const previousStore = process.env.POS_STORE_ID;
+  process.env.APP_MODE = 'CLOUD';
+  process.env.POS_STORE_ID = 'cloud-bulk-store';
+  const branchId = getCurrentBranchId();
+  const server = await startTestServer();
+  try {
+    await seedLoginUser({ id: 'cloud-bulk-manager', branchId, role: 'manager', status: 'active', password: 'cloud-test' });
+    await seedLoginUser({ id: 'cloud-bulk-waiter', branchId, role: 'waiter', status: 'active', password: 'cloud-test' });
+    await seedLoginUser({ id: 'cloud-bulk-other-manager', branchId, role: 'manager', status: 'active', password: 'cloud-test' });
+    const manager = await login(server.baseUrl, 'cloud-bulk-manager', 'cloud-test');
+    const waiter = await login(server.baseUrl, 'cloud-bulk-waiter', 'cloud-test');
+    const otherManager = await login(server.baseUrl, 'cloud-bulk-other-manager', 'cloud-test');
+    const workbook = createXlsxFixture([['Name', 'Category', 'Station', 'Price'], ['Cloud Rice', 'Cloud Bulk Meals', 'Kitchen', 4500]]);
+    const preview = async (token?: string, file = workbook) => {
+      const upload = new FormData(); upload.append('file', new Blob([new Uint8Array(file)]), 'cloud-menu.xlsx');
+      const response = await fetch(`${server.baseUrl}/manager-api/menu/bulk-import/preview`, { method: 'POST', headers: token ? { authorization: `Bearer ${token}` } : {}, body: upload });
+      return { status: response.status, body: await response.json() as any };
+    };
+    assert((await preview()).status === 401, 'Cloud preview requires authentication.');
+    assert((await preview(waiter.token)).status === 403, 'Cloud preview requires ManageMenu.');
+    const confirm = (token: string, userToken = manager.token) => apiRequest(server.baseUrl, '/manager-api/menu/bulk-import', { method: 'POST', token: userToken, body: { token } });
+    assert((await confirm('not-authorized', waiter.token)).status === 403, 'Cloud confirmation requires ManageMenu.');
+    const first = await preview(manager.token);
+    assert(first.status === 200 && first.body.data.items.create === 1 && first.body.data.token, 'Cloud workbook must preview successfully.');
+    const before = await apiRequest(server.baseUrl, '/manager-api/menu', { token: manager.token });
+    assert(!before.body.data.some((category: any) => category.name === 'Cloud Bulk Meals'), 'Cloud preview must not write menu records.');
+    assert((await confirm(first.body.data.token, otherManager.token)).status === 403, 'Preview tokens must be bound to their creator.');
+    const fresh = await preview(manager.token);
+    const imported = await confirm(fresh.body.data.token);
+    assert(imported.status === 200 && imported.body.data.itemsCreated === 1 && imported.body.data.categoriesCreated === 1, 'Cloud confirmation must import the workbook.');
+    assert((await confirm(fresh.body.data.token)).status === 410, 'Cloud preview tokens must not be reusable.');
+    const menu = await apiRequest(server.baseUrl, '/manager-api/menu', { token: manager.token });
+    const category = menu.body.data.find((row: any) => row.name === 'Cloud Bulk Meals');
+    assert(category?.branchId === 'cloud-bulk-store' && category.updatedSource === 'CLOUD_MANAGER', 'Cloud categories must use the assigned store and cloud source.');
+    assert(category.items[0]?.price === 4500 && category.items[0].updatedSource === 'CLOUD_MANAGER', 'Cloud imported items must preserve price and mutation source.');
+    const identical = await preview(manager.token);
+    assert(identical.body.data.items.unchanged === 1, 'Identical cloud uploads must remain unchanged.');
+    const changed = await preview(manager.token, createXlsxFixture([['Name', 'Category', 'Station', 'Price'], ['Cloud Rice', 'Cloud Bulk Meals', 'Kitchen', 5000]]));
+    assert(changed.body.data.items.update === 1, 'Cloud preview must identify existing item updates.');
+    assert((await confirm(changed.body.data.token)).body.data.itemsUpdated === 1, 'Cloud imports must update existing items.');
+    const invalid = await preview(manager.token, createXlsxFixture([['Name', 'Category', 'Station', 'Price'], ['Bad', 'Cloud Bulk Meals', 'Kitchen', 'bad-price']]));
+    assert(invalid.body.data.errors.length > 0 && !invalid.body.data.token, 'Invalid cloud uploads must not be confirmable.');
+    const scoped = await preview(manager.token);
+    process.env.POS_STORE_ID = 'other-cloud-store';
+    assert((await confirm(scoped.body.data.token)).status === 403, 'Cloud previews must be bound to the assigned store.');
+    process.env.POS_STORE_ID = 'cloud-bulk-store';
+    const operational = await apiRequest(server.baseUrl, '/api/orders', { method: 'POST', token: manager.token, body: {} });
+    assert(operational.status === 405, 'Cloud operational writes must remain blocked.');
+  } finally {
+    await server.close();
+    if (previousMode === undefined) delete process.env.APP_MODE; else process.env.APP_MODE = previousMode;
+    if (previousStore === undefined) delete process.env.POS_STORE_ID; else process.env.POS_STORE_ID = previousStore;
+  }
+}
+
 runApiIntegration()
+  .then(runCloudBulkImportIntegration)
   .then(() => console.log('API server integration flow completed successfully.'))
   .catch((error) => {
     console.error(error);

@@ -18,8 +18,13 @@ async function verifyMode(mode: DeploymentMode, root: string): Promise<void> {
   await menu.setAvailability('item/a', false);
   await menu.setPromotional('item/a', true);
   await menu.deleteItem('item/a');
-  const expected = [root, `${root}/categories`, `${root}/categories/cat%2Fa`, `${root}/categories/cat%2Fa`, `${root}/items`, `${root}/items/item%2Fa`, `${root}/items/item%2Fa/availability`, `${root}/items/item%2Fa/promotional`, `${root}/items/item%2Fa`];
+  const file = new File(['workbook'], 'menu.xlsx');
+  await menu.previewBulkImport(file);
+  await menu.confirmBulkImport('preview-token');
+  const expected = [root, `${root}/categories`, `${root}/categories/cat%2Fa`, `${root}/categories/cat%2Fa`, `${root}/items`, `${root}/items/item%2Fa`, `${root}/items/item%2Fa/availability`, `${root}/items/item%2Fa/promotional`, `${root}/items/item%2Fa`, `${root}/bulk-import/preview`, `${root}/bulk-import`];
   assert(JSON.stringify(calls.map((call) => call.path)) === JSON.stringify(expected), `${mode} should use only the ${root} route family.`);
+  assert(calls[9].options?.body instanceof FormData && (calls[9].options.body as FormData).get('file') instanceof File, `${mode} should send a multipart workbook.`);
+  assert((calls[10].options?.body as { token: string }).token === 'preview-token', `${mode} should confirm the preview token.`);
   assert(calls[1].options?.method === 'POST' && calls[4].options?.method === 'POST', `${mode} creates should use POST.`);
   assert(calls[2].options?.method === 'PATCH' && calls[5].options?.method === 'PATCH', `${mode} updates should use PATCH.`);
   assert(calls[3].options?.method === 'DELETE' && calls[8].options?.method === 'DELETE', `${mode} deletes should use DELETE.`);

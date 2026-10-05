@@ -1,7 +1,7 @@
 import type { AuthenticatedUser } from '../../auth/policies';
 import type { Request } from 'express';
 import { MAX_BULK_UPLOAD_BYTES } from './parser';
-import { confirmBulkImport, previewBulkImport } from './service';
+import { confirmBulkImport, previewBulkImport, type BulkImportContext } from './service';
 
 export interface UploadedWorkbook { filename: string; buffer: Buffer }
 
@@ -51,6 +51,6 @@ export async function readWorkbookUpload(req: Request): Promise<UploadedWorkbook
 }
 
 export const BulkMenuImportApi = {
-  preview: (user: AuthenticatedUser, filename: string, file: Buffer) => previewBulkImport(user, filename, file),
-  confirm: (user: AuthenticatedUser, token: string) => confirmBulkImport(user, token),
+  preview: (user: AuthenticatedUser, filename: string, file: Buffer, context?: BulkImportContext) => previewBulkImport(user, filename, file, context),
+  confirm: (user: AuthenticatedUser, token: string, context?: BulkImportContext) => confirmBulkImport(user, token, context),
 };

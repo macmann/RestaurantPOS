@@ -1,10 +1,12 @@
 import express, { type Request, type Response, type NextFunction, type Router } from 'express';
-import { query, withTransaction, type DatabaseClient } from '../db/client';
+import { query, withTransaction } from '../db/client';
 import { acknowledgeIncoming, createCustomerAccount, getIncomingEvents, receiveOutgoingBatch, reconcileMenuSnapshot, requireSyncToken, syncHealth, type MenuSnapshotRecord, type SyncEvent } from './service';
 import { authorize } from '../auth/middleware';
 import { Actions } from '../auth/permissions';
 import { AdminMenuApi } from '../menu/controller';
 import { getCategoryById, getItemById, listItems } from '../menu/repository';
+import { queueMenuEvent } from './menuEvents';
+import { BulkMenuImportApi, readWorkbookUpload } from '../menu/bulkImport/controller';
 import { resolveCloudStoreId } from '../config/cloudConnection';
 
 const route = (fn: (req: Request, res: Response) => Promise<unknown>) => (req: Request, res: Response, next: NextFunction) => { void fn(req, res).catch(next); };
@@ -48,15 +50,6 @@ export function buildManagerRouter(): Router {
   const assertStore = (req: Request, record: { branchId: string } | null): void => {
     if (!record || record.branchId !== managerStore(req)) throw Object.assign(new Error('Menu record not found for this manager store.'), { statusCode: 404 });
   };
-  const queueMenuEvent = async (client: DatabaseClient, storeId: string, eventType: string, record: any) => {
-    const event = await client.query<any>('SELECT gen_random_uuid() event_id');
-    const eventId = event.rows[0].event_id;
-    record.originatingEventId = eventId;
-    const namespace = eventType.startsWith('MENU_ITEM_') ? 'menu:items' : 'menu:categories';
-    await client.query('UPDATE repository_records SET payload=$3::jsonb WHERE namespace=$1 AND record_key=$2', [namespace, record.id, JSON.stringify(record)]);
-    await client.query('INSERT INTO incoming_pos_events(event_id,store_id,event_type,aggregate_id,payload) VALUES($1,$2,$3,$4,$5)', [eventId, storeId, eventType, record.id, JSON.stringify(record)]);
-    return record;
-  };
   router.get('/summary', route(async (req, res) => {
     const storeId = text((req.query as any)?.storeId ?? process.env.POS_STORE_ID ?? 'default', 'storeId');
     const [orders, payments, health] = await Promise.all([
@@ -68,6 +61,13 @@ export function buildManagerRouter(): Router {
   }));
   router.get('/orders', route(async (_req,res) => res.json({ data: (await query('SELECT * FROM orders ORDER BY created_at DESC LIMIT 200')).rows })));
   router.get('/menu', route(async (req,res) => res.json({ data: (await AdminMenuApi.list()).filter((category) => category.branchId === managerStore(req)) })));
+  router.post('/menu/bulk-import/preview', authorize(Actions.ManageMenu), route(async (req, res) => {
+    const upload = await readWorkbookUpload(req);
+    res.json({ data: await BulkMenuImportApi.preview(req.user!, upload.filename, upload.buffer, { branchId: managerStore(req), source: 'CLOUD_MANAGER' }) });
+  }));
+  router.post('/menu/bulk-import', authorize(Actions.ManageMenu), route(async (req, res) => {
+    res.json({ data: await BulkMenuImportApi.confirm(req.user!, text((req.body as any)?.token, 'token'), { branchId: managerStore(req), source: 'CLOUD_MANAGER' }) });
+  }));
   router.post('/menu/categories', authorize(Actions.ManageMenu), route(async(req,res)=>{const storeId=managerStore(req);const record=await withTransaction(async(client)=>{const created=await AdminMenuApi.createCategory({...(req.body as any),branchId:storeId},{source:'CLOUD_MANAGER',actorId:req.user?.id});return queueMenuEvent(client,storeId,'CATEGORY_CREATED',created);});res.status(201).json({data:record});}));
   router.patch('/menu/categories/:id', authorize(Actions.ManageMenu), route(async(req,res)=>{const storeId=managerStore(req);assertStore(req,await getCategoryById(text(req.params.id,'id')));const record=await withTransaction(async(client)=>queueMenuEvent(client,storeId,'CATEGORY_UPDATED',await AdminMenuApi.updateCategory(text(req.params.id,'id'),req.body as any,{source:'CLOUD_MANAGER',actorId:req.user?.id})));res.json({data:record});}));
   router.delete('/menu/categories/:id', authorize(Actions.ManageMenu), route(async(req,res)=>{const storeId=managerStore(req);const id=text(req.params.id,'id');const existing=await getCategoryById(id);assertStore(req,existing);const children=await listItems(id);const record=await withTransaction(async(client)=>{await AdminMenuApi.deleteCategory(id,{source:'CLOUD_MANAGER',actorId:req.user?.id});const timestamp=new Date().toISOString();for(const child of children)await queueMenuEvent(client,storeId,'MENU_ITEM_DELETED',{...child,deletedAt:timestamp,isActive:false,isAvailable:false,updatedAt:timestamp,updatedSource:'CLOUD_MANAGER',updatedBy:req.user?.id});return queueMenuEvent(client,storeId,'CATEGORY_DELETED',{...(existing as any),deletedAt:timestamp,isActive:false,updatedAt:timestamp,updatedSource:'CLOUD_MANAGER',updatedBy:req.user?.id});});res.json({data:record});}));
