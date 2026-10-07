@@ -18,7 +18,7 @@ import { ensureDefaultSuperadmin } from './users/bootstrap';
 import { activateUser, createStaffProfile, deactivateUser, updateStaffProfile } from './users/service';
 import { AdminMenuApi } from './menu/controller';
 import { BulkMenuImportApi, readWorkbookUpload } from './menu/bulkImport/controller';
-import { createOrderDraft, editOrderBeforePayment, cancelOrder, transitionOrderStatus, getOrder } from './orders/service';
+import { voidOrderItem, createOrderDraft, editOrderBeforePayment, cancelOrder, transitionOrderStatus, getOrder } from './orders/service';
 import { listOrders } from './orders/repository';
 import { listStationQueue, patchItemProgress, onKdsEvent } from './kds/controller';
 import type { KdsView } from './kds/service';
@@ -26,6 +26,7 @@ import type { Station, KdsProgress } from './kds/repository';
 import {
   generateBillFromSessionItems,
   setBillTaxMode,
+  setBillCharges,
   applyBillPromotions,
   updateBillSplitItems,
   mergeBillSplits,
@@ -264,6 +265,7 @@ function buildTablesRouter(): Router {
     return TablesApi.openSession(requireUser(req), { tableId: stringParam(req, 'tableId'), guestCount: requiredNumber(body.guestCount, 'guestCount'), branchId: optionalString(body.branchId) });
   }, 201));
   router.get('/sessions/:tableSessionId', send((req) => TablesApi.getSession(stringParam(req, 'tableSessionId'))));
+  router.post('/sessions/:tableSessionId/transfer', authorize(Actions.CreateOrder), send(req => TablesApi.transferSession(requireUser(req), stringParam(req, 'tableSessionId'), bodyObject(req) as any)));
   router.post('/sessions/:tableSessionId/close', authorize(Actions.CloseBill), send((req) => TablesApi.closeSession(requireUser(req), stringParam(req, 'tableSessionId'))));
   return router;
 }
@@ -278,6 +280,7 @@ function buildOrdersRouter(): Router {
     return order;
   }));
   router.patch('/:orderId', authorize(Actions.EditOrder), send((req) => editOrderBeforePayment(requireUser(req), stringParam(req, 'orderId'), bodyObject(req) as any)));
+  router.post('/:orderId/items/:itemId/void', authorize(Actions.VoidPreparedItems), send(req => voidOrderItem(requireUser(req), stringParam(req, 'orderId'), stringParam(req, 'itemId'), bodyObject(req) as any)));
   router.post('/:orderId/cancel', authorize(Actions.EditOrder), send((req) => cancelOrder(requireUser(req), stringParam(req, 'orderId'), bodyObject(req) as any)));
   router.post('/:orderId/status', authorize(Actions.TransitionOrderStatus), send((req) => {
     const body = bodyObject(req);
@@ -327,6 +330,7 @@ function buildBillingRouter(): Router {
     const body = bodyObject(req);
     return generateBillFromSessionItems(requiredString(body.tableSessionId, 'tableSessionId'), (body.itemsBySplit ?? {}) as any, req.user!.id, body.pricing as any, optionalString(body.branchId) ?? getCurrentBranchId());
   }, 201));
+  router.patch('/bills/:tableSessionId/charges', authorize(Actions.CloseBill), send(req => setBillCharges({ ...bodyObject(req), tableSessionId: stringParam(req, 'tableSessionId'), actorUserId: req.user!.id, branchId: req.user!.branchId } as any)));
   router.patch('/bills/:tableSessionId/tax', authorize(Actions.CloseBill), send((req) => setBillTaxMode({ ...bodyObject(req), tableSessionId: stringParam(req, 'tableSessionId'), actorUserId: req.user!.id } as any)));
   router.patch('/bills/:tableSessionId/splits', authorize(Actions.CloseBill), send((req) => updateBillSplitItems({ ...(bodyObject(req) as any), tableSessionId: stringParam(req, 'tableSessionId'), actorUserId: req.user!.id })));
   router.post('/bills/:tableSessionId/merge-splits', authorize(Actions.CloseBill), send((req) => mergeBillSplits({ ...(bodyObject(req) as any), tableSessionId: stringParam(req, 'tableSessionId'), actorUserId: req.user!.id })));

@@ -1,3 +1,4 @@
+import { registerOperationalMemoryState } from '../db/operationalWrite';
 import { isSqlRepositoryEnabled } from '../db/client';
 import { getRecord, listRecords, putRecord } from '../db/repositoryStore';
 
@@ -42,6 +43,8 @@ export interface BillPricingOptions {
   taxMode: TaxMode;
   taxRate: number;
   billPromotions?: BillPromotion[];
+  serviceChargeRate?: number;
+  serviceChargeEnabled?: boolean;
 }
 
 export interface DiscountBreakdown {
@@ -83,6 +86,9 @@ export interface BillCalculationBreakdown {
   taxMode: TaxMode;
   taxRate: number;
   taxTotal: number;
+  serviceChargeTotal?: number;
+  serviceChargeRate?: number;
+  serviceChargeEnabled?: boolean;
   totalDue: number;
   roundingStrategy: 'round-half-up-to-cent-at-each-monetary-step';
   appliedPromotions: BillPromotionApplication[];
@@ -261,3 +267,7 @@ export async function listBillingAuditByTableSessionId(tableSessionId: string): 
   const rows = isSqlRepositoryEnabled() ? await listRecords<BillingAuditEntry>('billing:audit') : auditEntries;
   return rows.filter((x) => x.tableSessionId === tableSessionId).map((x) => structuredClone(x));
 }
+
+registerOperationalMemoryState(billsBySession);
+registerOperationalMemoryState(debtLedgerEntries);
+registerOperationalMemoryState(auditEntries);

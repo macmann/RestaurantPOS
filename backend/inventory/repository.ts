@@ -1,3 +1,4 @@
+import { registerOperationalMemoryState } from '../db/operationalWrite';
 import { isSqlRepositoryEnabled } from '../db/client';
 import { getRecord, listRecords, putRecord } from '../db/repositoryStore';
 
@@ -141,3 +142,8 @@ export async function createInventoryDeduction(record: InventoryDeductionRecord)
   deductionLedger.set(record.id, structuredClone(record));
   return structuredClone(record);
 }
+
+registerOperationalMemoryState(inventoryItems);
+registerOperationalMemoryState(movementLedger);
+registerOperationalMemoryState(recipeRows);
+registerOperationalMemoryState(deductionLedger);

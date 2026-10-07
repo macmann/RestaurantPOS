@@ -99,7 +99,7 @@ async function runHardwareBillingIntegration(): Promise<void> {
   assert(printed.fontFamily.includes('Myanmar') || printed.fontFamily.includes('Padauk') || printed.fontFamily.includes('Pyidaungsu'), 'Myanmar receipt should select a Myanmar-capable print font.');
   assert(printed.renderedText.includes('ဘောင်ချာ'), 'Rendered receipt should include localized Myanmar labels.');
   assert(printed.renderedText.includes('Date & time:'), 'Customer receipt should include its generation date and time.');
-  assert(printed.renderedText.includes(`*** TABLE: HW card ***`), 'Customer receipt should prominently identify the table.');
+  assert(printed.renderedText.includes(`Table: HW card`), 'Customer receipt should prominently identify the table.');
   assert(!printed.renderedText.includes(cardFixture.session.id), 'Customer receipts must not expose the internal table session ID.');
   assert(!printed.renderedText.includes('Locale:'), 'Customer receipts must not expose locale metadata.');
   assert(!printed.renderedText.includes('Font:'), 'Customer receipts must not expose font metadata.');

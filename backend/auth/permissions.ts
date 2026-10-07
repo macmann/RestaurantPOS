@@ -3,6 +3,7 @@ export type UserStatus = 'active' | 'inactive';
 export const Actions = {
   CreateOrder: 'orders:create',
   EditOrder: 'orders:edit',
+  VoidPreparedItems: 'orders:void_prepared',
   AdjustStock: 'stock:adjust',
   MarkDebt: 'billing:mark_debt',
   ViewBill: 'billing:view',
@@ -43,6 +44,7 @@ export const RolePermissions: Record<string, Action[]> = {
   loss_prevention: [Actions.ViewVoidReports],
   inventory_accountant: [Actions.ViewInventoryCostReports],
   manager: [
+    Actions.VoidPreparedItems,
     Actions.CreateOrder,
     Actions.EditOrder,
     Actions.AdjustStock,

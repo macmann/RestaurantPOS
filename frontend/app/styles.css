@@ -876,3 +876,30 @@ button { min-height: var(--tap); touch-action: manipulation; }
 
 .cloud-connection-panel .connection-package { max-height: 20rem; overflow-y: auto; }
 .cloud-connection-panel .connection-package:focus-visible { outline: 3px solid #2563eb; outline-offset: 3px; }
+
+/* Table movement, audited voids and per-bill charge options. */
+.table-transfer-panel { display: grid; grid-template-columns: minmax(0, 1fr) minmax(160px, 1fr) auto; align-items: end; gap: 1rem; padding: 1rem; margin: 1rem 0; background: var(--surface, #f8fafc); border: 1px solid #dbe6ed; border-radius: 1rem; }
+.table-transfer-panel h4 { margin: 0 0 .4rem; }
+.table-transfer-panel p { margin: 0; font-size: .85rem; }
+.table-transfer-panel label { display: grid; gap: .4rem; font-size: .85rem; font-weight: 700; }
+.item-void-panel { margin: 1rem 0; padding: 1rem; border: 1px solid #f1c9c9; border-radius: 1rem; background: #fffafa; }
+.item-void-panel summary { cursor: pointer; font-weight: 750; }
+.item-void-panel .bill-line-row { gap: 1rem; }
+.bill-charge-options { display: flex; flex-wrap: wrap; gap: 1rem 1.5rem; padding: 1rem; margin: .75rem 0; border: 1px solid #dbe6ed; border-radius: .85rem; background: #f4fafb; }
+.bill-charge-options .checkbox-row { margin: 0; }
+.receipt-preview-paper .receipt-preview-paper__table { font-size: 1rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: .25rem; border: 0; background: none; }
+@media (max-width: 700px) { .table-transfer-panel { grid-template-columns: 1fr; } .table-transfer-panel button { width: 100%; } }
+.billing-detail-panel { grid-template-columns: minmax(0, 1fr); }
+.billing-detail-panel > *, .table-transfer-panel > *, .bill-charge-options > * { min-width: 0; }
+.table-transfer-panel select, .split-assignment-panel input[name="qty"], .split-assignment-panel select { width: 100%; min-width: 0; min-height: var(--tap); padding: .65rem .75rem; border: 1px solid var(--line); border-radius: .75rem; background: #fff; color: var(--ink); }
+.bill-split-card > .billing-actions { display: grid; }
+.item-void-panel button { flex-shrink: 0; border: 1px solid #fecaca; border-radius: .75rem; padding: .65rem .9rem; color: #b91c1c; background: #fff; cursor: pointer; font-weight: 750; }
+.item-void-panel button:disabled { opacity: .5; cursor: not-allowed; }
+@media (max-width: 700px) {
+  .billing-detail-panel .pos-panel-heading, .ordered-items-review__heading { flex-wrap: wrap; }
+  .ordered-items-review__heading strong { white-space: normal; }
+  .split-assignment-panel .bill-line-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .split-assignment-panel .bill-line-row > label { grid-column: 1 / -1; }
+  .billing-actions { grid-template-columns: minmax(0, 1fr); }
+  .bill-line-row { overflow-wrap: anywhere; }
+}

@@ -49,6 +49,7 @@ function renderSplit(payload: ReceiptPayload, split: ReceiptPayload['splits'][nu
   lines.push('-'.repeat(RECEIPT_WIDTH));
   lines.push(receiptRow(payload.labels.subtotal, money(split.calculationBreakdown.subtotal)));
   lines.push(receiptRow(payload.labels.discount, money(split.calculationBreakdown.discounts.total)));
+  if (split.calculationBreakdown.serviceChargeTotal) lines.push(receiptRow(`Service charge (${split.calculationBreakdown.serviceChargeRate ?? 0}%)`, money(split.calculationBreakdown.serviceChargeTotal)));
   lines.push(receiptRow(payload.labels.tax, money(split.calculationBreakdown.taxTotal)));
   lines.push(receiptRow(payload.labels.total_due, money(split.calculationBreakdown.totalDue)));
   for (const payment of split.payments) {
@@ -72,8 +73,7 @@ export function renderReceiptPayload(payload: ReceiptPayload, requestedSplit?: S
     payload.restaurant.taxId ? `Tax ID: ${payload.restaurant.taxId}` : '',
     payload.labels.receipt,
     `Date & time: ${new Intl.DateTimeFormat('en-GB', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(new Date(payload.generatedAt))}`,
-    '='.repeat(RECEIPT_WIDTH),
-    ...(payload.tableName ? [`*** TABLE: ${payload.tableName} ***`, '='.repeat(RECEIPT_WIDTH)] : []),
+    ...(payload.tableName ? [`Table: ${Array.from(payload.tableName.replace(/[\r\n]/g, ' ')).slice(0, RECEIPT_WIDTH - 7).join('')}`] : []),
     ...splits.flatMap((split) => renderSplit(payload, split, activeSplits.length > 1)),
     '='.repeat(RECEIPT_WIDTH),
     receiptRow(payload.labels.total_paid, money(splitTotalPaid)),

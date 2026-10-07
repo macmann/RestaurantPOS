@@ -57,6 +57,7 @@ interface SuperadminOperationalSettings {
     receipt: SuperadminPrinterSettings;
   };
   printerAssignments: Record<string, string>;
+  serviceCharge: { rate: number };
   tax: {
     enabled: boolean;
     rate: number;
@@ -844,6 +845,7 @@ function normalizeOperationalSettings(response: unknown): SuperadminOperationalS
       taxId: billInfo.taxId?.trim() || undefined,
       receiptFooter: billInfo.receiptFooter?.trim() || undefined,
     },
+    serviceCharge: { rate: Number((posSettings as any).serviceCharge?.rate ?? 0) },
     tax: {
       enabled: typeof (posSettings as any).tax?.enabled === 'boolean' ? (posSettings as any).tax.enabled : false,
       rate: Number.isFinite(Number((posSettings as any).tax?.rate)) ? Number((posSettings as any).tax.rate) : 0,
@@ -1345,6 +1347,8 @@ async function renderStaffSettings(isSuperadminPanel = false): Promise<HTMLEleme
       await apiClient.updateSettings({
         pos: {
           restaurantBillInfo: settings.restaurantBillInfo,
+          serviceCharge: { rate: Number(data.get('serviceChargeRate')) },
+          tax: { rate: Number(data.get('taxRate')), enabled: data.get('taxEnabled') === 'on' },
           prepStations,
           printers,
           localization: settings.localization,
@@ -2013,6 +2017,14 @@ async function renderBillSettings(): Promise<HTMLElement> {
       </div>
     </section>
 
+    <section class="settings-card settings-card--wide" aria-label="Bill charges">
+      <div class="settings-section-heading"><div><p class="eyebrow">Billing</p><h3>Tax & service charge</h3></div><p>New bills include both charges by default. Cashiers and managers can remove either before payment. Each charge uses the subtotal after discounts.</p></div>
+      <div class="settings-field-grid settings-field-grid--bill">
+        <label>Service charge (%)<input name="serviceChargeRate" type="number" min="0" max="100" step="0.01" value="${settings.serviceCharge.rate}" required /></label>
+        <label>Tax (%)<input name="taxRate" type="number" min="0" step="0.01" value="${settings.tax.rate}" required /></label>
+        <label class="checkbox-row"><input name="taxEnabled" type="checkbox" ${settings.tax.enabled ? 'checked' : ''} /> Apply configured tax rate</label>
+      </div>
+    </section>
     <div class="settings-section-heading">
       <div>
         <p class="eyebrow">Step 2</p>
@@ -2123,6 +2135,8 @@ async function renderBillSettings(): Promise<HTMLElement> {
             taxId: String(data.get('taxId') ?? ''),
             receiptFooter: String(data.get('receiptFooter') ?? ''),
           },
+          serviceCharge: { rate: Number(data.get('serviceChargeRate')) },
+          tax: { rate: Number(data.get('taxRate')), enabled: data.get('taxEnabled') === 'on' },
           prepStations,
           printers,
           printerAssignments,
@@ -2355,7 +2369,7 @@ async function renderReports(): Promise<HTMLElement> {
     <label>Hour interval<select name="intervalMinutes">${[15, 30, 60, 120].map((minutes) => `<option value="${minutes}" ${Number(params.get('intervalMinutes') ?? 60) === minutes ? 'selected' : ''}>${minutes} minutes</option>`).join('')}</select></label>
     <label>Order status<select name="orderStatus"><option value="">All statuses</option>${['pending', 'in_preparation', 'completed', 'delivered', 'cancelled'].map((status) => `<option value="${status}" ${params.get('orderStatus') === status ? 'selected' : ''}>${status.replace(/_/g, ' ')}</option>`).join('')}</select></label>
     <label>Payment method<select name="paymentMethod"><option value="">All methods</option>${['cash', 'card', 'wallet', 'bank_transfer', 'wave_money', 'kbzpay'].map((method) => `<option value="${method}" ${params.get('paymentMethod') === method ? 'selected' : ''}>${method.replace(/_/g, ' ')}</option>`).join('')}</select></label>
-    <label>Exception type<select name="eventType"><option value="">All exceptions</option>${['payment_voids', 'refunds', 'order_cancellations', 'item_removals', 'comps_price_overrides'].map((type) => `<option value="${type}" ${params.get('eventType') === type ? 'selected' : ''}>${type.replace(/_/g, ' ')}</option>`).join('')}</select></label>
+    <label>Exception type<select name="eventType"><option value="">All exceptions</option>${['payment_voids', 'refunds', 'order_cancellations', 'item_removals', 'comps_price_overrides'].map((type) => `<option value="${type}" ${params.get('eventType') === type ? 'selected' : ''}>${type === 'item_removals' ? 'Voided / removed items' : type.replace(/_/g, ' ')}</option>`).join('')}</select></label>
     <label>Reason<input name="reason" value="${escapeHtml(params.get('reason') ?? '')}" placeholder="Reason contains…"></label>
     </div></details>`;
   form.addEventListener('submit', (event) => {
@@ -2672,7 +2686,6 @@ async function payAndCleanTable(tableSessionId: string): Promise<void> {
     await apiClient.createBill({
       tableSessionId,
       itemsBySplit: orderItemsForBill(refreshedOrders, tableSessionId, selectedSplitCount),
-      pricing: { taxMode: 'taxable', taxRate: 0 },
     }, session.user.id);
   } catch (caught) {
     if (!(caught instanceof Error) || !/already exists/i.test(caught.message)) throw caught;
@@ -2694,6 +2707,57 @@ async function payAndCleanTable(tableSessionId: string): Promise<void> {
   await apiClient.closeTableSession(session.user.id, tableSessionId);
   selectedTableId = undefined;
   render();
+}
+
+function renderTableTransfer(selected: TableFloorState, tables: TableFloorState[], status: HTMLElement): HTMLElement {
+  const form = el('form', 'table-transfer-panel');
+  form.innerHTML = `<div><h4>Transfer table</h4><p class="muted">Move this table's guests and orders. Occupied tables require confirmation to merge.</p></div><label>Destination table<select name="destinationTableId" required><option value="">Choose a table</option>${tables.filter(row => row.table.id !== selected.table.id && row.status !== 'inactive').map(row => `<option value="${escapeHtml(row.table.id)}">${escapeHtml(row.table.name)} · ${row.activeSession ? 'Occupied — merge' : 'Available'}</option>`).join('')}</select></label><button type="submit" class="secondary">Transfer table</button>`;
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    const destinationId = String(new FormData(form).get('destinationTableId') ?? '');
+    const destination = tables.find(row => row.table.id === destinationId);
+    if (!destination || !selected.activeSession) return;
+    const merge = !!destination.activeSession;
+    if (merge && !window.confirm(`${destination.table.name} already has guests. Merge all guests and orders into this table? Its bill rates and options will apply to the combined bill.`)) return;
+    const button = form.querySelector<HTMLButtonElement>('button')!;
+    try {
+      await runButtonAction(button, { loading: merge ? 'Merging tables…' : 'Transferring table…', success: 'Table transferred.', error: 'Unable to transfer table.' }, async () => {
+        await apiClient.transferTableSession(session!.user.id, selected.activeSession!.id, destinationId, merge);
+        delete splitDraftSelections[selected.activeSession!.id];
+        if (destination.activeSession) delete splitDraftSelections[destination.activeSession.id];
+        pendingPrintPreview = undefined;
+        selectedTableId = destinationId;
+        await render();
+      });
+    } catch (caught) { status.hidden = false; status.textContent = caught instanceof Error ? caught.message : 'Unable to transfer table.'; }
+  });
+  return form;
+}
+
+function renderItemVoids(orders: OrderRecord[], status: HTMLElement, locked = false): HTMLElement | undefined {
+  if (!session?.permissions.includes(Actions.VoidPreparedItems)) return;
+  const items = orders.filter(order => order.status !== 'cancelled').flatMap(order => order.items.map(item => ({ order, item })));
+  if (!items.length) return;
+  const panel = el('details', 'item-void-panel');
+  panel.innerHTML = '<summary>Manager controls · Void an item</summary><p class="muted">A reason is required. Prepared food remains recorded as used inventory.</p><a class="secondary-link" href="#/reports?tab=exceptions&eventType=item_removals">Review void list</a>';
+  for (const { order, item } of items) {
+    const row = el('div', 'bill-line-row');
+    row.innerHTML = `<div><strong>${item.quantity}× ${escapeHtml(item.name)}</strong><small>${escapeHtml(order.status)} · ${money(item.lineTotal)}</small></div><button type="button" class="danger" ${locked ? 'disabled' : ''}>Void item</button>`;
+    row.querySelector<HTMLButtonElement>('button')!.addEventListener('click', async event => {
+      const reason = window.prompt(`Reason for voiding ${item.quantity}× ${item.name}:`);
+      if (!reason?.trim()) return;
+      try {
+        await runButtonAction(event.currentTarget as HTMLButtonElement, { loading: 'Voiding…', success: 'Item voided and recorded for manager review.', error: 'Unable to void item.' }, async () => {
+          await apiClient.voidOrderItem(session!.user.id, order.id, item.id, order.version, reason.trim());
+          if (order.tableSessionId) delete splitDraftSelections[order.tableSessionId];
+          pendingPrintPreview = undefined;
+          await render();
+        });
+      } catch (caught) { status.hidden = false; status.textContent = caught instanceof Error ? caught.message : 'Unable to void item.'; }
+    });
+    panel.append(row);
+  }
+  return panel;
 }
 
 function linkedOrdersForSession(orders: OrderRecord[], tableSessionId: string): OrderRecord[] {
@@ -2996,16 +3060,15 @@ function renderSplitItemAssignment(tableSessionId: string, orders: OrderRecord[]
   splitDraftSelections[tableSessionId] = current;
   const allItems = labels.flatMap((label) => (current[label] ?? []).map((item) => ({ ...item, assignedSplit: label })));
   const box = el('div', 'split-assignment-panel');
-  box.innerHTML = `<h4>Assign specific menu items to split bills</h4><p class="muted">Change quantities or move items between splits. Use Back/other navigation freely; this draft is preserved until you prepare or update the bill.</p>`;
+  box.innerHTML = `<h4>Assign specific menu items to split bills</h4><p class="muted">Move items between splits. Ordered quantities stay unchanged; use manager controls to void an item. This draft is preserved until you prepare or update the bill.</p>`;
   for (const item of allItems) {
     const row = el('div', 'bill-line-row');
-    row.innerHTML = `<label><input type="checkbox" checked> ${item.name}</label><input name="qty" type="number" min="0.01" step="0.01" value="${item.quantity}" aria-label="Quantity for ${item.name}"><select>${labels.slice(0, selectedSplitCount).map((label) => `<option value="${label}" ${label === item.assignedSplit ? 'selected' : ''}>Split ${label}</option>`).join('')}</select>`;
+    row.innerHTML = `<label>${escapeHtml(item.name)}</label><input name="qty" type="number" value="${item.quantity}" readonly aria-label="Ordered quantity for ${escapeHtml(item.name)}"><select>${labels.slice(0, selectedSplitCount).map((label) => `<option value="${label}" ${label === item.assignedSplit ? 'selected' : ''}>Split ${label}</option>`).join('')}</select>`;
     const saveDraft = () => {
-      const checked = row.querySelector<HTMLInputElement>('input[type=checkbox]')!.checked;
       const qty = Number(row.querySelector<HTMLInputElement>('input[name=qty]')!.value);
       const nextLabel = row.querySelector<HTMLSelectElement>('select')!.value as SplitLabel;
       for (const label of labels) current[label] = (current[label] ?? []).filter((x) => x.id !== item.id);
-      if (checked && Number.isFinite(qty) && qty > 0) current[nextLabel] = [...(current[nextLabel] ?? []), { ...item, quantity: qty }];
+      if (Number.isFinite(qty) && qty > 0) current[nextLabel] = [...(current[nextLabel] ?? []), { ...item, quantity: qty }];
     };
     row.querySelectorAll('input,select').forEach((control) => control.addEventListener('change', saveDraft));
     box.append(row);
@@ -3018,7 +3081,7 @@ function renderPrintPreview(tableSessionId: string, receipt: ReceiptPayload, spl
   const selectedSplit = splitLabel ? activeSplits.find((split) => split.label === splitLabel) : activeSplits[0];
   const breakdown = selectedSplit?.calculationBreakdown ?? receipt.calculationBreakdown;
   const panel = el('section', 'pos-panel print-preview-panel');
-  panel.innerHTML = `<div class="pos-panel-heading"><h3>Print preview${activeSplits.length > 1 ? ` · Split ${splitLabel}` : ''}</h3><span>Confirm before printing</span></div><div class="receipt-preview-paper"><strong>${receipt.restaurant.restaurantName}</strong><span>${new Date(receipt.generatedAt).toLocaleString()}</span>${receipt.tableName ? `<strong class="receipt-preview-paper__table">Table: ${escapeHtml(receipt.tableName)}</strong>` : ''}${breakdown.lines.map((line) => `<div class="receipt-preview-paper__line">${line.quantity}× ${line.name} — ${money(line.lineTotal)}</div>`).join('')}<hr><span>Subtotal ${money(breakdown.subtotal)}</span><span>Discount ${money(breakdown.discounts.total)}</span><span>Tax ${money(breakdown.taxTotal)}</span><strong>Total ${money(breakdown.totalDue)}</strong></div><div class="billing-actions"><button type="button" class="secondary cancel-print">Cancel</button><button type="button" class="billing-action confirm-print">Confirm print</button></div>`;
+  panel.innerHTML = `<div class="pos-panel-heading"><h3>Print preview${activeSplits.length > 1 ? ` · Split ${splitLabel}` : ''}</h3><span>Confirm before printing</span></div><div class="receipt-preview-paper"><strong>${receipt.restaurant.restaurantName}</strong><span>${new Date(receipt.generatedAt).toLocaleString()}</span>${receipt.tableName ? `<strong class="receipt-preview-paper__table">Table: ${escapeHtml(receipt.tableName)}</strong>` : ''}${breakdown.lines.map((line) => `<div class="receipt-preview-paper__line">${line.quantity}× ${line.name} — ${money(line.lineTotal)}</div>`).join('')}<hr><span>Subtotal ${money(breakdown.subtotal)}</span><span>Discount ${money(breakdown.discounts.total)}</span><span>Service charge ${money(breakdown.serviceChargeTotal ?? 0)}</span><span>Tax ${money(breakdown.taxTotal)}</span><strong>Total ${money(breakdown.totalDue)}</strong></div><div class="billing-actions"><button type="button" class="secondary cancel-print">Cancel</button><button type="button" class="billing-action confirm-print">Confirm print</button></div>`;
   panel.querySelector<HTMLButtonElement>('.cancel-print')?.addEventListener('click', () => { pendingPrintPreview = undefined; render(); });
   panel.querySelector<HTMLButtonElement>('.confirm-print')?.addEventListener('click', async (event) => {
     const button = event.currentTarget as HTMLButtonElement;
@@ -3129,7 +3192,7 @@ async function renderOrderEntry(): Promise<HTMLElement> {
     : undefined;
 
   const floorPanel = el('section', 'pos-panel table-panel');
-  floorPanel.innerHTML = `<div class="pos-panel-heading"><div><h3>${selected ? `Ordering for ${escapeHtml(selected.table.name)}` : 'Tables for ordering'}</h3><span>${floor.counts.available} available · ${floor.counts.occupied} occupied</span></div>${selected ? '<button type="button" class="secondary change-order-table" aria-expanded="false">Change table</button>' : ''}</div>`;
+  floorPanel.innerHTML = `<div class="pos-panel-heading"><div><h3>${selected ? `Ordering for ${escapeHtml(selected.table.name)}` : 'Tables for ordering'}</h3><span>${floor.counts.available} available · ${floor.counts.occupied} occupied</span></div>${selected ? '<button type="button" class="secondary change-order-table" aria-expanded="false">Choose table</button>' : ''}</div>`;
   const tableList = el('div', 'table-grid order-table-list');
   floor.tables.forEach((row) => {
     const button = el('button', `table-tile ${row.status} ${row.table.id === selected?.table.id ? 'selected' : ''}`);
@@ -3150,7 +3213,7 @@ async function renderOrderEntry(): Promise<HTMLElement> {
     changeTableButton.addEventListener('click', () => {
       const expanded = floorPanel.classList.toggle('table-panel--expanded');
       changeTableButton.setAttribute('aria-expanded', String(expanded));
-      changeTableButton.textContent = expanded ? 'Hide tables' : 'Change table';
+      changeTableButton.textContent = expanded ? 'Hide tables' : 'Choose table';
     });
   }
 
@@ -3208,6 +3271,9 @@ async function renderOrderEntry(): Promise<HTMLElement> {
       }
     });
     orderPanel.append(cart, orderSummary);
+    orderPanel.append(renderTableTransfer(selected, floor.tables, status));
+    const voidControls = renderItemVoids(sessionOrders, status);
+    if (voidControls) orderPanel.append(voidControls);
     const previousOrders = renderPreviousOrders(sessionOrders, activeOrder, kdsSnapshot);
     if (previousOrders) orderPanel.append(previousOrders);
   }
@@ -3294,6 +3360,9 @@ async function renderBillingDesk(): Promise<HTMLElement> {
   const billHeading = el('div', 'pos-panel-heading');
   billHeading.innerHTML = `<h3>${selected.table.name} bill</h3><span>${selected.activeSession!.guestCount} guests · ${itemCount} items</span>`;
   billPanel.append(billHeading);
+  if (session?.permissions.includes(Actions.CreateOrder)) billPanel.append(renderTableTransfer(selected, floor.tables, status));
+  const voidControls = renderItemVoids(linkedOrders, status, receipt?.splits.some(split => split.payments.length > 0));
+  if (voidControls) billPanel.append(voidControls);
 
   if (!linkedOrders.length || !itemCount) {
     billPanel.append(emptyState('No order items are ready for billing. Add items from Order first.'));
@@ -3334,10 +3403,26 @@ async function renderBillingDesk(): Promise<HTMLElement> {
       <div class="bill-metrics">
         <div><span>Subtotal</span><strong>${money(receipt.calculationBreakdown.subtotal)}</strong></div>
         <div><span>Discount</span><strong>${money(receipt.calculationBreakdown.discounts.total)}</strong></div>
+        <div><span>Service charge (${receipt.calculationBreakdown.serviceChargeRate ?? 0}%)</span><strong>${money(receipt.calculationBreakdown.serviceChargeTotal ?? 0)}</strong></div>
         <div><span>Tax</span><strong>${money(receipt.calculationBreakdown.taxTotal)}</strong></div>
       </div>
     `;
     billPanel.append(summary);
+    const chargeOptions = el('div', 'bill-charge-options');
+    const chargesLocked = !cashierMode || receipt.splits.some(split => split.payments.length > 0);
+    chargeOptions.innerHTML = `<label class="checkbox-row"><input type="checkbox" name="includeServiceCharge" ${receipt.calculationBreakdown.serviceChargeEnabled !== false ? 'checked' : ''} ${chargesLocked ? 'disabled' : ''} /> Include service charge (${receipt.calculationBreakdown.serviceChargeRate ?? 0}%)</label><label class="checkbox-row"><input type="checkbox" name="includeTax" ${receipt.calculationBreakdown.taxMode === 'taxable' ? 'checked' : ''} ${chargesLocked ? 'disabled' : ''} /> Include tax (${receipt.calculationBreakdown.taxRate}%)</label>`;
+    chargeOptions.querySelectorAll<HTMLInputElement>('input').forEach(input => input.addEventListener('change', async () => {
+      const includeTax = chargeOptions.querySelector<HTMLInputElement>('[name="includeTax"]')!.checked;
+      const includeServiceCharge = chargeOptions.querySelector<HTMLInputElement>('[name="includeServiceCharge"]')!.checked;
+      const billButtons = Array.from(billPanel.querySelectorAll<HTMLButtonElement>('button')).map(button => ({ button, disabled: button.disabled }));
+      billButtons.forEach(({ button }) => button.disabled = true);
+      chargeOptions.querySelectorAll<HTMLInputElement>('input').forEach(control => control.disabled = true);
+      try {
+        await apiClient.setBillCharges({ tableSessionId: selectedSessionId, includeTax, includeServiceCharge }, session!.user.id);
+        await render();
+      } catch (caught) { status.hidden = false; status.textContent = caught instanceof Error ? caught.message : 'Unable to update charges.'; input.checked = !input.checked; billButtons.forEach(({ button, disabled }) => button.disabled = disabled); chargeOptions.querySelectorAll<HTMLInputElement>('input').forEach(control => control.disabled = chargesLocked); }
+    }));
+    billPanel.append(chargeOptions);
 
     const lines = el('div', 'bill-lines');
     lines.append(el('h4', '', 'Bill details'));
@@ -3394,7 +3479,6 @@ async function renderBillingDesk(): Promise<HTMLElement> {
       <button type="button" class="secondary back-split">Back</button>
       <button type="button" class="secondary update-splits" ${cashierMode ? '' : 'disabled'}>Update split items</button>
       <button type="button" class="secondary merge-splits" ${cashierMode ? '' : 'disabled'}>Merge splits</button>
-      <button type="button" class="secondary tax-toggle" ${cashierMode ? '' : 'disabled'}>${receipt.calculationBreakdown.taxMode === 'taxable' ? 'Mark tax exempt' : 'Enable tax'}</button>
       ${receipt.splits.filter((row) => row.lines.length || row.calculationBreakdown.totalDue > 0).length === 1 ? `<button type="button" class="secondary print-receipt" ${cashierMode ? '' : 'disabled'}>Print receipt</button>` : ''}
       <button type="button" class="billing-action close-table" ${receipt.balanceDue > 0 || !cashierMode ? 'disabled' : ''}>${cashierMode ? 'Close paid table' : 'Cashier closes table'}</button>
     `;
@@ -3420,17 +3504,6 @@ async function renderBillingDesk(): Promise<HTMLElement> {
       } catch (caught) {
         status.hidden = false;
         status.textContent = caught instanceof Error ? caught.message : 'Unable to merge split bills.';
-      }
-    });
-    billActions.querySelector<HTMLButtonElement>('.tax-toggle')?.addEventListener('click', async (event) => {
-      try {
-        await runButtonAction(event.currentTarget as HTMLButtonElement, { loading: 'Updating tax mode…', success: 'Tax mode updated.', error: 'Unable to update tax mode.' }, async () => {
-          await apiClient.setBillTaxMode({ tableSessionId: selectedSessionId, taxMode: receipt!.calculationBreakdown.taxMode === 'taxable' ? 'tax_exempt' : 'taxable' }, session!.user.id);
-          render();
-        });
-      } catch (caught) {
-        status.hidden = false;
-        status.textContent = caught instanceof Error ? caught.message : 'Unable to update tax mode.';
       }
     });
     billActions.querySelector<HTMLButtonElement>('.print-receipt')?.addEventListener('click', async (event) => {

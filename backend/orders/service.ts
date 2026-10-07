@@ -1,3 +1,4 @@
+import { withOperationalWrite } from '../db/operationalWrite';
 import { recordAuditEvent } from '../audit/service';
 import { can, type AuthenticatedUser } from '../auth/policies';
 import { Actions } from '../auth/permissions';
@@ -13,6 +14,9 @@ import {
   listRecipeForMenuItem,
   markInventoryDeductionCompleted,
 } from '../inventory/service';
+import { getKdsItemState } from '../kds/repository';
+import { getBillByTableSessionId } from '../billing/repository';
+import { assertBillEditable, removeVoidedBillItem } from '../billing/service';
 import { syncOrderIntoKds } from '../kds/service';
 import { getCategoryById, getItemById, type MenuItemRecord } from '../menu/repository';
 import { getTableById } from '../tables/repository';
@@ -166,7 +170,7 @@ async function buildOrderItemsFromMenu(user: AuthenticatedUser, orderBranchId: s
   return items;
 }
 
-export async function createOrderDraft(user: AuthenticatedUser, input: CreateOrderInput): Promise<OrderRecord> {
+async function createOrderDraftImpl(user: AuthenticatedUser, input: CreateOrderInput): Promise<OrderRecord> {
   if (!can(user, Actions.CreateOrder)) throw new Error('Forbidden: cannot create order.');
   if (input.serviceMode === 'dine_in' && !input.tableSessionId) throw new Error('tableSessionId is required for dine-in orders.');
   if (input.serviceMode === 'takeout' && !input.takeoutName?.trim()) throw new Error('takeoutName is required for takeout orders.');
@@ -201,11 +205,17 @@ export async function createOrderDraft(user: AuthenticatedUser, input: CreateOrd
   return order;
 }
 
-export async function editOrderBeforePayment(user: AuthenticatedUser, orderId: string, input: EditOrderInput): Promise<OrderRecord> {
+async function editOrderBeforePaymentImpl(user: AuthenticatedUser, orderId: string, input: EditOrderInput): Promise<OrderRecord> {
   assertCanEditOrder(user);
   const before = await getOrderById(orderId);
   if (!before) throw new Error('Order not found.');
   assertBranchMatch(user, before.branchId);
+  if (before.tableSessionId) assertBillEditable(await getBillByTableSessionId(before.tableSessionId));
+  for (const item of before.items) {
+    const reducing = input.removeItemIds?.includes(item.id) || input.modifyItems?.some(mod => mod.id === item.id && mod.quantity !== undefined && mod.quantity < item.quantity);
+    const progress = await getKdsItemState(before.id, item.id);
+    if (reducing && (['completed', 'delivered'].includes(before.status) || (progress && ['ready', 'served'].includes(progress.progress)))) throw new Error('Prepared items must be voided by a manager or superadmin with a reason.');
+  }
   const itemsToAdd = await buildOrderItemsFromMenu(user, before.branchId, input.addItems);
 
   const order = await updateOrderWithVersionCheck(orderId, input.expectedVersion, (draft) => {
@@ -259,24 +269,29 @@ export async function editOrderBeforePayment(user: AuthenticatedUser, orderId: s
     },
   });
 
+  if (order.tableSessionId) for (const itemId of input.removeItemIds ?? []) await removeVoidedBillItem(order.tableSessionId, itemId);
   await syncOrderIntoKds(order);
   return order;
 }
 
-export async function cancelOrder(user: AuthenticatedUser, orderId: string, input: CancelOrderInput): Promise<OrderRecord> {
+async function cancelOrderImpl(user: AuthenticatedUser, orderId: string, input: CancelOrderInput): Promise<OrderRecord> {
   assertCanEditOrder(user);
   const reason = normalizeReason(input.reason, 'A cancellation reason is required.');
   const before = await getOrderById(orderId);
+  if (!before) throw new Error('Order not found.');
+  assertBranchMatch(user, before.branchId);
+  if (before.tableSessionId) assertBillEditable(await getBillByTableSessionId(before.tableSessionId));
+  const prepared = ['completed', 'delivered'].includes(before.status) || (await Promise.all(before.items.map(item => getKdsItemState(orderId, item.id)))).some(state => state && ['ready', 'served'].includes(state.progress));
+  if (prepared && !can(user, Actions.VoidPreparedItems)) throw new Error('Forbidden: prepared items require manager approval.');
 
   const order = await updateOrderWithVersionCheck(orderId, input.expectedVersion, (draft) => {
-    if (draft.status === 'delivered') throw new Error('Delivered orders cannot be cancelled.');
     if (draft.status === 'cancelled') throw new Error('Order is already cancelled.');
 
     draft.changeLog.push({
       at: new Date().toISOString(),
       actorUserId: user.id,
       actorRole: String(user.role),
-      approverUserId: input.approvedByUserId,
+      approverUserId: prepared ? user.id : input.approvedByUserId,
       action: 'order_cancelled',
       details: { from: draft.status, to: 'cancelled', reason },
       originalValue: { status: draft.status, subtotal: draft.subtotal, items: structuredClone(draft.items) },
@@ -296,6 +311,7 @@ export async function cancelOrder(user: AuthenticatedUser, orderId: string, inpu
     reason,
   });
 
+  if (order.tableSessionId) for (const item of order.items) await removeVoidedBillItem(order.tableSessionId, item.id);
   await syncOrderIntoKds(order);
   return order;
 }
@@ -371,7 +387,7 @@ async function deductInventoryForOrder(order: OrderRecord, trigger: string, acto
   }
 }
 
-export async function transitionOrderStatus(user: AuthenticatedUser, orderId: string, expectedVersion: number, nextStatus: OrderStatus): Promise<OrderRecord> {
+async function transitionOrderStatusImpl(user: AuthenticatedUser, orderId: string, expectedVersion: number, nextStatus: OrderStatus): Promise<OrderRecord> {
   if (!can(user, Actions.TransitionOrderStatus)) throw new Error('Forbidden: cannot transition order status.');
 
   return withTransaction(async () => {
@@ -406,3 +422,43 @@ export async function transitionOrderStatus(user: AuthenticatedUser, orderId: st
 export async function getOrder(orderId: string) {
   return getOrderById(orderId);
 }
+
+async function voidOrderItemImpl(user: AuthenticatedUser, orderId: string, itemId: string, input: { expectedVersion: number; reason: string }): Promise<OrderRecord> {
+  if (!can(user, Actions.VoidPreparedItems)) throw new Error('Forbidden: only a manager or superadmin can void prepared items.');
+  const reason = input.reason?.trim();
+  if (!reason) throw new Error('A void reason is required.');
+  return withTransaction(async () => {
+    const before = await getOrderById(orderId);
+    if (!before) throw new Error('Order not found.');
+    assertBranchMatch(user, before.branchId);
+    if (before.tableSessionId) {
+      await requireOpenTableSession(before.tableSessionId);
+      assertBillEditable(await getBillByTableSessionId(before.tableSessionId));
+    }
+    const order = await updateOrderWithVersionCheck(orderId, input.expectedVersion, draft => {
+      if (draft.status === 'cancelled') throw new Error('Order is already cancelled.');
+      const item = draft.items.find(row => row.id === itemId);
+      if (!item) throw new Error('Order item not found.');
+      draft.changeLog.push({ at: new Date().toISOString(), actorUserId: user.id, actorRole: String(user.role), approverUserId: user.id, action: 'item_removed', reason, originalValue: structuredClone(item), finalValue: null,
+        details: { itemId: item.id, menuItemId: item.menuItemId, itemName: item.name, quantity: item.quantity, amount: item.lineTotal, preparedVoid: true } });
+      draft.items = draft.items.filter(row => row.id !== itemId);
+      draft.subtotal = recalcSubtotal(draft.items);
+      if (!draft.items.length) draft.status = 'cancelled';
+      return draft;
+    });
+    if (order.tableSessionId) await removeVoidedBillItem(order.tableSessionId, itemId);
+    await recordAuditEvent({ action: 'item_removed', actor: user, entity: { type: 'order', id: order.id }, reason, before, after: order, metadata: { orderItemId: itemId, approvedByUserId: user.id } });
+    await syncOrderIntoKds(order);
+    return order;
+  });
+}
+
+export const createOrderDraft = (...args: Parameters<typeof createOrderDraftImpl>): ReturnType<typeof createOrderDraftImpl> => withOperationalWrite(() => createOrderDraftImpl(...args));
+
+export const editOrderBeforePayment = (...args: Parameters<typeof editOrderBeforePaymentImpl>): ReturnType<typeof editOrderBeforePaymentImpl> => withOperationalWrite(() => editOrderBeforePaymentImpl(...args));
+
+export const cancelOrder = (...args: Parameters<typeof cancelOrderImpl>): ReturnType<typeof cancelOrderImpl> => withOperationalWrite(() => cancelOrderImpl(...args));
+
+export const transitionOrderStatus = (...args: Parameters<typeof transitionOrderStatusImpl>): ReturnType<typeof transitionOrderStatusImpl> => withOperationalWrite(() => transitionOrderStatusImpl(...args));
+
+export const voidOrderItem = (...args: Parameters<typeof voidOrderItemImpl>): ReturnType<typeof voidOrderItemImpl> => withOperationalWrite(() => voidOrderItemImpl(...args));

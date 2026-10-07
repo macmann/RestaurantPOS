@@ -1,3 +1,4 @@
+import { registerOperationalMemoryState } from '../db/operationalWrite';
 import { isSqlRepositoryEnabled } from '../db/client';
 import { listRecords, putRecord } from '../db/repositoryStore';
 
@@ -11,6 +12,7 @@ export const AUDIT_ACTIONS = [
   'user_deactivated',
   'password_changed',
   'order_edited',
+  'table_transferred',
   'order_cancelled',
   'bill_voided',
   'stock_adjusted',
@@ -32,7 +34,7 @@ export const AUDIT_ACTIONS = [
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
-export const AUDIT_ENTITY_TYPES = ['auth_session', 'order', 'bill', 'bill_split', 'inventory_item', 'debt_ledger', 'user', 'hardware_device', 'report', 'platform_setting', 'menu'] as const;
+export const AUDIT_ENTITY_TYPES = ['auth_session', 'table_session', 'order', 'bill', 'bill_split', 'inventory_item', 'debt_ledger', 'user', 'hardware_device', 'report', 'platform_setting', 'menu'] as const;
 
 export type AuditEntityType = (typeof AUDIT_ENTITY_TYPES)[number];
 
@@ -134,3 +136,5 @@ export async function getAuditFilterOptions(): Promise<AuditFilterOptions> {
     entityTypes: [...AUDIT_ENTITY_TYPES],
   };
 }
+
+registerOperationalMemoryState(auditEvents);

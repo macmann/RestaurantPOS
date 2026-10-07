@@ -1,3 +1,4 @@
+import { registerOperationalMemoryState } from '../db/operationalWrite';
 import { isSqlRepositoryEnabled } from '../db/client';
 import { deleteRecord, getRecord, listRecords, putRecord } from '../db/repositoryStore';
 
@@ -26,6 +27,7 @@ export interface TableSessionRecord {
   openedAt: string;
   closedByUserId?: string;
   closedAt?: string;
+  transferredToSessionId?: string;
   updatedAt: string;
 }
 
@@ -74,3 +76,6 @@ export async function listTableSessions(filter: { branchId?: string; tableId?: s
     .filter((session) => !filter.status || session.status === filter.status)
     .sort((a, b) => a.openedAt.localeCompare(b.openedAt));
 }
+
+registerOperationalMemoryState(tables);
+registerOperationalMemoryState(sessions);

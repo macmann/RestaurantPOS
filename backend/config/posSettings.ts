@@ -50,6 +50,7 @@ export interface PosOperationalSettings {
   menuInventoryLinkEnabled: boolean;
   restaurantBillInfo: RestaurantBillInfo;
   tax: TaxSettings;
+  serviceCharge: { rate: number };
   prepStations: PrepStationConfig[];
   printers: PrinterSettings;
   /** Maps each print operation (`receipt` or a prep-station id) to a configured printer. */
@@ -100,6 +101,7 @@ function defaultSettings(): PosOperationalSettings {
       taxId: envValue('POS_RESTAURANT_TAX_ID'),
       receiptFooter: envValue('POS_RECEIPT_FOOTER') ?? 'Thank you. Please visit again.',
     },
+    serviceCharge: { rate: 0 },
     tax: {
       enabled: envValue('POS_TAX_ENABLED') === 'true',
       rate: Number(envValue('POS_TAX_RATE') ?? 0),
@@ -153,6 +155,12 @@ function normalizeLocalization(input: Partial<LocalizationSettings> | undefined,
     defaultLocale: normalizeLocale(input?.defaultLocale ?? fallback.defaultLocale),
     englishToMyanmar: normalizeEnglishMyanmarMapping(input?.englishToMyanmar, fallback.englishToMyanmar),
   };
+}
+
+function normalizeServiceCharge(input: { rate?: number } | undefined, fallback = { rate: 0 }): { rate: number } {
+  const rate = Number(input?.rate ?? fallback.rate);
+  if (!Number.isFinite(rate) || rate < 0 || rate > 100) throw new Error('serviceCharge.rate must be between 0 and 100.');
+  return { rate: Math.round((rate + Number.EPSILON) * 100) / 100 };
 }
 
 function normalizeTax(input: Partial<TaxSettings> | undefined, fallback: TaxSettings): TaxSettings {
@@ -274,6 +282,7 @@ export function updatePosOperationalSettings(input: PosOperationalSettingsInput)
       receiptFooter: String(input.restaurantBillInfo?.receiptFooter ?? currentSettings.restaurantBillInfo.receiptFooter ?? '').trim() || undefined,
     },
     tax: normalizeTax(input.tax, currentSettings.tax),
+    serviceCharge: normalizeServiceCharge(input.serviceCharge, currentSettings.serviceCharge),
     prepStations,
     printers,
     printerAssignments: normalizePrinterAssignments(input.printerAssignments, prepStations, printers, currentSettings.printerAssignments),
