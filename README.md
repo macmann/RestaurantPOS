@@ -15,6 +15,7 @@ SYM POS is a TypeScript, browser-based point-of-sale system for restaurants. It 
 - [Local-first cloud synchronization](#local-first-cloud-synchronization)
 - [Running the application](#running-the-application)
 - [PostgreSQL setup](#postgresql-setup)
+- [Table transfers, voids, and bill charges](#table-transfers-voids-and-bill-charges)
 - [Printer setup](#printer-setup)
 - [Production and LAN deployment](#production-and-lan-deployment)
 - [Testing and development](#testing-and-development)
@@ -395,6 +396,16 @@ For managed PostgreSQL, use the provider URL and its required SSL setting. Keep 
 - A non-empty `DATABASE_URL` also chooses PostgreSQL when backend is not explicitly `memory`.
 - Run migrations before the first persistent start and after pulling schema changes.
 - Memory data is not automatically migrated into PostgreSQL.
+
+## Table transfers, voids, and bill charges
+
+On the local POS, use **Transfer table** from **Order** or **Billing** to move guests and orders to another active table in the same branch. An available destination opens automatically. An occupied destination requires confirmation to merge guests and orders. The source closes after the move; order IDs and preparation progress stay intact. Existing split assignments and item discounts are preserved. When merging prepared bills, the destination bill's tax, service-charge settings, and bill promotions apply to the combined items.
+
+Managers and superadmins can open **Manager controls → Void an item** in Order or Billing, including for prepared or delivered items. A reason is required. Voids remove the item from the order, bill, and KDS while retaining its original value and approving manager in **Reports → Exceptions → Voided / removed items**. Prepared food does not return to inventory. Split reassignment preserves ordered quantities and cannot substitute for a void.
+
+Superadmins configure **Service charge (%)** and tax under **Super admin panel → Bill & printer settings → Tax & service charge**. A service rate of `0` disables the amount. New bills snapshot the configured rate and default both **Include service charge** and **Include tax** on. Cashiers and managers can uncheck either option in Billing before printing or taking payment. Each charge is calculated separately on the subtotal after discounts; tax does not include the service charge. Monetary amounts round to cents at bill level and are allocated across splits without losing cents. Receipts show the service charge and a single compact table heading.
+
+Transfers, voids, and charge changes are rejected after payment or debt settlement. PostgreSQL commits these operations atomically; related operational writes are serialized to prevent payments racing a move or repricing. Cloud monitoring deployments retain their existing read-only operational restrictions.
 
 ## Printer setup
 

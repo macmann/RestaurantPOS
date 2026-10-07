@@ -1139,7 +1139,7 @@ export async function getExceptionReport(user: AuthenticatedUser, filters: Repor
       if (!isWithinRange(entry.at, normalized) || (entry.action !== 'order_cancelled' && entry.action !== 'item_removed')) continue;
       const item = entry.originalValue as Partial<OrderItem> | undefined;
       const category: ExceptionCategory = entry.action === 'order_cancelled' ? 'order_cancellations' : 'item_removals';
-      add({ id: `${order.id}:${entry.at}:${entry.action}`, category, businessDate: exceptionBusinessDate(entry.at), occurredAt: entry.at,
+      add({ id: `${order.id}:${entry.at}:${entry.action}:${String(valueFrom(entry.details, 'itemId') ?? '')}`, category, businessDate: exceptionBusinessDate(entry.at), occurredAt: entry.at,
         branchId: order.branchId, orderId: order.id, invoiceId: invoice?.id, table: order.tableName ?? order.tableId ?? order.tableSessionId,
         itemOrPaymentMethod: category === 'item_removals' ? String(valueFrom(entry.details, 'itemName') ?? item?.name ?? '') : undefined,
         quantity: category === 'item_removals' ? Number(valueFrom(entry.details, 'quantity') ?? item?.quantity ?? 0) : order.items.reduce((sum, row) => sum + row.quantity, 0),

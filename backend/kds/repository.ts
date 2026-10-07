@@ -1,5 +1,6 @@
+import { registerOperationalMemoryState } from '../db/operationalWrite';
 import { isSqlRepositoryEnabled } from '../db/client';
-import { getRecord, listRecords, putRecord } from '../db/repositoryStore';
+import { deleteRecord, getRecord, listRecords, putRecord } from '../db/repositoryStore';
 
 export type Station = string;
 export type KdsProgress = 'queued' | 'preparing' | 'ready' | 'served';
@@ -69,3 +70,11 @@ export async function listKdsProgressHistory(): Promise<KdsProgressHistoryRecord
     : [...progressHistory.values()];
   return rows.map((row) => structuredClone(row)).sort((a, b) => a.at.localeCompare(b.at));
 }
+
+export async function removeKdsItemState(orderId: string, orderItemId: string): Promise<void> {
+  if (isSqlRepositoryEnabled()) { await deleteRecord('kds:items', key(orderId, orderItemId)); return; }
+  itemStates.delete(key(orderId, orderItemId));
+}
+
+registerOperationalMemoryState(itemStates);
+registerOperationalMemoryState(progressHistory);

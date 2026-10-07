@@ -1,8 +1,13 @@
+import { withOperationalWrite } from '../db/operationalWrite';
 import { Actions } from '../auth/permissions';
 import { can, type AuthenticatedUser } from '../auth/policies';
 import { getBillByTableSessionId, type BillRecord } from '../billing/repository';
 import { getCurrentBranchId } from '../config/branch';
-import { listOrders } from '../orders/repository';
+import { listOrders, updateOrderWithVersionCheck } from '../orders/repository';
+import { assertBillEditable, transferUnpaidBill } from '../billing/service';
+import { recordAuditEvent } from '../audit/service';
+import { syncOrderIntoKds } from '../kds/service';
+import { isSqlRepositoryEnabled, withTransaction } from '../db/client';
 import {
   deleteTableById,
   getTableById,
@@ -133,7 +138,7 @@ export async function listTableFloor(branchId = getCurrentBranchId()): Promise<T
   });
 }
 
-export async function openTableSession(user: AuthenticatedUser, input: { tableId: string; guestCount: number; branchId?: string }): Promise<TableSessionRecord> {
+async function openTableSessionImpl(user: AuthenticatedUser, input: { tableId: string; guestCount: number; branchId?: string }): Promise<TableSessionRecord> {
   assertCanManageTables(user);
   return withTableSessionOpenLock(input.tableId, async () => {
     const table = await getTableById(input.tableId);
@@ -171,7 +176,7 @@ export async function assertTableSessionCanClose(tableSessionId: string): Promis
   if (linkedOrders.length && !bill) throw new Error('Cannot close table session until the linked bill is paid, void, or moved to debt.');
 }
 
-export async function closeTableSession(user: AuthenticatedUser, tableSessionId: string): Promise<TableSessionRecord> {
+async function closeTableSessionImpl(user: AuthenticatedUser, tableSessionId: string): Promise<TableSessionRecord> {
   assertCanManageTables(user);
   const session = await getTableSessionById(tableSessionId);
   if (!session) throw new Error('Table session not found.');
@@ -199,3 +204,55 @@ export async function getTableSession(tableSessionId: string): Promise<TableSess
 export async function listSessionsForTable(tableId: string): Promise<TableSessionRecord[]> {
   return listTableSessions({ tableId });
 }
+
+async function transferTableSessionImpl(user: AuthenticatedUser, sourceSessionId: string, input: { destinationTableId: string; merge?: boolean }): Promise<TableSessionRecord> {
+  assertCanManageTables(user);
+  const initial = await requireOpenTableSession(sourceSessionId);
+  const ids = [initial.tableId, input.destinationTableId].sort();
+  if (ids[0] === ids[1]) throw new Error('Choose a different destination table.');
+  return withTableSessionOpenLock(ids[0], () => withTableSessionOpenLock(ids[1], () => withTransaction(async client => {
+    if (isSqlRepositoryEnabled()) for (const id of ids) await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`table:${id}`]);
+    const source = await requireOpenTableSession(sourceSessionId);
+    const table = await getTableById(input.destinationTableId);
+    if (!table || table.status !== 'active') throw new Error('Destination table must be active.');
+    if (table.branchId !== source.branchId || (user.branchId && user.branchId !== source.branchId)) throw new Error('Forbidden: tables must belong to your branch.');
+    let destination = (await listTableSessions({ branchId: source.branchId, tableId: table.id, status: 'open' }))[0];
+    if (destination && input.merge !== true) throw new Error('Destination is occupied. Confirm merge to continue.');
+    const beforeTransfer = { sourceSession: structuredClone(source), destinationSession: destination ? structuredClone(destination) : null };
+    const sourceBill = await getBillByTableSessionId(source.id);
+    const targetBill = destination ? await getBillByTableSessionId(destination.id) : null;
+    assertBillEditable(sourceBill);
+    assertBillEditable(targetBill);
+    const allOrders = await listOrders();
+    const movedOrders = allOrders.filter(order => order.tableSessionId === source.id);
+    const now = new Date().toISOString();
+    const targetId = destination?.id ?? createId('sess');
+    destination = destination ? { ...destination, guestCount: destination.guestCount + source.guestCount, updatedAt: now } : {
+      id: targetId, branchId: source.branchId, tableId: table.id, guestCount: source.guestCount,
+      status: 'open', openedByUserId: user.id, openedAt: now, updatedAt: now,
+    };
+    const billItems = allOrders.filter(order => [source.id, targetId].includes(order.tableSessionId ?? '') && order.status !== 'cancelled').flatMap(order => order.items.map(item => ({
+      id: item.id, orderId: order.id, tableSessionId: targetId, name: item.name, quantity: item.quantity, unitPrice: item.unitPrice,
+    })));
+    // Validate before writing; PostgreSQL commits the entire move atomically.
+    const changedOrders = [];
+    for (const order of movedOrders) changedOrders.push(await updateOrderWithVersionCheck(order.id, order.version, draft => {
+      draft.tableId = table.id; draft.tableName = table.name; draft.tableSessionId = targetId;
+      draft.changeLog.push({ at: now, actorUserId: user.id, actorRole: String(user.role), action: 'table_transferred', details: { sourceSessionId: source.id, destinationSessionId: targetId, sourceTableId: source.tableId, destinationTableId: table.id } });
+      return draft;
+    }));
+    await saveTableSession(destination);
+    await transferUnpaidBill(source.id, targetId, table.name, billItems);
+    source.status = 'closed'; source.closedAt = now; source.closedByUserId = user.id; source.updatedAt = now; source.transferredToSessionId = targetId;
+    await saveTableSession(source);
+    await recordAuditEvent({ action: 'table_transferred', actor: user, entity: { type: 'table_session', id: source.id }, before: { ...beforeTransfer, sourceBill, destinationBill: targetBill }, after: { sourceSession: source, destinationSession: destination, destinationBill: await getBillByTableSessionId(targetId) }, metadata: { sourceSessionId: source.id, destinationSessionId: targetId, merged: input.merge === true, orderIds: changedOrders.map(order => order.id) } });
+    for (const order of changedOrders) await syncOrderIntoKds(order);
+    return destination;
+  })));
+}
+
+export const openTableSession = (...args: Parameters<typeof openTableSessionImpl>): ReturnType<typeof openTableSessionImpl> => withOperationalWrite(() => openTableSessionImpl(...args));
+
+export const closeTableSession = (...args: Parameters<typeof closeTableSessionImpl>): ReturnType<typeof closeTableSessionImpl> => withOperationalWrite(() => closeTableSessionImpl(...args));
+
+export const transferTableSession = (...args: Parameters<typeof transferTableSessionImpl>): ReturnType<typeof transferTableSessionImpl> => withOperationalWrite(() => transferTableSessionImpl(...args));

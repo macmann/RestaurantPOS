@@ -212,6 +212,7 @@ async function requestInProcess<T>(path: string, method: string, body: unknown, 
     if (parts.length === 4 && parts[3] === 'sessions' && method === 'GET') return TablesApi.listSessionsForTable(parts[2]) as Promise<T>;
     if (parts.length === 4 && parts[3] === 'sessions' && method === 'POST') return TablesApi.openSession(await userFor(userId), { ...(body as object), tableId: parts[2] }) as Promise<T>;
     if (parts.length === 4 && parts[2] === 'sessions' && method === 'GET') return TablesApi.getSession(parts[3]) as Promise<T>;
+    if (parts.length === 5 && parts[2] === 'sessions' && parts[4] === 'transfer') return TablesApi.transferSession(await userFor(userId), parts[3], body) as Promise<T>;
     if (parts.length === 5 && parts[2] === 'sessions' && parts[4] === 'close' && method === 'POST') return TablesApi.closeSession(await userFor(userId), parts[3]) as Promise<T>;
   }
 
@@ -222,6 +223,7 @@ async function requestInProcess<T>(path: string, method: string, body: unknown, 
     if (parts.length === 2 && method === 'POST') return service.createOrderDraft(await userFor(userId), body) as Promise<T>;
     if (parts.length === 3 && method === 'GET') return service.getOrder(parts[2]) as Promise<T>;
     if (parts.length === 3 && method === 'PATCH') return service.editOrderBeforePayment(await userFor(userId), parts[2], body) as Promise<T>;
+    if (parts.length === 6 && parts[3] === 'items' && parts[5] === 'void') return service.voidOrderItem(await userFor(userId), parts[2], parts[4], body) as Promise<T>;
     if (parts.length === 4 && parts[3] === 'status') {
       const statusBody = body as { expectedVersion: number; nextStatus: string };
       return service.transitionOrderStatus(await userFor(userId), parts[2], statusBody.expectedVersion, statusBody.nextStatus) as Promise<T>;
@@ -252,6 +254,7 @@ async function requestInProcess<T>(path: string, method: string, body: unknown, 
     }
     if (parts[4] === 'breakdown') return billing.getBillCalculationBreakdown(tableSessionId) as Promise<T>;
     if (parts[4] === 'receipt') return billing.getPrintedReceiptPayload(tableSessionId, url.searchParams.get('locale') ?? undefined) as Promise<T>;
+    if (parts[4] === 'charges') return billing.setBillCharges({ ...(body as object), tableSessionId, actorUserId: userId }) as Promise<T>;
     if (parts[4] === 'tax') return billing.setBillTaxMode({ ...(body as object), tableSessionId, actorUserId: userId }) as Promise<T>;
     if (parts[4] === 'splits') return billing.updateBillSplitItems({ ...(body as object), tableSessionId, actorUserId: userId }) as Promise<T>;
     if (parts[4] === 'merge-splits') return billing.mergeBillSplits({ ...(body as object), tableSessionId, actorUserId: userId }) as Promise<T>;
@@ -497,6 +500,18 @@ export class RestaurantApiClient {
 
   createOrder(userId: string, input: CreateOrderInput): Promise<OrderRecord> {
     return this.request<OrderRecord>('/api/orders', { method: 'POST', userId, body: input, operationKind: 'idempotent_write' });
+  }
+
+  transferTableSession(userId: string, sourceSessionId: string, destinationTableId: string, merge: boolean) {
+    return this.request(`/api/tables/sessions/${encodeURIComponent(sourceSessionId)}/transfer`, { method: 'POST', userId, body: { destinationTableId, merge }, operationKind: 'unsafe_write' });
+  }
+
+  voidOrderItem(userId: string, orderId: string, itemId: string, expectedVersion: number, reason: string): Promise<OrderRecord> {
+    return this.request(`/api/orders/${encodeURIComponent(orderId)}/items/${encodeURIComponent(itemId)}/void`, { method: 'POST', userId, body: { expectedVersion, reason }, operationKind: 'unsafe_write' });
+  }
+
+  setBillCharges(input: { tableSessionId: string; includeTax: boolean; includeServiceCharge: boolean }, userId: string) {
+    return this.request(`/api/billing/bills/${encodeURIComponent(input.tableSessionId)}/charges`, { method: 'PATCH', userId, body: input, operationKind: 'idempotent_write' });
   }
 
   getOrder(orderId: string): Promise<OrderRecord | null> {

@@ -1,3 +1,5 @@
+import { listOrders } from '../orders/repository';
+import { withOperationalWrite } from '../db/operationalWrite';
 import { recordAuditEvent } from '../audit/service';
 import { getCurrentBranchId } from '../config/branch';
 import { getPosOperationalSettings } from '../config/posSettings';
@@ -61,13 +63,17 @@ function getPaymentContribution(payment: BillPayment): number {
 
 function normalizePricing(pricing?: Partial<BillPricingOptions>): BillPricingOptions {
   const configuredTax = getPosOperationalSettings().tax;
-  const taxMode = pricing?.taxMode ?? (configuredTax.enabled ? 'taxable' : 'tax_exempt');
+  const taxMode = pricing?.taxMode ?? 'taxable';
   const taxRate = pricing?.taxRate ?? (configuredTax.enabled ? configuredTax.rate : DEFAULT_PRICING.taxRate);
   if (taxMode !== 'taxable' && taxMode !== 'tax_exempt') throw new Error('taxMode must be taxable or tax_exempt.');
   assertNonNegativeMoney(taxRate, 'taxRate');
+  const serviceRate = pricing?.serviceChargeRate ?? 0;
+  if (!Number.isFinite(serviceRate) || serviceRate < 0 || serviceRate > 100) throw new Error('serviceChargeRate must be between 0 and 100.');
 
   return {
     taxMode,
+    serviceChargeRate: pricing?.serviceChargeRate ?? (pricing ? 0 : getPosOperationalSettings().serviceCharge.rate),
+    serviceChargeEnabled: pricing?.serviceChargeEnabled ?? true,
     taxRate: round2(taxRate),
     billPromotions: (pricing?.billPromotions ?? []).map((promotion) => ({
       ...promotion,
@@ -128,6 +134,21 @@ function emptyCalculationBreakdown(overrides?: Partial<BillCalculationBreakdown>
     lines: [],
     ...overrides,
   };
+}
+
+async function assertSessionItemAssignments(tableSessionId: string, items: TableOrderItem[]): Promise<void> {
+  const orders = (await listOrders()).filter(order => order.tableSessionId === tableSessionId);
+  // Hardware/integration callers may supply standalone bill lines without orders.
+  if (!orders.length) return;
+  const actual = new Map(orders.filter(order => order.status !== 'cancelled').flatMap(order => order.items.map(item => [item.id, item] as const)));
+  const quantities = new Map<string, number>();
+  for (const item of items) {
+    const original = actual.get(item.id);
+    if (!original) throw new Error('Bill contains a removed or invalid order item. Refresh the bill.');
+    if (!Number.isFinite(item.quantity) || item.quantity <= 0 || item.unitPrice !== original.unitPrice) throw new Error('Split items must retain the ordered price and positive quantities.');
+    quantities.set(item.id, round2((quantities.get(item.id) ?? 0) + item.quantity));
+  }
+  for (const [id, item] of actual) if (quantities.get(id) !== round2(item.quantity)) throw new Error('Split quantities must match the order. Void items through manager controls before removing them from the bill.');
 }
 
 function calculateLineItem(item: TableOrderItem, billLevelTaxEnabled: boolean): BillLineItem {
@@ -198,16 +219,15 @@ function calculateLineDiscountBreakdown(lineItems: BillLineItem[], pricing: Bill
 }
 
 function allocateAmount(total: number, bases: number[]): number[] {
-  const baseTotal = round2(bases.reduce((sum, base) => sum + base, 0));
+  const baseTotal = bases.reduce((sum, base) => sum + Math.max(base, 0), 0);
   if (total === 0 || baseTotal === 0) return bases.map(() => 0);
-
-  let allocatedSoFar = 0;
-  return bases.map((base, index) => {
-    if (index === bases.length - 1) return round2(total - allocatedSoFar);
-    const allocated = round2(total * (base / baseTotal));
-    allocatedSoFar = round2(allocatedSoFar + allocated);
-    return allocated;
-  });
+  const cents = Math.round(total * 100);
+  const shares = bases.map(base => cents * Math.max(base, 0) / baseTotal);
+  const allocated = shares.map(share => Math.floor(share + 1e-9));
+  const remaining = cents - allocated.reduce((sum, value) => sum + value, 0);
+  const priority = shares.map((share, index) => ({ index, remainder: share - allocated[index] })).sort((a, b) => b.remainder - a.remainder || a.index - b.index);
+  for (let i = 0; i < remaining; i++) allocated[priority[i % priority.length].index]++;
+  return allocated.map(value => value / 100);
 }
 
 function applyBillLevelPricing(splits: BillRecord['splits'], pricing: BillPricingOptions): BillRecord['splits'] {
@@ -233,6 +253,8 @@ function applyBillLevelPricing(splits: BillRecord['splits'], pricing: BillPricin
   const splitTaxableSubtotals = SPLIT_LABELS.map((label, index) => round2(baseBreakdowns[label].taxableSubtotal - discountAllocations[index]));
   const billTaxTotal = pricing.taxMode === 'taxable' ? round2(billTaxableSubtotal * (pricing.taxRate / 100)) : 0;
   const taxAllocations = allocateAmount(billTaxTotal, splitTaxableSubtotals);
+  const serviceChargeTotal = pricing.serviceChargeEnabled === false ? 0 : round2(billTaxableSubtotal * ((pricing.serviceChargeRate ?? 0) / 100));
+  const serviceAllocations = allocateAmount(serviceChargeTotal, splitTaxableSubtotals);
 
   return Object.fromEntries(
     SPLIT_LABELS.map((label, index) => {
@@ -251,7 +273,10 @@ function applyBillLevelPricing(splits: BillRecord['splits'], pricing: BillPricin
         taxMode: pricing.taxMode,
         taxRate: pricing.taxMode === 'taxable' ? pricing.taxRate : 0,
         taxTotal,
-        totalDue: round2(taxableSubtotal + taxTotal),
+        serviceChargeTotal: serviceAllocations[index],
+        serviceChargeRate: pricing.serviceChargeRate ?? 0,
+        serviceChargeEnabled: pricing.serviceChargeEnabled !== false,
+        totalDue: round2(taxableSubtotal + taxTotal + serviceAllocations[index]),
         appliedPromotions: appliedPromotions.map((promotion) => ({
           ...promotion,
           amount: round2(discountAllocations[index] * (promotion.amount / Math.max(billLevelDiscount, 1))),
@@ -304,8 +329,11 @@ function mergeBreakdowns(splits: BillRecord['splits'], pricing: BillPricingOptio
     },
     taxableSubtotal: round2(splitBreakdowns.reduce((sum, split) => sum + split.taxableSubtotal, 0)),
     taxMode: pricing.taxMode,
-    taxRate: pricing.taxMode === 'taxable' ? pricing.taxRate : 0,
+    taxRate: pricing.taxRate,
     taxTotal: round2(splitBreakdowns.reduce((sum, split) => sum + split.taxTotal, 0)),
+    serviceChargeTotal: round2(splitBreakdowns.reduce((sum, split) => sum + (split.serviceChargeTotal ?? 0), 0)),
+    serviceChargeRate: pricing.serviceChargeRate ?? 0,
+    serviceChargeEnabled: pricing.serviceChargeEnabled !== false,
     totalDue: round2(splitBreakdowns.reduce((sum, split) => sum + split.totalDue, 0)),
     roundingStrategy: ROUNDING_STRATEGY,
     appliedPromotions: [...promotionTotals.values()],
@@ -362,7 +390,7 @@ function buildReceiptPayload(bill: BillRecord, localeInput?: string): ReceiptPay
   };
 }
 
-export async function generateBillFromSessionItems(
+async function generateBillFromSessionItemsImpl(
   tableSessionId: string,
   itemsBySplit: Partial<Record<SplitLabel, TableOrderItem[]>>,
   actorUserId: string,
@@ -374,7 +402,8 @@ export async function generateBillFromSessionItems(
   const now = new Date().toISOString();
   const existing = await getBillByTableSessionId(tableSessionId);
   if (existing) throw new Error(`Bill already exists for table session ${tableSessionId}.`);
-  const pricing = normalizePricing(pricingInput);
+  await assertSessionItemAssignments(tableSessionId, Object.values(itemsBySplit).flat());
+  const pricing = normalizePricing({ serviceChargeRate: getPosOperationalSettings().serviceCharge.rate, ...pricingInput });
   for (const item of Object.values(itemsBySplit).flat()) {
     if (item.tableSessionId !== tableSessionId) throw new Error('Bill items must belong to the requested table session.');
   }
@@ -435,7 +464,7 @@ export async function generateBillFromSessionItems(
   return saveBill(next);
 }
 
-export async function setBillTaxMode(input: {
+async function setBillTaxModeImpl(input: {
   tableSessionId: string;
   taxMode: BillPricingOptions['taxMode'];
   taxRate?: number;
@@ -443,6 +472,7 @@ export async function setBillTaxMode(input: {
 }): Promise<BillRecord> {
   const bill = await getBillByTableSessionId(input.tableSessionId);
   if (!bill) throw new Error('Bill not found for table session.');
+  assertBillEditable(bill);
   const before = structuredClone(bill);
 
   bill.pricing = normalizePricing({ ...bill.pricing, taxMode: input.taxMode, taxRate: input.taxRate ?? bill.pricing.taxRate });
@@ -471,7 +501,7 @@ export async function setBillTaxMode(input: {
   return saveBill(bill);
 }
 
-export async function applyBillPromotions(input: {
+async function applyBillPromotionsImpl(input: {
   tableSessionId: string;
   billPromotions: BillPromotion[];
   actorUserId: string;
@@ -512,13 +542,15 @@ function assertEditableSplit(split: BillRecord['splits'][SplitLabel], label: Spl
   if (split.payments.length > 0 || split.amountPaid > 0) throw new Error(`Split ${label} has payments and cannot be reassigned or merged.`);
 }
 
-export async function updateBillSplitItems(input: {
+async function updateBillSplitItemsImpl(input: {
   tableSessionId: string;
   itemsBySplit: Partial<Record<SplitLabel, TableOrderItem[]>>;
   actorUserId: string;
 }): Promise<BillRecord> {
   const bill = await getBillByTableSessionId(input.tableSessionId);
   if (!bill) throw new Error('Bill not found for table session.');
+  assertBillEditable(bill);
+  await assertSessionItemAssignments(input.tableSessionId, Object.values(input.itemsBySplit).flat());
   for (const label of SPLIT_LABELS) assertEditableSplit(bill.splits[label], label);
   for (const item of Object.values(input.itemsBySplit).flat()) {
     if (item.tableSessionId !== input.tableSessionId) throw new Error('Bill items must belong to the requested table session.');
@@ -544,7 +576,7 @@ export async function updateBillSplitItems(input: {
   return saveBill(bill);
 }
 
-export async function mergeBillSplits(input: { tableSessionId: string; actorUserId: string; targetSplitLabel?: SplitLabel }): Promise<BillRecord> {
+async function mergeBillSplitsImpl(input: { tableSessionId: string; actorUserId: string; targetSplitLabel?: SplitLabel }): Promise<BillRecord> {
   const bill = await getBillByTableSessionId(input.tableSessionId);
   if (!bill) throw new Error('Bill not found for table session.');
   const target = input.targetSplitLabel ?? 'A';
@@ -566,7 +598,7 @@ export async function mergeBillSplits(input: { tableSessionId: string; actorUser
   return saveBill(bill);
 }
 
-export async function voidBill(input: {
+async function voidBillImpl(input: {
   tableSessionId: string;
   actorUserId: string;
   reason: string;
@@ -674,7 +706,7 @@ export async function printBillReceipt(input: {
   return result;
 }
 
-export async function recordSplitPayment(input: {
+async function recordSplitPaymentImpl(input: {
   tableSessionId: string;
   splitLabel: SplitLabel;
   amount: number;
@@ -827,7 +859,7 @@ export async function recordSplitPayment(input: {
   });
 }
 
-export async function refundSplitPayment(input: {
+async function refundSplitPaymentImpl(input: {
   tableSessionId: string;
   splitLabel: SplitLabel;
   paymentId: string;
@@ -951,7 +983,7 @@ export async function refundSplitPayment(input: {
   });
 }
 
-export async function voidSplitPayment(input: {
+async function voidSplitPaymentImpl(input: {
   tableSessionId: string;
   splitLabel: SplitLabel;
   paymentId: string;
@@ -1048,7 +1080,7 @@ export async function voidSplitPayment(input: {
   });
 }
 
-export async function settleDebt(input: {
+async function settleDebtImpl(input: {
   tableSessionId: string;
   splitLabel: SplitLabel;
   amount: number;
@@ -1100,3 +1132,82 @@ export async function settleDebt(input: {
     return bill;
   });
 }
+
+/** Monetary history is immutable after a payment or debt has been posted. */
+export function assertBillEditable(bill: BillRecord | null): void {
+  if (bill && (['debt', 'void'].includes(bill.state) || (bill.state === 'paid' && bill.calculationBreakdown.totalDue > 0) || Object.values(bill.splits).some(split => split.payments.length || split.state === 'debt'))) {
+    throw new Error('Cannot change a bill after payment or debt settlement.');
+  }
+}
+
+async function setBillChargesImpl(input: { tableSessionId: string; includeTax: boolean; includeServiceCharge: boolean; actorUserId: string; branchId?: string }): Promise<BillRecord> {
+  if (typeof input.includeTax !== 'boolean' || typeof input.includeServiceCharge !== 'boolean') throw new Error('Charge options must be booleans.');
+  return withTransaction(async () => {
+    await requireOpenTableSession(input.tableSessionId);
+    const bill = await getBillByTableSessionId(input.tableSessionId);
+    if (!bill) throw new Error('Bill not found for table session.');
+    if (input.branchId && bill.branchId !== input.branchId) throw new Error('Forbidden: bill belongs to another branch.');
+    assertBillEditable(bill);
+    const before = structuredClone(bill);
+    bill.pricing = { ...bill.pricing, taxMode: input.includeTax ? 'taxable' : 'tax_exempt', serviceChargeEnabled: input.includeServiceCharge };
+    updateBillStateAndBreakdown(bill);
+    await recordAuditEvent({ action: 'tax_toggled', actor: { userId: input.actorUserId }, entity: { type: 'bill', id: bill.id }, before, after: bill, metadata: { includeTax: input.includeTax, includeServiceCharge: input.includeServiceCharge } });
+    return saveBill(bill);
+  });
+}
+
+export async function removeVoidedBillItem(tableSessionId: string, orderItemId: string): Promise<void> {
+  const bill = await getBillByTableSessionId(tableSessionId);
+  if (!bill) return;
+  assertBillEditable(bill);
+  for (const split of Object.values(bill.splits)) split.lineItems = split.lineItems.filter(item => item.orderItemId !== orderItemId);
+  updateBillStateAndBreakdown(bill);
+  await saveBill(bill);
+}
+
+/** Preserve split assignments and item discounts; the destination's pricing applies to a merged bill. */
+export async function transferUnpaidBill(sourceSessionId: string, destinationSessionId: string, tableName: string, allItems: TableOrderItem[]): Promise<void> {
+  const source = await getBillByTableSessionId(sourceSessionId);
+  const destination = await getBillByTableSessionId(destinationSessionId);
+  assertBillEditable(source);
+  assertBillEditable(destination);
+  if (!source && !destination) return;
+  const bill = structuredClone(destination ?? source!);
+  if (!destination) bill.id = createId('bill');
+  bill.tableSessionId = destinationSessionId;
+  bill.tableName = tableName;
+  if (source && destination) for (const label of SPLIT_LABELS) bill.splits[label].lineItems.push(...source.splits[label].lineItems);
+  const knownIds = new Set(Object.values(bill.splits).flatMap(split => split.lineItems.map(item => item.orderItemId)));
+  for (const item of allItems) if (!knownIds.has(item.id)) bill.splits.A.lineItems.push(calculateLineItem(item, true));
+  updateBillStateAndBreakdown(bill);
+  await saveBill(bill);
+  if (source) {
+    // Retain the original bill for audit, with no remaining chargeable items.
+    for (const split of Object.values(source.splits)) split.lineItems = [];
+    updateBillStateAndBreakdown(source);
+    source.state = 'void';
+    await saveBill(source);
+  }
+}
+
+export const generateBillFromSessionItems = (...args: Parameters<typeof generateBillFromSessionItemsImpl>): ReturnType<typeof generateBillFromSessionItemsImpl> => withOperationalWrite(() => generateBillFromSessionItemsImpl(...args));
+
+export const setBillTaxMode = (...args: Parameters<typeof setBillTaxModeImpl>): ReturnType<typeof setBillTaxModeImpl> => withOperationalWrite(() => setBillTaxModeImpl(...args));
+
+export const applyBillPromotions = (...args: Parameters<typeof applyBillPromotionsImpl>): ReturnType<typeof applyBillPromotionsImpl> => withOperationalWrite(() => applyBillPromotionsImpl(...args));
+
+export const updateBillSplitItems = (...args: Parameters<typeof updateBillSplitItemsImpl>): ReturnType<typeof updateBillSplitItemsImpl> => withOperationalWrite(() => updateBillSplitItemsImpl(...args));
+
+export const mergeBillSplits = (...args: Parameters<typeof mergeBillSplitsImpl>): ReturnType<typeof mergeBillSplitsImpl> => withOperationalWrite(() => mergeBillSplitsImpl(...args));
+
+export const voidBill = (...args: Parameters<typeof voidBillImpl>): ReturnType<typeof voidBillImpl> => withOperationalWrite(() => voidBillImpl(...args));
+
+export const recordSplitPayment = (...args: Parameters<typeof recordSplitPaymentImpl>): ReturnType<typeof recordSplitPaymentImpl> => withOperationalWrite(() => recordSplitPaymentImpl(...args));
+
+export const refundSplitPayment = (...args: Parameters<typeof refundSplitPaymentImpl>): ReturnType<typeof refundSplitPaymentImpl> => withOperationalWrite(() => refundSplitPaymentImpl(...args));
+
+export const voidSplitPayment = (...args: Parameters<typeof voidSplitPaymentImpl>): ReturnType<typeof voidSplitPaymentImpl> => withOperationalWrite(() => voidSplitPaymentImpl(...args));
+
+export const settleDebt = (...args: Parameters<typeof settleDebtImpl>): ReturnType<typeof settleDebtImpl> => withOperationalWrite(() => settleDebtImpl(...args));
+
+export const setBillCharges = (...args: Parameters<typeof setBillChargesImpl>): ReturnType<typeof setBillChargesImpl> => withOperationalWrite(() => setBillChargesImpl(...args));

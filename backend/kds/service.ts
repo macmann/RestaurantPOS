@@ -1,8 +1,9 @@
+import { withOperationalWrite } from '../db/operationalWrite';
 import { can, type AuthenticatedUser } from '../auth/policies';
 import { listPrepStations } from '../config/posSettings';
 import { Actions } from '../auth/permissions';
 import type { OrderRecord, OrderStatus } from '../orders/repository';
-import { appendKdsProgressHistory, getKdsItemState, listKdsItemStates, listKdsProgressHistory, type KdsItemState, type KdsProgress, type Station, upsertKdsItemState } from './repository';
+import { appendKdsProgressHistory, removeKdsItemState, getKdsItemState, listKdsItemStates, listKdsProgressHistory, type KdsItemState, type KdsProgress, type Station, upsertKdsItemState } from './repository';
 
 export type KdsView = 'active' | 'history' | 'all';
 
@@ -46,6 +47,10 @@ function defaultProgress(orderStatus: OrderStatus): KdsProgress {
 }
 
 export async function syncOrderIntoKds(order: OrderRecord): Promise<void> {
+  for (const previous of (await listKdsItemStates()).filter(state => state.orderId === order.id && !order.items.some(item => item.id === state.orderItemId))) {
+    await recordProgress(order.branchId, order.id, previous.orderItemId, previous.station, 'cancelled');
+    await removeKdsItemState(order.id, previous.orderItemId);
+  }
   for (const item of order.items) {
     const existing = await getKdsItemState(order.id, item.id);
     const station = stationForItem(item);
@@ -115,7 +120,7 @@ export async function getKdsSnapshot(station?: Station, view: KdsView = 'all', b
   return { at: new Date().toISOString(), groups: station ? grouped.filter((g) => g.station === station) : grouped };
 }
 
-export async function updateKdsItemProgress(
+async function updateKdsItemProgressImpl(
   user: AuthenticatedUser,
   orderId: string,
   orderItemId: string,
@@ -191,3 +196,5 @@ export function subscribeKds(listener: (event: KdsEvent) => void): () => void {
   subscribers.add(listener);
   return () => subscribers.delete(listener);
 }
+
+export const updateKdsItemProgress = (...args: Parameters<typeof updateKdsItemProgressImpl>): ReturnType<typeof updateKdsItemProgressImpl> => withOperationalWrite(() => updateKdsItemProgressImpl(...args));

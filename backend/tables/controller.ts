@@ -1,7 +1,8 @@
 import type { AuthenticatedUser } from '../auth/policies';
-import { closeTableSession, createTable, getTableSession, listSessionsForTable, listTableFloor, openTableSession, removeTable, updateTable } from './service';
+import { transferTableSession, closeTableSession, createTable, getTableSession, listSessionsForTable, listTableFloor, openTableSession, removeTable, updateTable } from './service';
 
 export const TablesApi = {
+  transferSession: transferTableSession,
   listFloor: (branchId?: string) => listTableFloor(branchId),
   createTable,
   updateTable,
