@@ -158,9 +158,19 @@ Only staff with billing-close permission can perform cashier actions. A view-onl
 
 Always verify that every item and quantity is assigned exactly as the guests requested. Splits may be printed separately with **Print Split A/B/C**.
 
-#### Tax
+#### Transfer or merge tables
 
-Use **Mark tax exempt** only when the transaction legitimately qualifies and restaurant policy permits it. Use **Enable tax** to restore normal configured tax. If uncertain, call a manager; do not use tax exemption as a discount.
+In **Order** or **Billing**, select the occupied table, choose a destination under **Transfer table**, and select **Transfer table**. An available destination opens with the original guests and orders, and the old table closes. If the destination already has guests, confirm the merge to combine guests and orders there. The destination bill's charge rates and options apply to a merge. Transfers are available before payment or debt settlement.
+
+#### Void prepared items
+
+Managers and superadmins can open **Manager controls → Void an item** in **Order** or **Billing**, select **Void item**, and enter a reason. Prepared and delivered items can be removed before payment or debt settlement. The bill updates automatically, and prepared food remains recorded as used inventory. Review the reason, original amount, and approving manager under **Reports → Exceptions → Voided / removed items**.
+
+#### Tax and service charge
+
+Superadmins configure the percentages under **Super admin panel → Bill & printer settings → Tax & service charge**. Service charge and tax are calculated separately on the subtotal after discounts. New bills include both by default; a service charge rate of zero adds no service charge.
+
+After preparing the bill, cashiers and managers can uncheck **Include service charge** or **Include tax** before printing or taking payment. Totals update automatically. These options lock once payment or debt settlement is recorded. Existing bills retain their original configured rates. Receipts show the service charge and keep the table heading on one compact line.
 
 #### Take payment and close the table
 
